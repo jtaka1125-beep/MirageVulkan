@@ -1,0 +1,311 @@
+package com.mirage.accessory.access
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.Path
+import android.util.Log
+import android.graphics.Rect
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.mirage.accessory.core.Config
+import com.mirage.accessory.svc.UdpSender
+import com.mirage.accessory.usb.AccessoryIoService
+import kotlin.math.cos
+import kotlin.math.sin
+
+class MirageAccessibilityService : AccessibilityService() {
+    companion object {
+        private const val TAG = "MirageA11y"
+
+        @Volatile
+        var instance: MirageAccessibilityService? = null
+            private set
+    }
+
+    private val udpSender = UdpSender()
+
+    private val commandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != AccessoryIoService.ACTION_COMMAND) return
+            val cmdType = intent.getIntExtra(AccessoryIoService.EXTRA_COMMAND_TYPE, -1)
+            val seq = intent.getIntExtra(AccessoryIoService.EXTRA_SEQ, 0)
+            val x = intent.getIntExtra(AccessoryIoService.EXTRA_X, 0)
+            val y = intent.getIntExtra(AccessoryIoService.EXTRA_Y, 0)
+            val keycode = intent.getIntExtra(AccessoryIoService.EXTRA_KEYCODE, 0)
+            Log.d(TAG, "Received USB command: type=$cmdType seq=$seq x=$x y=$y")
+            when (cmdType) {
+                AccessoryIoService.CMD_TYPE_PING -> Log.i(TAG, "PING received seq=$seq")
+                AccessoryIoService.CMD_TYPE_TAP -> { Log.i(TAG, "TAP x=$x y=$y seq=$seq"); tap(x.toFloat(), y.toFloat(), seq) }
+                AccessoryIoService.CMD_TYPE_BACK -> { Log.i(TAG, "BACK seq=$seq"); performBack(seq) }
+                AccessoryIoService.CMD_TYPE_KEY -> Log.i(TAG, "KEY keycode=$keycode seq=$seq")
+            }
+        }
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+        udpSender.start()
+        val filter = IntentFilter(AccessoryIoService.ACTION_COMMAND)
+        LocalBroadcastManager.getInstance(this).registerReceiver(commandReceiver, filter)
+        Log.i(TAG, "AccessibilityService connected and receiver registered")
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        event ?: return
+        // MediaProjectionダイアログの自動承認を試行
+        if (event.packageName == "com.android.systemui"
+            && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        ) {
+            handleMediaProjectionDialog()
+        }
+    }
+
+    /**
+     * MediaProjectionの許可ダイアログを自動承認する。
+     * SystemUI上で「開始」「Start」「Start now」ボタンを検索し、
+     * 見つかった場合は自動クリックする。
+     */
+    private fun handleMediaProjectionDialog() {
+        val root = rootInActiveWindow ?: return
+        // 日本語・英語両方のボタンテキストを検索
+        val targets = listOf("開始", "Start", "Start now")
+        for (label in targets) {
+            val nodes = root.findAccessibilityNodeInfosByText(label)
+            if (nodes.isNullOrEmpty()) continue
+            for (node in nodes) {
+                if (node.isClickable) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "MediaProjection自動承認: $label")
+                    return
+                }
+                // ボタン自体がクリック不可の場合、親を辿ってクリック可能なノードを探す
+                var parent = node.parent
+                while (parent != null) {
+                    if (parent.isClickable) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Log.i(TAG, "MediaProjection自動承認(親): $label")
+                        return
+                    }
+                    parent = parent.parent
+                }
+            }
+        }
+    }
+    override fun onInterrupt() {}
+
+    override fun onDestroy() {
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(commandReceiver)
+        udpSender.stop()
+        instance = null
+        super.onDestroy()
+    }
+
+    // =========================================================================
+    // Gesture implementations
+    // =========================================================================
+
+    fun tap(x: Float, y: Float, seq: Int = 0) {
+        Log.i(TAG, "tap() called: ($x, $y) seq=$seq")
+        val p = Path().apply { moveTo(x, y) }
+        val stroke = GestureDescription.StrokeDescription(p, 0, 50)
+        val gd = GestureDescription.Builder().addStroke(stroke).build()
+        val tStart = System.currentTimeMillis()
+        val result = dispatchGesture(gd, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                val latency = System.currentTimeMillis() - tStart
+                Log.i(TAG, "Tap COMPLETED ($x,$y) seq=$seq ${latency}ms")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"x":${x.toInt()},"y":${y.toInt()},"ok":true,"latency_ms":$latency}""")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "Tap CANCELLED ($x,$y) seq=$seq")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"x":${x.toInt()},"y":${y.toInt()},"ok":false}""")
+            }
+        }, null)
+        Log.i(TAG, "dispatchGesture returned: $result")
+    }
+
+    fun swipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Int, seq: Int = 0) {
+        Log.i(TAG, "swipe() ($startX,$startY)->($endX,$endY) dur=$durationMs seq=$seq")
+        val duration = durationMs.toLong().coerceIn(50, 60000)
+        val p = Path().apply { moveTo(startX, startY); lineTo(endX, endY) }
+        val stroke = GestureDescription.StrokeDescription(p, 0, duration)
+        val gd = GestureDescription.Builder().addStroke(stroke).build()
+        val tStart = System.currentTimeMillis()
+        val result = dispatchGesture(gd, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                val latency = System.currentTimeMillis() - tStart
+                Log.i(TAG, "Swipe COMPLETED seq=$seq ${latency}ms")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"swipe","ok":true,"latency_ms":$latency}""")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "Swipe CANCELLED seq=$seq")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"swipe","ok":false}""")
+            }
+        }, null)
+        Log.i(TAG, "swipe dispatchGesture returned: $result")
+    }
+
+    fun pinch(centerX: Float, centerY: Float, startDist: Int, endDist: Int,
+              durationMs: Int, angleDeg100: Int, seq: Int = 0) {
+        Log.i(TAG, "pinch() center=($centerX,$centerY) $startDist->$endDist dur=$durationMs seq=$seq")
+        val duration = durationMs.toLong().coerceIn(50, 60000)
+        val angleRad = (angleDeg100 / 100.0) * Math.PI / 180.0
+        val cosA = cos(angleRad).toFloat()
+        val sinA = sin(angleRad).toFloat()
+        val halfStart = startDist / 2f
+        val halfEnd = endDist / 2f
+        val p1 = Path().apply {
+            moveTo(centerX + halfStart * cosA, centerY + halfStart * sinA)
+            lineTo(centerX + halfEnd * cosA, centerY + halfEnd * sinA)
+        }
+        val p2 = Path().apply {
+            moveTo(centerX - halfStart * cosA, centerY - halfStart * sinA)
+            lineTo(centerX - halfEnd * cosA, centerY - halfEnd * sinA)
+        }
+        val s1 = GestureDescription.StrokeDescription(p1, 0, duration)
+        val s2 = GestureDescription.StrokeDescription(p2, 0, duration)
+        val gd = GestureDescription.Builder().addStroke(s1).addStroke(s2).build()
+        val tStart = System.currentTimeMillis()
+        val result = dispatchGesture(gd, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                val latency = System.currentTimeMillis() - tStart
+                Log.i(TAG, "Pinch COMPLETED seq=$seq ${latency}ms")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"pinch","ok":true,"latency_ms":$latency}""")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "Pinch CANCELLED seq=$seq")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"pinch","ok":false}""")
+            }
+        }, null)
+        Log.i(TAG, "pinch dispatchGesture returned: $result")
+    }
+
+    fun longPress(x: Float, y: Float, durationMs: Int, seq: Int = 0) {
+        Log.i(TAG, "longPress() ($x,$y) dur=$durationMs seq=$seq")
+        val duration = durationMs.toLong().coerceIn(500, 60000)
+        val p = Path().apply { moveTo(x, y) }
+        val stroke = GestureDescription.StrokeDescription(p, 0, duration)
+        val gd = GestureDescription.Builder().addStroke(stroke).build()
+        val tStart = System.currentTimeMillis()
+        val result = dispatchGesture(gd, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                val latency = System.currentTimeMillis() - tStart
+                Log.i(TAG, "LongPress COMPLETED ($x,$y) seq=$seq ${latency}ms")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"longpress","ok":true,"latency_ms":$latency}""")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "LongPress CANCELLED seq=$seq")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"longpress","ok":false}""")
+            }
+        }, null)
+        Log.i(TAG, "longPress dispatchGesture returned: $result")
+    }
+
+    fun performBack(seq: Int = 0) {
+        val result = performGlobalAction(GLOBAL_ACTION_BACK)
+        Log.i(TAG, "BACK result=$result seq=$seq")
+        udpSender.trySendLine(Config.TAG_BACK_EXEC,
+            """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"ok":$result}""")
+    }
+
+    // =========================================================================
+    // リソースID / テキスト指定クリック
+    // =========================================================================
+
+    /** リソースIDでノードを検索してクリックする */
+    fun clickById(resourceId: String, seq: Int = 0) {
+        Log.i(TAG, "clickById() resourceId=$resourceId seq=$seq")
+        val root = rootInActiveWindow
+        if (root == null) {
+            Log.w(TAG, "clickById: rootInActiveWindow is null")
+            udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"click_id","ok":false,"reason":"no_root"}""")
+            return
+        }
+        val nodes = root.findAccessibilityNodeInfosByViewId(resourceId)
+        val node = nodes?.firstOrNull()
+        if (node == null) {
+            Log.w(TAG, "clickById: ノードが見つかりません: $resourceId")
+            udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"click_id","ok":false,"reason":"not_found"}""")
+            return
+        }
+        performNodeClick(node, "click_id", seq)
+    }
+
+    /** テキストでノードを検索してクリックする */
+    fun clickByText(text: String, seq: Int = 0) {
+        Log.i(TAG, "clickByText() text=$text seq=$seq")
+        val root = rootInActiveWindow
+        if (root == null) {
+            Log.w(TAG, "clickByText: rootInActiveWindow is null")
+            udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"click_text","ok":false,"reason":"no_root"}""")
+            return
+        }
+        val nodes = root.findAccessibilityNodeInfosByText(text)
+        val node = nodes?.firstOrNull()
+        if (node == null) {
+            Log.w(TAG, "clickByText: ノードが見つかりません: $text")
+            udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"click_text","ok":false,"reason":"not_found"}""")
+            return
+        }
+        performNodeClick(node, "click_text", seq)
+    }
+
+    /**
+     * ノードをクリックする共通処理。
+     * ノード自体がクリック可能ならACTION_CLICK、
+     * そうでなければノード中心座標にdispatchGestureでタップする。
+     */
+    private fun performNodeClick(node: AccessibilityNodeInfo, type: String, seq: Int) {
+        if (node.isClickable) {
+            val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.i(TAG, "$type ACTION_CLICK result=$result seq=$seq")
+            udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"$type","ok":$result}""")
+        } else {
+            // ノードの中心座標を計算してジェスチャータップ
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            Log.i(TAG, "$type ノード非クリック可能 → ジェスチャータップ (${rect.centerX()}, ${rect.centerY()})")
+            performTapGesture(rect.centerX(), rect.centerY(), type, seq)
+        }
+    }
+
+    /** AccessibilityServiceのdispatchGestureで指定座標にタップする */
+    private fun performTapGesture(x: Int, y: Int, type: String = "tap_gesture", seq: Int = 0) {
+        val p = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val stroke = GestureDescription.StrokeDescription(p, 0, 50)
+        val gd = GestureDescription.Builder().addStroke(stroke).build()
+        val tStart = System.currentTimeMillis()
+        dispatchGesture(gd, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                val latency = System.currentTimeMillis() - tStart
+                Log.i(TAG, "$type tap COMPLETED ($x,$y) seq=$seq ${latency}ms")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"$type","ok":true,"latency_ms":$latency}""")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "$type tap CANCELLED ($x,$y) seq=$seq")
+                udpSender.trySendLine(Config.TAG_TAP_EXEC,
+                    """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"$type","ok":false}""")
+            }
+        }, null)
+    }
+}

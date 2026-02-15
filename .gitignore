@@ -27,3 +27,13 @@ CMakeFiles/
 
 # Logs
 *.log
+  
+# Phase 1 Migration  
+android/.gradle/  
+android/build/  
+android/app/build/  
+android/local.properties  
+android/capture/  
+scripts/__pycache__/  
+*.apk  
+*.keystore  

@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+<LinearLayout
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <!-- Setup Wizard Panel -->
+    <LinearLayout
+        android:id="@+id/setupPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#F5F5F5"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="MirageSystem Setup"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#333333"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Gate 1: Notification -->
+        <LinearLayout
+            android:id="@+id/gate1Row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?android:attr/selectableItemBackground">
+            <TextView
+                android:id="@+id/gate1Icon"
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="⬜"
+                android:textSize="20sp" />
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Gate 1: 通知権限"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <!-- Gate 2: Accessibility -->
+        <LinearLayout
+            android:id="@+id/gate2Row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?android:attr/selectableItemBackground">
+            <TextView
+                android:id="@+id/gate2Icon"
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="⬜"
+                android:textSize="20sp" />
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Gate 2: Accessibility"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <!-- Gate 3: USB -->
+        <LinearLayout
+            android:id="@+id/gate3Row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="8dp">
+            <TextView
+                android:id="@+id/gate3Icon"
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="⬜"
+                android:textSize="20sp" />
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Gate 3: USB接続"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <!-- Gate 4: FGS -->
+        <LinearLayout
+            android:id="@+id/gate4Row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="8dp">
+            <TextView
+                android:id="@+id/gate4Icon"
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="⬜"
+                android:textSize="20sp" />
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Gate 4: サービス稼働"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <!-- Next Action Button -->
+        <Button
+            android:id="@+id/nextActionButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="次へ"
+            android:layout_marginTop="8dp" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="MirageAndroid"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <!-- USB/AOA Section -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="USB (AOA)"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp" />
+
+    <Button
+        android:id="@+id/btnStart"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Start (Capture + Tx + Watchdog)" />
+
+    <Button
+        android:id="@+id/btnStop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Stop"
+        android:layout_marginTop="4dp" />
+
+    <!-- Mirror Section -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Mirror (RTP/H264)"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <EditText
+            android:id="@+id/editMirrorHost"
+            android:layout_width="0dp"
+            android:layout_weight="2"
+            android:layout_height="wrap_content"
+            android:hint="PC IP (e.g. 192.168.0.2)"
+            android:text="192.168.0.2"
+            android:inputType="text" />
+
+        <EditText
+            android:id="@+id/editMirrorPort"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:hint="Port"
+            android:text="50000"
+            android:inputType="number" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnMirrorStart"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Start Mirror" />
+
+    <Button
+        android:id="@+id/btnTcpMirrorStart"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Start TCP Mirror (ADB)"
+        android:layout_marginTop="4dp" />
+
+    <Button
+        android:id="@+id/btnMirrorStop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Stop Mirror"
+        android:layout_marginTop="4dp" />
+
+    <TextView
+        android:id="@+id/mirrorStatusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Mirror: Stopped"
+        android:layout_marginTop="8dp" />
+
+    <!-- Audio Section -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Audio (USB/Opus)"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp" />
+
+    <Button
+        android:id="@+id/btnAudioStart"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Start Audio Capture" />
+
+    <Button
+        android:id="@+id/btnAudioStop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Stop Audio"
+        android:layout_marginTop="4dp" />
+
+    <TextView
+        android:id="@+id/audioStatusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Audio: Stopped"
+        android:layout_marginTop="8dp" />
+
+</LinearLayout>
+</ScrollView>

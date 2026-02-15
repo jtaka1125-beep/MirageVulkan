@@ -1,0 +1,222 @@
+package com.mirage.android.ui
+
+import android.app.Activity
+import android.content.Intent
+import android.hardware.usb.UsbAccessory
+import android.hardware.usb.UsbManager
+import android.media.projection.MediaProjectionManager
+import android.os.Bundle
+import android.util.Log
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import com.mirage.android.util.parcelableExtra
+import com.mirage.android.R
+import com.mirage.android.capture.ScreenCaptureService
+import com.mirage.android.svc.CaptureService
+import com.mirage.android.svc.TxService
+import com.mirage.android.svc.WatchdogService
+import com.mirage.android.usb.AccessoryIoService
+import com.mirage.android.usb.AccessoryReceiver
+
+class MainActivity : AppCompatActivity() {
+    private lateinit var status: TextView
+    private lateinit var mirrorStatus: TextView
+    private lateinit var editMirrorHost: EditText
+    private lateinit var editMirrorPort: EditText
+    private lateinit var mpm: MediaProjectionManager
+
+    // Track which mode we're requesting projection for
+    private var pendingMirrorRequest = false
+
+    // Track if we already requested mirror for this accessory session
+    private var mirrorRequested = false
+
+    companion object {
+        private const val TAG = "MirageMain"
+        private const val REQUEST_PROJECTION = 100
+        private const val REQUEST_MIRROR = 101
+    }
+
+    // Auto mirror parameters from intent
+    private var autoMirrorHost: String? = null
+    private var autoMirrorPort: Int = 50000
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        status = findViewById(R.id.statusText)
+        mirrorStatus = findViewById(R.id.mirrorStatusText)
+        editMirrorHost = findViewById(R.id.editMirrorHost)
+        editMirrorPort = findViewById(R.id.editMirrorPort)
+        mpm = getSystemService(MediaProjectionManager::class.java)
+
+        // USB/AOA buttons
+        findViewById<Button>(R.id.btnStart).setOnClickListener {
+            pendingMirrorRequest = false
+            startActivityForResult(mpm.createScreenCaptureIntent(), REQUEST_PROJECTION)
+        }
+        findViewById<Button>(R.id.btnStop).setOnClickListener {
+            stopService(Intent(this, CaptureService::class.java))
+            stopService(Intent(this, TxService::class.java))
+            stopService(Intent(this, WatchdogService::class.java))
+            stopService(Intent(this, AccessoryIoService::class.java))
+            status.text = "Stopped"
+        }
+
+        // Mirror buttons
+        findViewById<Button>(R.id.btnMirrorStart).setOnClickListener {
+            pendingMirrorRequest = true
+            startActivityForResult(mpm.createScreenCaptureIntent(), REQUEST_MIRROR)
+        }
+        findViewById<Button>(R.id.btnMirrorStop).setOnClickListener {
+            stopService(Intent(this, ScreenCaptureService::class.java))
+            mirrorStatus.text = "Mirror: Stopped"
+        }
+
+        // Check for auto mirror from intent
+        checkAutoMirror(intent)
+
+        // Check for USB accessory on launch or when receiving intent
+        checkAndStartAccessory(intent)
+    }
+
+    private fun checkAutoMirror(intent: Intent) {
+        val autoMirror = intent.getBooleanExtra("auto_mirror", false)
+        if (autoMirror) {
+            autoMirrorHost = intent.getStringExtra("mirror_host")
+            autoMirrorPort = intent.getIntExtra("mirror_port", 50000)
+
+            if (autoMirrorHost != null) {
+                Log.i(TAG, "Auto mirror requested: $autoMirrorHost:$autoMirrorPort")
+                editMirrorHost.setText(autoMirrorHost)
+                editMirrorPort.setText(autoMirrorPort.toString())
+
+                // Request projection permission for mirror
+                pendingMirrorRequest = true
+                startActivityForResult(mpm.createScreenCaptureIntent(), REQUEST_MIRROR)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)  // Update the stored intent
+        intent?.let {
+            checkAutoMirror(it)  // Handle auto mirror from ADB
+            checkAndStartAccessory(it)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Also check on resume in case notification tap brought existing activity to front
+        checkAndStartAccessory(intent)
+    }
+
+    private fun checkAndStartAccessory(intent: Intent) {
+        // Check if launched by USB accessory attachment (from notification tap or direct)
+        val accessory = intent.parcelableExtra<UsbAccessory>(UsbManager.EXTRA_ACCESSORY)
+        if (accessory != null) {
+            Log.i(TAG, "Accessory from intent: ${accessory.manufacturer}/${accessory.model}")
+            startAccessoryService(accessory)
+            // Clear pending flag since we're starting from foreground context
+            AccessoryReceiver.clearPendingAccessory(this)
+            return
+        }
+
+        // Check for pending accessory from notification (Android 15+ workaround)
+        if (AccessoryReceiver.hasPendingAccessory(this)) {
+            Log.i(TAG, "Found pending accessory flag, checking USB manager")
+            val usbManager = getSystemService(UsbManager::class.java)
+            val accessories = usbManager.accessoryList
+            if (accessories != null && accessories.isNotEmpty()) {
+                val acc = accessories[0]
+                Log.i(TAG, "Starting pending accessory: ${acc.manufacturer}/${acc.model}")
+                startAccessoryService(acc)
+                AccessoryReceiver.clearPendingAccessory(this)
+                return
+            } else {
+                Log.w(TAG, "Pending flag set but no accessory found - clearing")
+                AccessoryReceiver.clearPendingAccessory(this)
+            }
+        }
+
+        // Check for already attached accessory (normal startup)
+        val usbManager = getSystemService(UsbManager::class.java)
+        val accessories = usbManager.accessoryList
+        if (accessories != null && accessories.isNotEmpty()) {
+            val acc = accessories[0]
+            Log.i(TAG, "Found attached accessory: ${acc.manufacturer}/${acc.model}")
+            startAccessoryService(acc)
+        }
+    }
+
+    private fun startAccessoryService(accessory: UsbAccessory) {
+        val serviceIntent = Intent(this, AccessoryIoService::class.java).apply {
+            putExtra(UsbManager.EXTRA_ACCESSORY, accessory)
+        }
+        startForegroundService(serviceIntent)
+        status.text = "USB: ${accessory.model}"
+
+        // Auto-start mirror when AOA connected (only once per session)
+        if (!mirrorRequested) {
+            mirrorRequested = true
+            Log.i(TAG, "Auto-requesting mirror permission for AOA accessory")
+            pendingMirrorRequest = true
+            startActivityForResult(mpm.createScreenCaptureIntent(), REQUEST_MIRROR)
+        }
+    }
+
+    private fun requestProjection() {
+        startActivityForResult(mpm.createScreenCaptureIntent(), 100)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            if (requestCode == REQUEST_MIRROR) {
+                mirrorStatus.text = "Mirror: Permission denied"
+            } else {
+                status.text = "MediaProjection denied"
+            }
+            return
+        }
+
+        when (requestCode) {
+            REQUEST_PROJECTION -> {
+                // Start Tx + Watchdog
+                startService(Intent(this, TxService::class.java))
+                startService(Intent(this, WatchdogService::class.java))
+
+                // Start Capture FG service with permission payload
+                val i = Intent(this, CaptureService::class.java).apply {
+                    putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
+                    putExtra(CaptureService.EXTRA_RESULT_DATA, data)
+                }
+                startForegroundService(i)
+
+                status.text = "Started (scaffold). Enable AccessibilityService in Settings."
+            }
+
+            REQUEST_MIRROR -> {
+                val host = editMirrorHost.text.toString().ifBlank { "192.168.0.2" }
+                val port = editMirrorPort.text.toString().toIntOrNull() ?: 50000
+
+                val i = Intent(this, ScreenCaptureService::class.java).apply {
+                    putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
+                    putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
+                    putExtra(ScreenCaptureService.EXTRA_HOST, host)
+                    putExtra(ScreenCaptureService.EXTRA_PORT, port)
+                }
+                startForegroundService(i)
+
+                mirrorStatus.text = "Mirror: Streaming to $host:$port"
+                Log.i(TAG, "Mirror started to $host:$port")
+            }
+        }
+    }
+}
