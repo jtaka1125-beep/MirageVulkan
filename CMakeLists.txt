@@ -339,10 +339,37 @@ if(BUILD_TESTS)
             WIN32_LEAN_AND_MEAN NOMINMAX VK_USE_PLATFORM_WIN32_KHR
         )
 
+        # EventBus test
+        add_executable(test_event_bus
+            tests/test_event_bus.cpp
+        )
+        target_include_directories(test_event_bus PRIVATE src)
+        target_link_libraries(test_event_bus PRIVATE gtest)
+        target_compile_definitions(test_event_bus PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # VID0 parser test
+        add_executable(test_vid0_parser
+            tests/test_vid0_parser.cpp
+        )
+        target_include_directories(test_vid0_parser PRIVATE src)
+        target_link_libraries(test_vid0_parser PRIVATE gtest)
+        target_compile_definitions(test_vid0_parser PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # ADB security test
+        add_executable(test_adb_security
+            tests/test_adb_security.cpp
+        )
+        target_include_directories(test_adb_security PRIVATE src)
+        target_link_libraries(test_adb_security PRIVATE gtest)
+        target_compile_definitions(test_adb_security PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
         enable_testing()
         add_test(NAME VulkanVideoTest COMMAND test_vulkan_video)
         add_test(NAME H264ParserTest COMMAND test_h264_parser)
         add_test(NAME E2EDecodeTest COMMAND test_e2e_decode)
+        add_test(NAME EventBusTest COMMAND test_event_bus)
+        add_test(NAME Vid0ParserTest COMMAND test_vid0_parser)
+        add_test(NAME AdbSecurityTest COMMAND test_adb_security)
 
         message(STATUS "Tests enabled")
     else()
