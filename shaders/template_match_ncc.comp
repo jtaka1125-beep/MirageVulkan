@@ -1,0 +1,174 @@
+#version 450
+
+// Optimized NCC Template Matching Compute Shader
+// Optimizations applied:
+//   G. Early Exit (5-point variance check)
+//   C. Template shared memory cache
+//   B. Tile-based processing (16x16 threads = 16x16 candidate positions per WG)
+//
+// Each workgroup processes a 16x16 tile of candidate positions.
+// Source tile region is loaded into shared memory once.
+// Template is cached in shared memory.
+// Each thread computes NCC for its candidate position independently.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+struct MatchResult {
+    int x;
+    int y;
+    float score;
+    int template_id;
+};
+
+layout(push_constant) uniform PushConstants {
+    int src_width;
+    int src_height;
+    int tpl_width;
+    int tpl_height;
+    int template_id;
+    float threshold;
+    int search_width;
+    int search_height;
+};
+
+layout(set = 0, binding = 0, r8) uniform readonly image2D srcImage;
+layout(set = 0, binding = 1, r8) uniform readonly image2D tplImage;
+
+layout(std430, set = 0, binding = 2) buffer ResultBuffer {
+    MatchResult results[];
+};
+
+layout(std430, set = 0, binding = 3) buffer AtomicCounter {
+    int match_count;
+};
+
+// Shared memory for source tile + template cache
+// Max tile: 16 candidates + 48 template pixels = 64 pixels wide/tall
+// 64*64*4 bytes = 16KB for source tile
+// 48*48*4 bytes = 9KB for template cache (max 48x48)
+// Total: ~25KB, well within 48KB limit
+
+shared float s_src[64][64];  // source tile region
+shared float s_tpl[48][48];  // template cache (max 48x48)
+shared int s_skip;           // early exit flag
+
+void main() {
+    uint lx = gl_LocalInvocationID.x;  // 0..15
+    uint ly = gl_LocalInvocationID.y;  // 0..15
+    uint tid = ly * 16 + lx;           // 0..255
+
+    // Candidate position for this thread
+    int cx = int(gl_WorkGroupID.x) * 16 + int(lx);
+    int cy = int(gl_WorkGroupID.y) * 16 + int(ly);
+
+    // Tile origin in source image
+    int tile_x = int(gl_WorkGroupID.x) * 16;
+    int tile_y = int(gl_WorkGroupID.y) * 16;
+
+    // Tile dimensions needed: 16 + tpl_width - 1, 16 + tpl_height - 1
+    int tile_w = 16 + tpl_width;
+    int tile_h = 16 + tpl_height;
+
+    // Clamp tile dimensions to max shared memory
+    tile_w = min(tile_w, 64);
+    tile_h = min(tile_h, 64);
+
+    const float SCALE = 255.0;
+
+    // === Early Exit (Optimization G) ===
+    // Thread 0 samples 5 points from the tile center region
+    if (tid == 0) {
+        s_skip = 0;
+        int mx = tile_x + tile_w / 2;
+        int my = tile_y + tile_h / 2;
+        mx = clamp(mx, 0, src_width - 1);
+        my = clamp(my, 0, src_height - 1);
+
+        float center = imageLoad(srcImage, ivec2(mx, my)).r;
+        float tl = imageLoad(srcImage, ivec2(max(tile_x, 0), max(tile_y, 0))).r;
+        float tr = imageLoad(srcImage, ivec2(min(tile_x + tile_w - 1, src_width-1), max(tile_y, 0))).r;
+        float bl = imageLoad(srcImage, ivec2(max(tile_x, 0), min(tile_y + tile_h - 1, src_height-1))).r;
+        float br = imageLoad(srcImage, ivec2(min(tile_x + tile_w - 1, src_width-1), min(tile_y + tile_h - 1, src_height-1))).r;
+
+        float maxDiff = max(abs(tl - center), max(abs(tr - center), max(abs(bl - center), abs(br - center))));
+        // If entire tile is nearly uniform, skip NCC (threshold in normalized 0-1 range)
+        if (maxDiff < 0.03) {
+            s_skip = 1;
+        }
+    }
+    barrier();
+    if (s_skip == 1) return;
+
+    // === Load source tile into shared memory (Optimization B) ===
+    // 256 threads load tile_w * tile_h pixels cooperatively
+    int tile_pixels = tile_w * tile_h;
+    for (int i = int(tid); i < tile_pixels; i += 256) {
+        int tx = i % tile_w;
+        int ty = i / tile_w;
+        int sx = tile_x + tx;
+        int sy = tile_y + ty;
+        float val = 0.0;
+        if (sx >= 0 && sx < src_width && sy >= 0 && sy < src_height) {
+            val = imageLoad(srcImage, ivec2(sx, sy)).r;
+        }
+        s_src[ty][tx] = val * SCALE;
+    }
+
+    // === Load template into shared memory (Optimization C) ===
+    int tpl_pixels = tpl_width * tpl_height;
+    for (int i = int(tid); i < tpl_pixels; i += 256) {
+        int tx = i % tpl_width;
+        int ty = i / tpl_width;
+        s_tpl[ty][tx] = imageLoad(tplImage, ivec2(tx, ty)).r * SCALE;
+    }
+
+    barrier();
+
+    // === NCC computation per thread ===
+    // Each thread handles one candidate position (cx, cy)
+    if (cx >= search_width || cy >= search_height) return;
+
+    // Offset within the shared memory tile
+    int ox = int(lx);  // cx - tile_x
+    int oy = int(ly);  // cy - tile_y
+
+    float sum_st = 0.0;
+    float sum_ss = 0.0;
+    float sum_tt = 0.0;
+    float sum_s = 0.0;
+    float sum_t = 0.0;
+
+    for (int py = 0; py < tpl_height; py++) {
+        for (int px = 0; px < tpl_width; px++) {
+            float s = s_src[oy + py][ox + px];
+            float t = s_tpl[py][px];
+            sum_st += s * t;
+            sum_ss += s * s;
+            sum_tt += t * t;
+            sum_s += s;
+            sum_t += t;
+        }
+    }
+
+    float n = float(tpl_pixels);
+    float numerator = n * sum_st - sum_s * sum_t;
+    float denom_s = n * sum_ss - sum_s * sum_s;
+    float denom_t = n * sum_tt - sum_t * sum_t;
+
+    float score = 0.0;
+    if (denom_s > 1.0 && denom_t > 1.0) {
+        float denominator = sqrt(denom_s * denom_t);
+        score = numerator / denominator;
+        score = clamp(score, -1.0, 1.0);
+    }
+
+    if (score >= threshold) {
+        int idx = atomicAdd(match_count, 1);
+        if (idx < 1024) {
+            results[idx].x = cx;
+            results[idx].y = cy;
+            results[idx].score = score;
+            results[idx].template_id = template_id;
+        }
+    }
+}

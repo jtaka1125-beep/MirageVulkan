@@ -1,0 +1,21 @@
+#version 450
+
+// RGBA to Grayscale conversion compute shader
+// Uses ITU-R BT.601 luma coefficients (same as OpenCV cvtColor)
+// Work group: 16x16 threads
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D inputImage;
+layout(set = 0, binding = 1, r8)    uniform writeonly image2D outputImage;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(inputImage);
+
+    if (pos.x >= size.x || pos.y >= size.y) return;
+
+    vec4 rgba = imageLoad(inputImage, pos);
+    float gray = 0.299 * rgba.r + 0.587 * rgba.g + 0.114 * rgba.b;
+    imageStore(outputImage, pos, vec4(gray, 0.0, 0.0, 0.0));
+}

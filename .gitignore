@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+Debug/
+Release/
+x64/
+out/
+
+# CMake generated
+CMakeCache.txt
+cmake_install.cmake
+CMakeFiles/
+
+# Compiled objects and binaries
+*.obj
+*.exe
+*.pdb
+*.ilk
+
+# SPIR-V compiled shaders
+*.spv
+
+# IDE / Editor
+.vs/
+.cache/
+*.user
+*.suo
+
+# Logs
+*.log

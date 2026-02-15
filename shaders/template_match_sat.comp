@@ -1,0 +1,126 @@
+#version 450
+
+// SAT-based NCC Template Matching
+// Uses precomputed Summed Area Tables for O(1) NCC per candidate.
+// SAT_s  = prefix sum of source values
+// SAT_ss = prefix sum of source values squared
+// Template sums (sum_t, sum_tt) are passed as push constants (precomputed on CPU).
+//
+// For sum_st (cross-correlation), we still need to compute it traditionally
+// since SAT of (s*t) requires a per-template SAT which is expensive.
+// 
+// Hybrid approach: use SAT for sum_s, sum_ss (shared across templates),
+// fall back to direct computation for sum_st only.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+struct MatchResult {
+    int x;
+    int y;
+    float score;
+    int template_id;
+};
+
+layout(push_constant) uniform PushConstants {
+    int src_width;
+    int src_height;
+    int tpl_width;
+    int tpl_height;
+    int template_id;
+    float threshold;
+    int search_width;
+    int search_height;
+    float sum_t;       // precomputed: sum of template values
+    float sum_tt;      // precomputed: sum of template values squared
+    float inv_n;       // 1.0 / (tpl_width * tpl_height)
+    float denom_t;     // precomputed: n*sum_tt - sum_t^2
+};
+
+layout(set = 0, binding = 0, r8)   uniform readonly image2D srcImage;
+layout(set = 0, binding = 1, r8)   uniform readonly image2D tplImage;
+layout(set = 0, binding = 2, r32f) uniform readonly image2D satS;   // SAT of source
+layout(set = 0, binding = 3, r32f) uniform readonly image2D satSS;  // SAT of source^2
+
+layout(std430, set = 0, binding = 4) buffer ResultBuffer {
+    MatchResult results[];
+};
+
+layout(std430, set = 0, binding = 5) buffer AtomicCounter {
+    int match_count;
+};
+
+// SAT rectangle sum: sum of values in [x0,y0]..[x1,y1] inclusive
+// Inline macro avoids image2D format qualifier loss in function params
+#define SAT_QUERY(sat, x0, y0, x1, y1) \
+    (imageLoad(sat, ivec2(x1, y1)).r \
+     - ((y0 > 0) ? imageLoad(sat, ivec2(x1, (y0) - 1)).r : 0.0) \
+     - ((x0 > 0) ? imageLoad(sat, ivec2((x0) - 1, y1)).r : 0.0) \
+     + ((x0 > 0 && y0 > 0) ? imageLoad(sat, ivec2((x0) - 1, (y0) - 1)).r : 0.0))
+
+// Template cache in shared memory
+shared float s_tpl[48][48];
+shared int s_skip;
+
+void main() {
+    int cx = int(gl_WorkGroupID.x) * 16 + int(gl_LocalInvocationID.x);
+    int cy = int(gl_WorkGroupID.y) * 16 + int(gl_LocalInvocationID.y);
+    uint tid = gl_LocalInvocationID.y * 16 + gl_LocalInvocationID.x;
+
+    // Early exit: check if denom_t is valid
+    if (tid == 0) {
+        s_skip = (denom_t <= 1.0) ? 1 : 0;
+    }
+    barrier();
+    if (s_skip == 1) return;
+
+    // Load template into shared memory
+    int tpl_pixels = tpl_width * tpl_height;
+    const float SCALE = 255.0;
+    for (int i = int(tid); i < tpl_pixels; i += 256) {
+        int tx = i % tpl_width;
+        int ty = i / tpl_width;
+        s_tpl[ty][tx] = imageLoad(tplImage, ivec2(tx, ty)).r * SCALE;
+    }
+    barrier();
+
+    if (cx >= search_width || cy >= search_height) return;
+
+    // Use SAT for sum_s and sum_ss (O(1) per candidate)
+    int x0 = cx;
+    int y0 = cy;
+    int x1 = cx + tpl_width - 1;
+    int y1 = cy + tpl_height - 1;
+
+    float region_sum_s = SAT_QUERY(satS, x0, y0, x1, y1);
+    float region_sum_ss = SAT_QUERY(satSS, x0, y0, x1, y1);
+
+    float n = float(tpl_pixels);
+    float local_denom_s = n * region_sum_ss - region_sum_s * region_sum_s;
+
+    if (local_denom_s <= 1.0) return;  // Uniform source region
+
+    // Compute sum_st directly (still need template * source correlation)
+    float local_sum_st = 0.0;
+    for (int py = 0; py < tpl_height; py++) {
+        for (int px = 0; px < tpl_width; px++) {
+            float s = imageLoad(srcImage, ivec2(cx + px, cy + py)).r * SCALE;
+            float t = s_tpl[py][px];
+            local_sum_st += s * t;
+        }
+    }
+
+    float numerator = n * local_sum_st - region_sum_s * sum_t;
+    float denominator = sqrt(local_denom_s * denom_t);
+    float score = numerator / denominator;
+    score = clamp(score, -1.0, 1.0);
+
+    if (score >= threshold) {
+        int idx = atomicAdd(match_count, 1);
+        if (idx < 1024) {
+            results[idx].x = cx;
+            results[idx].y = cy;
+            results[idx].score = score;
+            results[idx].template_id = template_id;
+        }
+    }
+}

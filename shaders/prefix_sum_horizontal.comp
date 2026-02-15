@@ -1,0 +1,80 @@
+#version 450
+
+// Prefix Sum - Horizontal Pass
+// Each workgroup processes one row.
+// Computes cumulative sum for SAT (Summed Area Table).
+//
+// Precision note: float32 prefix sums lose precision on large images because
+// accumulated values grow much larger than individual pixel values, causing
+// small values to be rounded away.  We use Kahan (compensated) summation to
+// retain ~2x the effective mantissa bits without requiring float64 support.
+
+layout(local_size_x = 256) in;
+
+layout(push_constant) uniform PushConstants {
+    int width;
+    int height;
+    int mode;  // 0 = sum(s), 1 = sum(s^2)
+    int pad0;
+};
+
+layout(set = 0, binding = 0, r8) uniform readonly image2D inputImage;
+layout(set = 0, binding = 1, r32f) coherent uniform image2D outputImage;
+
+shared float s_data[256];
+
+void main() {
+    int row = int(gl_WorkGroupID.x);
+    int tid = int(gl_LocalInvocationID.x);
+
+    if (row >= height) return;
+
+    // Each thread processes a stripe of columns
+    int cols_per_thread = (width + 255) / 256;
+    int start_col = tid * cols_per_thread;
+    int end_col = min(start_col + cols_per_thread, width);
+
+    // Phase 1: local prefix sum within stripe (Kahan compensated)
+    float running = 0.0;
+    float comp = 0.0;  // Kahan compensation
+    for (int col = start_col; col < end_col; col++) {
+        float val = imageLoad(inputImage, ivec2(col, row)).r * 255.0;
+        if (mode == 1) val = val * val;
+        float y = val - comp;
+        float t = running + y;
+        comp = (t - running) - y;
+        running = t;
+        imageStore(outputImage, ivec2(col, row), vec4(running, 0, 0, 0));
+    }
+
+    // Store stripe total
+    s_data[tid] = running;
+    barrier();
+
+    // Phase 2: sequential prefix sum across stripe totals (thread 0 only)
+    // Kahan compensated to avoid accumulation error across 256 stripe totals
+    if (tid == 0) {
+        float acc = 0.0;
+        float c = 0.0;
+        for (int i = 0; i < 256; i++) {
+            float tmp = s_data[i];
+            s_data[i] = acc;
+            float y = tmp - c;
+            float t = acc + y;
+            c = (t - acc) - y;
+            acc = t;
+        }
+    }
+    barrier();
+
+    // Phase 3: add cross-stripe prefix to all values
+    // memoryBarrierImage ensures Phase 1 imageStore is visible for Phase 3 imageLoad
+    memoryBarrierImage();
+    float prefix = s_data[tid];
+    if (prefix != 0.0) {
+        for (int col = start_col; col < end_col; col++) {
+            float val = imageLoad(outputImage, ivec2(col, row)).r;
+            imageStore(outputImage, ivec2(col, row), vec4(val + prefix, 0, 0, 0));
+        }
+    }
+}

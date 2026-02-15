@@ -1,0 +1,28 @@
+#version 450
+
+// 2x Downsample compute shader for multi-scale pyramid
+// Takes average of 2x2 pixel block
+// Work group: 16x16 threads
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, r8) uniform readonly  image2D inputImage;
+layout(set = 0, binding = 1, r8) uniform writeonly image2D outputImage;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 outSize = imageSize(outputImage);
+
+    if (pos.x >= outSize.x || pos.y >= outSize.y) return;
+
+    // Sample 2x2 block from input
+    ivec2 src = pos * 2;
+    float p00 = imageLoad(inputImage, src).r;
+    float p10 = imageLoad(inputImage, src + ivec2(1, 0)).r;
+    float p01 = imageLoad(inputImage, src + ivec2(0, 1)).r;
+    float p11 = imageLoad(inputImage, src + ivec2(1, 1)).r;
+
+    float avg = (p00 + p10 + p01 + p11) * 0.25;
+
+    imageStore(outputImage, pos, vec4(avg, 0.0, 0.0, 0.0));
+}

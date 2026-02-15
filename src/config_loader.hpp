@@ -1,0 +1,214 @@
+#pragma once
+// =============================================================================
+// MirageTestKit Config Loader
+// =============================================================================
+// Loads settings from config.json with nlohmann/json (fallback to manual parser)
+// =============================================================================
+
+#include <string>
+#include <fstream>
+#include <sstream>
+#include "mirage_log.hpp"
+
+// Try nlohmann/json, fall back to manual parser
+#if __has_include("nlohmann/json.hpp")
+#include "nlohmann/json.hpp"
+#define MIRAGE_HAS_JSON 1
+#else
+#define MIRAGE_HAS_JSON 0
+#endif
+
+namespace mirage {
+namespace config {
+
+struct NetworkConfig {
+    std::string pc_ip = "192.168.0.7";
+    int video_base_port = 60000;
+    int command_base_port = 50000;
+    int tcp_command_port = 50100;
+};
+
+struct UsbTetherConfig {
+    std::string android_ip = "192.168.42.129";
+    std::string pc_subnet = "192.168.42.0/24";
+};
+
+struct GuiConfig {
+    int window_width = 1920;
+    int window_height = 1080;
+    bool vsync = true;
+};
+
+struct AiConfig {
+    bool enabled = true;
+    std::string templates_dir = "templates";
+    float default_threshold = 0.80f;
+};
+
+struct OcrConfig {
+    bool enabled = false;
+    std::string language = "eng+jpn";
+};
+
+struct AppConfig {
+    NetworkConfig network;
+    UsbTetherConfig usb_tether;
+    GuiConfig gui;
+    AiConfig ai;
+    OcrConfig ocr;
+};
+
+#if MIRAGE_HAS_JSON
+// Safe JSON accessor with section/key and default value
+template<typename T>
+T jsonGet(const nlohmann::json& j, const std::string& section,
+          const std::string& key, const T& def) {
+    try {
+        if (j.contains(section) && j[section].contains(key)) {
+            return j[section][key].get<T>();
+        }
+    } catch (...) {}
+    return def;
+}
+#else
+// Fallback: simple JSON extractors (no external deps)
+inline std::string extractJsonString(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\"";
+    size_t pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return "";
+    pos = json.find('\"', pos);
+    if (pos == std::string::npos) return "";
+    size_t start = pos + 1;
+    size_t end = json.find('\"', start);
+    if (end == std::string::npos) return "";
+    return json.substr(start, end - start);
+}
+
+inline int extractJsonInt(const std::string& json, const std::string& key, int def) {
+    std::string search = "\"" + key + "\"";
+    size_t pos = json.find(search);
+    if (pos == std::string::npos) return def;
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return def;
+    while (pos < json.size() && (json[pos] == ':' || json[pos] == ' ' || json[pos] == '\t')) pos++;
+    std::string numStr;
+    while (pos < json.size() && (isdigit(json[pos]) || json[pos] == '-')) numStr += json[pos++];
+    if (numStr.empty()) return def;
+    try { return std::stoi(numStr); } catch (...) { return def; }
+}
+
+inline float extractJsonFloat(const std::string& json, const std::string& key, float def) {
+    std::string search = "\"" + key + "\"";
+    size_t pos = json.find(search);
+    if (pos == std::string::npos) return def;
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return def;
+    while (pos < json.size() && (json[pos] == ':' || json[pos] == ' ' || json[pos] == '\t')) pos++;
+    std::string numStr;
+    while (pos < json.size() && (isdigit(json[pos]) || json[pos] == '-' || json[pos] == '.')) numStr += json[pos++];
+    if (numStr.empty()) return def;
+    try { return std::stof(numStr); } catch (...) { return def; }
+}
+
+inline bool extractJsonBool(const std::string& json, const std::string& key, bool def) {
+    std::string search = "\"" + key + "\"";
+    size_t pos = json.find(search);
+    if (pos == std::string::npos) return def;
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return def;
+    if (json.find("true", pos) < json.find(',', pos)) return true;
+    if (json.find("false", pos) < json.find(',', pos)) return false;
+    return def;
+}
+#endif
+
+// @param configPath  Path to config file
+// @param strict      If true, only try the exact path (no fallback search)
+inline AppConfig loadConfig(const std::string& configPath = "../config.json",
+                            bool strict = false) {
+    AppConfig config;
+
+    std::ifstream file(configPath);
+    if (!file.is_open() && !strict) {
+        file.open("config.json");
+        if (!file.is_open()) {
+            file.open("../../config.json");
+        }
+    }
+    if (!file.is_open()) {
+        MLOG_WARN("config", "config.json not found, using defaults");
+        return config;
+    }
+
+#if MIRAGE_HAS_JSON
+    try {
+        nlohmann::json j = nlohmann::json::parse(file);
+
+        config.network.pc_ip = jsonGet<std::string>(j, "network", "pc_ip", "192.168.0.7");
+        config.network.video_base_port = jsonGet<int>(j, "network", "video_base_port", 60000);
+        config.network.command_base_port = jsonGet<int>(j, "network", "command_base_port", 50000);
+        config.network.tcp_command_port = jsonGet<int>(j, "network", "tcp_command_port", 50100);
+
+        config.usb_tether.android_ip = jsonGet<std::string>(j, "usb_tether", "android_ip", "192.168.42.129");
+        config.usb_tether.pc_subnet = jsonGet<std::string>(j, "usb_tether", "pc_subnet", "192.168.42.0/24");
+
+        config.gui.window_width = jsonGet<int>(j, "gui", "window_width", 1920);
+        config.gui.window_height = jsonGet<int>(j, "gui", "window_height", 1080);
+        config.gui.vsync = jsonGet<bool>(j, "gui", "vsync", true);
+
+        config.ai.enabled = jsonGet<bool>(j, "ai", "enabled", true);
+        config.ai.templates_dir = jsonGet<std::string>(j, "ai", "templates_dir", "templates");
+        config.ai.default_threshold = jsonGet<float>(j, "ai", "default_threshold", 0.80f);
+
+        config.ocr.enabled = jsonGet<bool>(j, "ocr", "enabled", false);
+        config.ocr.language = jsonGet<std::string>(j, "ocr", "language", "eng+jpn");
+
+    } catch (const nlohmann::json::exception& e) {
+        MLOG_ERROR("config", "JSON parse error: %s", e.what());
+        return config;
+    }
+#else
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string json = buffer.str();
+
+    config.network.pc_ip = extractJsonString(json, "pc_ip");
+    if (config.network.pc_ip.empty()) config.network.pc_ip = "192.168.0.7";
+    config.network.video_base_port = extractJsonInt(json, "video_base_port", 60000);
+    config.network.command_base_port = extractJsonInt(json, "command_base_port", 50000);
+    config.network.tcp_command_port = extractJsonInt(json, "tcp_command_port", 50100);
+
+    config.usb_tether.android_ip = extractJsonString(json, "android_ip");
+    if (config.usb_tether.android_ip.empty()) config.usb_tether.android_ip = "192.168.42.129";
+
+    config.gui.window_width = extractJsonInt(json, "window_width", 1920);
+    config.gui.window_height = extractJsonInt(json, "window_height", 1080);
+    config.gui.vsync = extractJsonBool(json, "vsync", true);
+
+    config.ai.enabled = extractJsonBool(json, "enabled", true);
+    config.ai.templates_dir = extractJsonString(json, "templates_dir");
+    if (config.ai.templates_dir.empty()) config.ai.templates_dir = "templates";
+    config.ai.default_threshold = extractJsonFloat(json, "default_threshold", 0.80f);
+
+    config.ocr.enabled = extractJsonBool(json, "enabled", false);
+    config.ocr.language = extractJsonString(json, "language");
+    if (config.ocr.language.empty()) config.ocr.language = "eng+jpn";
+#endif
+
+    MLOG_INFO("config", "Loaded: pc_ip=%s, video_port=%d, command_port=%d",
+              config.network.pc_ip.c_str(),
+              config.network.video_base_port,
+              config.network.command_base_port);
+
+    return config;
+}
+
+inline AppConfig& getConfig() {
+    static AppConfig config = loadConfig();
+    return config;
+}
+
+} // namespace config
+} // namespace mirage

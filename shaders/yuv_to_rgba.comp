@@ -1,0 +1,77 @@
+// =============================================================================
+// MirageSystem - YUV (NV12) to RGBA Conversion Compute Shader
+// =============================================================================
+// Input:  NV12 VkImage (2-plane: Y + interleaved UV)
+// Output: RGBA VkImage
+// Color space: BT.601 or BT.709 (configurable via push constant)
+// =============================================================================
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// NV12 input (2-plane format)
+layout(set = 0, binding = 0) uniform sampler2D y_plane;   // Luma (full resolution)
+layout(set = 0, binding = 1) uniform sampler2D uv_plane;  // Chroma (half resolution, interleaved UV)
+
+// RGBA output
+layout(set = 0, binding = 2, rgba8) uniform writeonly image2D rgba_output;
+
+// Push constants
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint height;
+    uint color_space;  // 0 = BT.601, 1 = BT.709
+    uint reserved;
+} pc;
+
+// BT.601 coefficients (SDTV)
+const mat3 YUV_TO_RGB_BT601 = mat3(
+    1.164,  1.164,  1.164,
+    0.000, -0.392,  2.017,
+    1.596, -0.813,  0.000
+);
+
+// BT.709 coefficients (HDTV)
+const mat3 YUV_TO_RGB_BT709 = mat3(
+    1.164,  1.164,  1.164,
+    0.000, -0.213,  2.112,
+    1.793, -0.533,  0.000
+);
+
+void main() {
+    uvec2 gid = gl_GlobalInvocationID.xy;
+
+    // Bounds check
+    if (gid.x >= pc.width || gid.y >= pc.height) {
+        return;
+    }
+
+    // Calculate texture coordinates
+    vec2 tex_coord = (vec2(gid) + 0.5) / vec2(pc.width, pc.height);
+
+    // Sample Y (full resolution)
+    float y = texture(y_plane, tex_coord).r;
+
+    // Sample UV (half resolution, interleaved)
+    // NV12 stores U in R, V in G
+    vec2 uv = texture(uv_plane, tex_coord).rg;
+
+    // Adjust YUV values
+    // Y: [16, 235] -> [0, 1] (studio swing)
+    // UV: [16, 240] -> [-0.5, 0.5]
+    y = (y - 16.0 / 255.0) * (255.0 / 219.0);
+    vec2 uv_adj = uv - 128.0 / 255.0;
+
+    // Select color space matrix
+    mat3 yuv_to_rgb = (pc.color_space == 1) ? YUV_TO_RGB_BT709 : YUV_TO_RGB_BT601;
+
+    // Convert to RGB
+    vec3 yuv_vec = vec3(y, uv_adj.x, uv_adj.y);
+    vec3 rgb = yuv_to_rgb * yuv_vec;
+
+    // Clamp to valid range
+    rgb = clamp(rgb, 0.0, 1.0);
+
+    // Write RGBA output
+    imageStore(rgba_output, ivec2(gid), vec4(rgb, 1.0));
+}
