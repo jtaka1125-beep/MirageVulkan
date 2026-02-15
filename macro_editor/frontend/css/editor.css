@@ -1,0 +1,38 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', sans-serif; background: #1e1e2e; color: #cdd6f4; overflow: hidden; }
+
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+#toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 16px; background: #181825; border-bottom: 1px solid #313244;
+    height: 48px;
+}
+#toolbar h1 { font-size: 16px; color: #89b4fa; }
+#toolbar-buttons { display: flex; gap: 8px; align-items: center; }
+#toolbar-buttons button {
+    padding: 6px 14px; border: none; border-radius: 6px;
+    background: #313244; color: #cdd6f4; cursor: pointer; font-size: 13px;
+}
+#toolbar-buttons button:hover { background: #45475a; }
+#btn-run { background: #a6e3a1; color: #1e1e2e; font-weight: bold; }
+#btn-run:hover { background: #94e294; }
+
+#device-select {
+    padding: 6px 10px; border-radius: 6px; border: 1px solid #45475a;
+    background: #313244; color: #cdd6f4; font-size: 13px;
+}
+
+#main-content { display: flex; flex: 1; overflow: hidden; }
+#blockly-area { flex: 1; position: relative; }
+#blocklyDiv { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+
+#code-preview {
+    width: 350px; background: #181825; border-left: 1px solid #313244;
+    overflow-y: auto; padding: 12px;
+}
+#code-preview h3 { font-size: 14px; color: #89b4fa; margin-bottom: 8px; }
+#code-output {
+    font-family: 'Consolas', monospace; font-size: 12px; line-height: 1.5;
+    color: #a6e3a1; white-space: pre-wrap; word-break: break-all;
+}

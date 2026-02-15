@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>MirageSystem Macro Editor</title>
+    <script src="https://unpkg.com/blockly/blockly.min.js"></script>
+    <link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+    <div id="app">
+        <div id="toolbar">
+            <h1>Mirage Macro Editor</h1>
+            <div id="toolbar-buttons">
+                <select id="device-select">
+                    <option value="">デバイス未選択</option>
+                </select>
+                <button id="btn-run" onclick="runMacro()">▶ 実行</button>
+                <button id="btn-save" onclick="saveMacro()">💾 保存</button>
+                <button id="btn-load" onclick="loadMacro()">📂 読込</button>
+                <button id="btn-export" onclick="exportCode()">📝 出力</button>
+            </div>
+        </div>
+        <div id="main-content">
+            <div id="blockly-area">
+                <div id="blocklyDiv"></div>
+            </div>
+            <div id="code-preview">
+                <h3>生成コード</h3>
+                <pre id="code-output">// ブロックをドラッグして開始</pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/blocks/adb_touch.js"></script>
+    <script src="js/generators/python_adb.js"></script>
+    <script src="js/toolbox.js"></script>
+    <script src="js/workspace.js"></script>
+</body>
+</html>

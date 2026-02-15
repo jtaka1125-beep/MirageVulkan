@@ -37,3 +37,8 @@ android/capture/
 scripts/__pycache__/  
 *.apk  
 *.keystore  
+  
+# Phase 2 Migration  
+macro_editor_venv/  
+macro_editor/__pycache__/  
+driver_installer/*.exe  

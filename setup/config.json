@@ -1,0 +1,4 @@
+{
+    "work_folder": "",
+    "comment": "work_folder が空の場合、デフォルトパス (./setup) を使用します"
+}
