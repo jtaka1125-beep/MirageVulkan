@@ -1,0 +1,8 @@
+# MirageVulkan Python Dependencies
+# Install: pip install -r requirements.txt
+# Or on MSYS2: pacman -S mingw-w64-x86_64-python-{pillow,opencv}
+
+pytesseract>=0.3.13
+pillow>=12.0
+opencv-python>=4.10
+pywebview>=5.0
