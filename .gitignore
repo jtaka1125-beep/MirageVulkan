@@ -42,3 +42,8 @@ scripts/__pycache__/
 macro_editor_venv/  
 macro_editor/__pycache__/  
 driver_installer/*.exe  
+  
+# Phase 3  
+macro_editor_venv/  
+*.pyc  
+__pycache__/  
