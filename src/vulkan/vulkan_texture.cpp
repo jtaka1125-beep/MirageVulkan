@@ -74,7 +74,9 @@ bool VulkanTexture::create(VulkanContext& ctx, VkDescriptorPool pool, int w, int
     if (vkAllocateMemory(dev, &bai, nullptr, &staging_mem_) != VK_SUCCESS) {
         MLOG_ERROR("VkTex", "staging alloc failed"); return false;
     }
-    vkBindBufferMemory(dev, staging_, staging_mem_, 0);
+    if (vkBindBufferMemory(dev, staging_, staging_mem_, 0) != VK_SUCCESS) {
+        MLOG_ERROR("VkTex", "vkBindBufferMemory failed"); return false;
+    }
 
     layout_initialized_ = false;
     MLOG_INFO("VkTex", "Created %dx%d", w, h);

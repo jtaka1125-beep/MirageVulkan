@@ -78,6 +78,14 @@ public:
 
     bool is_registered() const { return registered_.load(); }
 
+    // Mark as unregistered without sending USB command (for disconnected devices)
+    void mark_unregistered() {
+        registered_.store(false);
+#ifdef USE_LIBUSB
+        handle_ = nullptr;
+#endif
+    }
+
     // ── High-level operations (pixel coordinates) ──
 
     // Single tap at pixel (x, y) on screen of (screen_w x screen_h)

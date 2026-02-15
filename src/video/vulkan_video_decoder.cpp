@@ -753,14 +753,15 @@ bool VulkanVideoDecoder::allocateDpbSlots() {
             return false;
         }
 
-        // Create image view
+        // Create image view for video decode output
+        // For Vulkan Video decode DPB, use VK_IMAGE_ASPECT_COLOR_BIT
+        // This is the correct aspect for video decode reference pictures
         VkImageViewCreateInfo view_info = {};
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_info.image = slot.image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-        // Multi-planar NV12 format requires plane aspect bits (not COLOR_BIT)
-        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         view_info.subresourceRange.baseMipLevel = 0;
         view_info.subresourceRange.levelCount = 1;
         view_info.subresourceRange.baseArrayLayer = 0;
@@ -1069,6 +1070,8 @@ DecodeResult VulkanVideoDecoder::decode(const uint8_t* nal_data, size_t nal_size
 
             case NalUnitType::SLICE_NON_IDR:
             case NalUnitType::SLICE_IDR: {
+                // Pass original NAL data with start code for Vulkan Video bitstream
+                // decodeSlice will skip start code internally when parsing
                 result = decodeSlice(nal.data, nal.size, pts);
                 if (result.success && frame_callback_) {
                     frame_callback_(result.output_image, result.output_view,
@@ -1175,6 +1178,20 @@ DecodeResult VulkanVideoDecoder::decodeSlice(const uint8_t* nal_data, size_t nal
         return result;
     }
 
+    // Skip start code to find NAL header
+    // nal_data may include start code (00 00 01 or 00 00 00 01)
+    const uint8_t* nal_header = nal_data;
+    size_t header_offset = 0;
+    if (nal_size >= 4 && nal_data[0] == 0 && nal_data[1] == 0) {
+        if (nal_data[2] == 1) {
+            header_offset = 3;
+        } else if (nal_size >= 5 && nal_data[2] == 0 && nal_data[3] == 1) {
+            header_offset = 4;
+        }
+    }
+    nal_header = nal_data + header_offset;
+    size_t nal_payload_size = nal_size - header_offset;
+
     // Acquire frame resources for async decode
     uint32_t frame_index = acquireFrameResources();
     auto& frame_res = frame_resources_[frame_index];
@@ -1183,12 +1200,12 @@ DecodeResult VulkanVideoDecoder::decodeSlice(const uint8_t* nal_data, size_t nal
     H264SliceHeader slice_header;
     H264Parser parser;
 
-    // Get NAL unit type and parse slice header
-    uint8_t nal_type = nal_data[0] & 0x1F;
+    // Get NAL unit type and parse slice header (from NAL header, not start code)
+    uint8_t nal_type = nal_header[0] & 0x1F;
     bool is_idr = (nal_type == static_cast<uint8_t>(NalUnitType::SLICE_IDR));
 
-    // Remove emulation prevention bytes for parsing
-    std::vector<uint8_t> rbsp = parser.removeEmulationPrevention(nal_data, nal_size);
+    // Remove emulation prevention bytes for parsing (from NAL header)
+    std::vector<uint8_t> rbsp = parser.removeEmulationPrevention(nal_header, nal_payload_size);
 
     // Find active PPS and SPS
     if (active_pps_id_ < 0 || active_pps_id_ >= (int)pps_list_.size() || !pps_list_[active_pps_id_]) {
@@ -1324,7 +1341,7 @@ DecodeResult VulkanVideoDecoder::decodeSlice(const uint8_t* nal_data, size_t nal
     std_pic_info.pic_parameter_set_id = static_cast<uint8_t>(active_pps_id_);
     std_pic_info.frame_num = slice_header.frame_num;
     std_pic_info.idr_pic_id = slice_header.idr_pic_id;
-    uint8_t nal_ref_idc = (nal_data[0] >> 5) & 0x03;
+    uint8_t nal_ref_idc = (nal_header[0] >> 5) & 0x03;
     std_pic_info.PicOrderCnt[0] = calculatePOC(slice_header, sps, is_idr, nal_ref_idc);
     std_pic_info.PicOrderCnt[1] = std_pic_info.PicOrderCnt[0];
 

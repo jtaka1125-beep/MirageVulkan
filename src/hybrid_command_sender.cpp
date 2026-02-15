@@ -40,11 +40,19 @@ bool HybridCommandSender::start() {
     // Unregister HID on device disconnect
     usb_sender_->set_device_closed_callback([this](const std::string& usb_id) {
         auto it = hid_touches_.find(usb_id);
-        if (it != hid_touches_.end()) {
-            MLOG_INFO("hybridcmd", "Device %s disconnected, unregistering HID touch", usb_id.c_str());
-            // Note: unregister_device will likely fail (device gone), but clears internal state
-            if (it->second && it->second->is_registered()) {
-                it->second->unregister_device(it->second->get_handle());
+        if (it != hid_touches_.end() && it->second) {
+            MLOG_INFO("hybridcmd", "Device %s disconnected, cleaning up HID touch state", usb_id.c_str());
+            // Clear registered state first (device may already be gone)
+            // unregister_device will try to send unregister command and clear handle
+            if (it->second->is_registered()) {
+                auto* handle = it->second->get_handle();
+                if (handle) {
+                    // Attempt to unregister, but don't fail if device is gone
+                    it->second->unregister_device(handle);
+                } else {
+                    // Handle already gone, just mark as unregistered
+                    it->second->mark_unregistered();
+                }
             }
             hid_touches_.erase(it);
         }

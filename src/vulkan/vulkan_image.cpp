@@ -120,7 +120,10 @@ bool VulkanImage::createStagingBuffer(VkDeviceSize size) {
         MLOG_ERROR("VkImg", "staging alloc failed");
         return false;
     }
-    vkBindBufferMemory(dev, staging_, staging_mem_, 0);
+    if (vkBindBufferMemory(dev, staging_, staging_mem_, 0) != VK_SUCCESS) {
+        MLOG_ERROR("VkImg", "vkBindBufferMemory failed");
+        return false;
+    }
 
     // Persistently map staging buffer (Optimization D)
     if (vkMapMemory(dev, staging_mem_, 0, staging_size_, 0, &staging_mapped_) != VK_SUCCESS) {

@@ -30,14 +30,9 @@
 #include <memory>
 #include <algorithm>
 
-// VID0 protocol constants
-static constexpr uint32_t VID0_MAGIC = 0x56494430;  // "VID0"
-static constexpr size_t VID0_HEADER_SIZE = 8;
-static constexpr uint32_t VID0_MAX_PACKET_LEN = 65535;
-static constexpr uint32_t VID0_MIN_PACKET_LEN = 12;
+#include "vid0_parser.hpp"  // Common VID0 parser
+
 static constexpr size_t TCP_RECV_BUF_SIZE = 64 * 1024;
-static constexpr size_t STREAM_BUFFER_MAX = 128 * 1024;
-static constexpr size_t STREAM_BUFFER_TRIM = 32 * 1024;
 
 // Reconnect: exponential backoff
 static constexpr int RECONNECT_INIT_MS = 2000;
@@ -308,40 +303,21 @@ void TcpVideoReceiver::parseVid0Stream(const std::string& hardware_id,
         pkt_counter = &it->second.pkt_count;
     }
 
-    size_t pos = 0;
-    while (pos + VID0_HEADER_SIZE <= buffer.size()) {
-        uint32_t magic = (uint32_t(buffer[pos]) << 24) | (uint32_t(buffer[pos + 1]) << 16) |
-                         (uint32_t(buffer[pos + 2]) << 8) | uint32_t(buffer[pos + 3]);
+    // Use common VID0 parser from vid0_parser.hpp
+    auto result = mirage::video::parseVid0Packets(buffer);
 
-        if (magic != VID0_MAGIC) {
-            bool found = false;
-            for (size_t i = pos + 1; i + 3 < buffer.size(); i++) {
-                if (buffer[i] == 0x56 && buffer[i+1] == 0x49 && buffer[i+2] == 0x44 && buffer[i+3] == 0x30) {
-                    pos = i; found = true; break;
-                }
-            }
-            if (!found) { pos = (buffer.size() > 3) ? buffer.size() - 3 : buffer.size(); break; }
-            continue;
-        }
-
-        uint32_t pkt_len = (uint32_t(buffer[pos+4]) << 24) | (uint32_t(buffer[pos+5]) << 16) |
-                           (uint32_t(buffer[pos+6]) << 8) | uint32_t(buffer[pos+7]);
-
-        if (pkt_len > VID0_MAX_PACKET_LEN || pkt_len < VID0_MIN_PACKET_LEN) { pos++; continue; }
-        if (pos + VID0_HEADER_SIZE + pkt_len > buffer.size()) break;
-
+    for (const auto& pkt : result.rtp_packets) {
         (*pkt_counter)++;
-        if (*pkt_counter <= 5 || *pkt_counter % 500 == 0)
-            MLOG_INFO("tcpvideo", "VID0 pkt #%llu len=%u for %s",
-                      (unsigned long long)*pkt_counter, (unsigned)pkt_len, hardware_id.c_str());
-
-        decoder->feed_rtp_packet(buffer.data() + pos + VID0_HEADER_SIZE, pkt_len);
-
-        pos += VID0_HEADER_SIZE + pkt_len;
+        if (*pkt_counter <= 5 || *pkt_counter % 500 == 0) {
+            MLOG_INFO("tcpvideo", "VID0 pkt #%llu len=%zu for %s",
+                      (unsigned long long)*pkt_counter, pkt.size(), hardware_id.c_str());
+        }
+        decoder->feed_rtp_packet(pkt.data(), pkt.size());
     }
 
-    if (pos > 0) buffer.erase(buffer.begin(), buffer.begin() + pos);
-    if (buffer.size() > STREAM_BUFFER_MAX) buffer.erase(buffer.begin(), buffer.end() - STREAM_BUFFER_TRIM);
+    if (result.sync_errors > 0) {
+        MLOG_WARN("tcpvideo", "VID0 sync errors: %d for %s", result.sync_errors, hardware_id.c_str());
+    }
 }
 
 } // namespace gui

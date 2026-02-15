@@ -363,6 +363,40 @@ if(BUILD_TESTS)
         target_link_libraries(test_adb_security PRIVATE gtest)
         target_compile_definitions(test_adb_security PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+        # AOA HID touch test (no libusb required)
+        add_executable(test_aoa_hid
+            tests/test_aoa_hid.cpp
+            src/aoa_hid_touch.cpp
+        )
+        target_include_directories(test_aoa_hid PRIVATE src)
+        target_link_libraries(test_aoa_hid PRIVATE gtest)
+        target_compile_definitions(test_aoa_hid PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # MIRA protocol test (header-only)
+        add_executable(test_mira_protocol
+            tests/test_mira_protocol.cpp
+        )
+        target_include_directories(test_mira_protocol PRIVATE src)
+        target_link_libraries(test_mira_protocol PRIVATE gtest)
+        target_compile_definitions(test_mira_protocol PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # FrameDispatcher test (header-only)
+        add_executable(test_frame_dispatcher
+            tests/test_frame_dispatcher.cpp
+        )
+        target_include_directories(test_frame_dispatcher PRIVATE src)
+        target_link_libraries(test_frame_dispatcher PRIVATE gtest)
+        target_compile_definitions(test_frame_dispatcher PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # RTT/Bandwidth monitor test (requires bandwidth_monitor.cpp)
+        add_executable(test_rtt_bandwidth
+            tests/test_rtt_bandwidth.cpp
+            src/bandwidth_monitor.cpp
+        )
+        target_include_directories(test_rtt_bandwidth PRIVATE src)
+        target_link_libraries(test_rtt_bandwidth PRIVATE gtest)
+        target_compile_definitions(test_rtt_bandwidth PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
         enable_testing()
         add_test(NAME VulkanVideoTest COMMAND test_vulkan_video)
         add_test(NAME H264ParserTest COMMAND test_h264_parser)
@@ -370,6 +404,10 @@ if(BUILD_TESTS)
         add_test(NAME EventBusTest COMMAND test_event_bus)
         add_test(NAME Vid0ParserTest COMMAND test_vid0_parser)
         add_test(NAME AdbSecurityTest COMMAND test_adb_security)
+        add_test(NAME AoaHidTest COMMAND test_aoa_hid)
+        add_test(NAME MiraProtocolTest COMMAND test_mira_protocol)
+        add_test(NAME FrameDispatcherTest COMMAND test_frame_dispatcher)
+        add_test(NAME RttBandwidthTest COMMAND test_rtt_bandwidth)
 
         message(STATUS "Tests enabled")
     else()
