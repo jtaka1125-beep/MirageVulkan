@@ -101,7 +101,7 @@ python scripts/full_build.py
 
 ## テスト
 
-14テストスイート、全PASS:
+15テストスイート、全PASS:
 
 | テスト | 内容 |
 |---|---|
@@ -119,6 +119,7 @@ python scripts/full_build.py
 | HybridSenderTest | コマンド送信 |
 | GuiLogicTest | GUIレイアウト/状態ロジック |
 | ResultTest | Result型エラーハンドリング |
+| RouteControllerTest | ルーティング判定ロジック |
 
 ## 設定
 

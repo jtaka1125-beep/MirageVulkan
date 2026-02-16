@@ -430,6 +430,16 @@ if(BUILD_TESTS)
         target_link_libraries(test_result PRIVATE gtest)
         target_compile_definitions(test_result PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+        # Route controller test (transport layer)
+        add_executable(test_route_controller
+            tests/test_route_controller.cpp
+            src/route_controller.cpp
+            src/bandwidth_monitor.cpp
+        )
+        target_include_directories(test_route_controller PRIVATE src)
+        target_link_libraries(test_route_controller PRIVATE gtest)
+        target_compile_definitions(test_route_controller PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
         enable_testing()
         add_test(NAME VulkanVideoTest COMMAND test_vulkan_video)
         add_test(NAME H264ParserTest COMMAND test_h264_parser)
@@ -445,6 +455,7 @@ if(BUILD_TESTS)
         add_test(NAME HybridSenderTest COMMAND test_hybrid_sender)
         add_test(NAME GuiLogicTest COMMAND test_gui_logic)
         add_test(NAME ResultTest COMMAND test_result)
+        add_test(NAME RouteControllerTest COMMAND test_route_controller)
 
         message(STATUS "Tests enabled")
     else()

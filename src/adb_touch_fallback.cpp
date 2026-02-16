@@ -61,6 +61,7 @@ void execHiddenAsync(const std::string& cmd, std::atomic<int>* latency_out) {
 } // namespace
 
 std::string AdbTouchFallback::adb_prefix() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (device_serial_.empty()) {
         return "adb";
     }

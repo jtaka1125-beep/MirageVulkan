@@ -131,7 +131,8 @@ public:
 private:
     void notify(const std::string& hw_id, const std::string& field);
 
-    mutable std::mutex mutex_;
+    mutable std::mutex mutex_;              // Protects device data
+    mutable std::mutex callback_mutex_;     // Protects change_cb_ (separate to prevent deadlock)
     std::map<std::string, DeviceEntity> devices_;           // hw_id -> entity
     std::map<std::string, std::string> usb_serial_map_;     // usb_serial -> hw_id
     std::map<std::string, std::string> adb_id_map_;         // adb_id -> hw_id

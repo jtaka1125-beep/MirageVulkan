@@ -67,7 +67,7 @@ private:
     // Build "adb -s <serial>" prefix
     std::string adb_prefix() const;
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::string device_serial_;
     std::atomic<bool> enabled_{true};
     std::atomic<int> last_latency_ms_{0};

@@ -109,80 +109,88 @@ size_t DeviceRegistry::deviceCount() const {
 // =============================================================================
 
 void DeviceRegistry::setAdbUsb(const std::string& hw_id, const std::string& adb_id, const std::string& usb_serial) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
 
-    it->second.adb_usb_id = adb_id;
-    adb_id_map_[adb_id] = hw_id;
+        it->second.adb_usb_id = adb_id;
+        adb_id_map_[adb_id] = hw_id;
 
-    if (!usb_serial.empty()) {
-        it->second.usb_serial = usb_serial;
-        usb_serial_map_[usb_serial] = hw_id;
-    }
+        if (!usb_serial.empty()) {
+            it->second.usb_serial = usb_serial;
+            usb_serial_map_[usb_serial] = hw_id;
+        }
 
-    // Extract serial from mDNS: "adb-SERIAL-hash._adb-tls-connect._tcp"
-    if (usb_serial.empty() && adb_id.find("adb-") == 0) {
-        size_t dash2 = adb_id.find('-', 4);
-        if (dash2 != std::string::npos) {
-            std::string extracted = adb_id.substr(4, dash2 - 4);
-            it->second.usb_serial = extracted;
-            usb_serial_map_[extracted] = hw_id;
+        // Extract serial from mDNS: "adb-SERIAL-hash._adb-tls-connect._tcp"
+        if (usb_serial.empty() && adb_id.find("adb-") == 0) {
+            size_t dash2 = adb_id.find('-', 4);
+            if (dash2 != std::string::npos) {
+                std::string extracted = adb_id.substr(4, dash2 - 4);
+                it->second.usb_serial = extracted;
+                usb_serial_map_[extracted] = hw_id;
+            }
+        }
+
+        if (it->second.status == DeviceEntity::Status::Disconnected) {
+            it->second.status = DeviceEntity::Status::AdbOnly;
         }
     }
-
-    if (it->second.status == DeviceEntity::Status::Disconnected) {
-        it->second.status = DeviceEntity::Status::AdbOnly;
-    }
-
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "adb_usb");
 }
 
 void DeviceRegistry::setAdbWifi(const std::string& hw_id, const std::string& adb_id, const std::string& ip) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
 
-    it->second.adb_wifi_id = adb_id;
-    adb_id_map_[adb_id] = hw_id;
+        it->second.adb_wifi_id = adb_id;
+        adb_id_map_[adb_id] = hw_id;
 
-    if (!ip.empty()) {
-        it->second.ip_address = ip;
+        if (!ip.empty()) {
+            it->second.ip_address = ip;
+        }
+
+        if (it->second.status == DeviceEntity::Status::Disconnected) {
+            it->second.status = DeviceEntity::Status::AdbOnly;
+        }
     }
-
-    if (it->second.status == DeviceEntity::Status::Disconnected) {
-        it->second.status = DeviceEntity::Status::AdbOnly;
-    }
-
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "adb_wifi");
 }
 
 void DeviceRegistry::setAoaConnected(const std::string& hw_id, bool connected) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
 
-    it->second.aoa_connected = connected;
-    if (connected && it->second.status < DeviceEntity::Status::AoaActive) {
-        it->second.status = DeviceEntity::Status::AoaActive;
+        it->second.aoa_connected = connected;
+        if (connected && it->second.status < DeviceEntity::Status::AoaActive) {
+            it->second.status = DeviceEntity::Status::AoaActive;
+        }
     }
-
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "aoa");
 }
 
 void DeviceRegistry::setVideoPort(const std::string& hw_id, int port) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
 
-    // Remove old port mapping
-    if (it->second.video_port != 0) {
-        port_map_.erase(it->second.video_port);
+        // Remove old port mapping
+        if (it->second.video_port != 0) {
+            port_map_.erase(it->second.video_port);
+        }
+
+        it->second.video_port = port;
+        port_map_[port] = hw_id;
     }
-
-    it->second.video_port = port;
-    port_map_[port] = hw_id;
-
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "video_port");
 }
 
@@ -191,52 +199,67 @@ void DeviceRegistry::setVideoPort(const std::string& hw_id, int port) {
 // =============================================================================
 
 void DeviceRegistry::setVideoRoute(const std::string& hw_id, DeviceEntity::VideoRoute route) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
-    it->second.video_route = route;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
+        it->second.video_route = route;
+    }
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "video_route");
 }
 
 void DeviceRegistry::setControlRoute(const std::string& hw_id, DeviceEntity::ControlRoute route) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
-    it->second.control_route = route;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
+        it->second.control_route = route;
+    }
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "control_route");
 }
 
 void DeviceRegistry::setTargetFps(const std::string& hw_id, int fps) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
-    it->second.target_fps = fps;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
+        it->second.target_fps = fps;
+    }
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "target_fps");
 }
 
 void DeviceRegistry::setMainDevice(const std::string& hw_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    // Clear old main
-    for (auto& [id, dev] : devices_) {
-        dev.is_main = false;
+        // Clear old main
+        for (auto& [id, dev] : devices_) {
+            dev.is_main = false;
+        }
+
+        auto it = devices_.find(hw_id);
+        if (it != devices_.end()) {
+            it->second.is_main = true;
+            it->second.target_fps = 60;  // メインは60fps
+        }
+
+        main_device_id_ = hw_id;
     }
-
-    auto it = devices_.find(hw_id);
-    if (it != devices_.end()) {
-        it->second.is_main = true;
-        it->second.target_fps = 60;  // メインは60fps
-    }
-
-    main_device_id_ = hw_id;
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "main_device");
 }
 
 void DeviceRegistry::setStatus(const std::string& hw_id, DeviceEntity::Status status) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = devices_.find(hw_id);
-    if (it == devices_.end()) return;
-    it->second.status = status;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end()) return;
+        it->second.status = status;
+    }
+    // Notify outside lock to prevent deadlock
     notify(hw_id, "status");
 }
 
@@ -259,14 +282,19 @@ std::string DeviceRegistry::getMainDeviceId() const {
 // =============================================================================
 
 void DeviceRegistry::setChangeCallback(ChangeCallback cb) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> cb_lock(callback_mutex_);
     change_cb_ = std::move(cb);
 }
 
 void DeviceRegistry::notify(const std::string& hw_id, const std::string& field) {
-    // Note: called with mutex held, callback should be quick
-    if (change_cb_) {
-        change_cb_(hw_id, field);
+    // Called WITHOUT data mutex - safe for callback to call other DeviceRegistry methods
+    ChangeCallback cb;
+    {
+        std::lock_guard<std::mutex> cb_lock(callback_mutex_);
+        cb = change_cb_;
+    }
+    if (cb) {
+        cb(hw_id, field);
     }
 }
 
