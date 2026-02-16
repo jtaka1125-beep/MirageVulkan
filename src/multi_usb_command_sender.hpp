@@ -32,6 +32,60 @@ namespace gui {
  * - Methods return false/0 on failure
  * - Detailed errors are logged to stderr
  * - Device disconnect is handled gracefully with automatic cleanup
+ *
+ * =============================================================================
+ * LOCK HIERARCHY (acquire in this order to prevent deadlock)
+ * =============================================================================
+ *
+ * Level 1: devices_mutex_
+ *   - Protects: devices_ map, device connection state
+ *   - Acquired by: All public device query/command methods
+ *   - Hold time: Short (map lookup, copy device info)
+ *
+ * Level 2: DeviceHandle::queue_mutex (per-device)
+ *   - Protects: command_queue for each device
+ *   - Acquired by: queue_command(), send_thread()
+ *   - MUST be acquired AFTER devices_mutex_ if both needed
+ *
+ * Level 3: shutdown_mutex_
+ *   - Protects: shutdown signaling via shutdown_cv_
+ *   - Acquired by: stop() only
+ *   - Never held with other mutexes
+ *
+ * Thread Model:
+ *   ┌─────────────┐
+ *   │ Main Thread │ ─── start()/stop()/rescan()
+ *   └─────────────┘
+ *          │
+ *   ┌──────┴──────┐
+ *   ▼             ▼
+ * ┌────────┐  ┌─────────────────┐
+ * │ Send   │  │ Recv Thread x N │ (per device)
+ * │ Thread │  │ (device_id)     │
+ * └────────┘  └─────────────────┘
+ *   │              │
+ *   │ devices_mutex_ → queue_mutex (nested)
+ *   │              │
+ *   │              │ devices_mutex_ (brief)
+ *   ▼              ▼
+ * [USB Bulk OUT] [USB Bulk IN]
+ *
+ * Callback Safety:
+ *   - ack_callback_, video_callback_: Called from recv threads
+ *   - device_closed_callback_: Called from recv threads on disconnect
+ *   - Callbacks are invoked OUTSIDE locks to prevent deadlock
+ *   - Callbacks must not call back into MultiUsbCommandSender
+ *
+ * Known Safe Patterns:
+ *   1. devices_mutex_ → queue_mutex (send_thread)
+ *   2. devices_mutex_ alone (device queries)
+ *   3. queue_mutex alone (queue inspection)
+ *
+ * Forbidden Patterns (will deadlock):
+ *   1. queue_mutex → devices_mutex_
+ *   2. Holding any lock while calling callbacks
+ *   3. Calling public methods from callbacks
+ * =============================================================================
  */
 class MultiUsbCommandSender {
 public:
@@ -149,7 +203,7 @@ private:
         uint8_t ep_out = 0;
         uint8_t ep_in = 0;
         std::queue<std::vector<uint8_t>> command_queue;
-        std::mutex queue_mutex;
+        std::mutex queue_mutex;  // Lock Level 2: per-device command queue
         std::atomic<uint32_t> next_seq{1};
         std::thread recv_thread;  // Per-device receive thread
         std::atomic<bool> recv_running{false};
@@ -173,7 +227,7 @@ private:
 
     libusb_context* ctx_ = nullptr;
     std::map<std::string, std::unique_ptr<DeviceHandle>> devices_;
-    mutable std::mutex devices_mutex_;
+    mutable std::mutex devices_mutex_;  // Lock Level 1: device map access
 #endif
 
     std::atomic<bool> running_{false};
@@ -198,7 +252,7 @@ private:
 
     // Condition variable for clean shutdown signaling
     std::condition_variable shutdown_cv_;
-    std::mutex shutdown_mutex_;
+    std::mutex shutdown_mutex_;  // Lock Level 3: shutdown coordination (isolated)
 };
 
 } // namespace gui
