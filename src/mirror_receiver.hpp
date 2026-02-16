@@ -70,7 +70,16 @@ public:
   bool running() const { return running_.load(); }
 
   // Get assigned port (valid after start(), returns 0 if not started)
-  uint16_t getPort() const { return bound_port_.load(); }
+  uint16_t getPort(int timeout_ms = 2000) const {
+    auto start = std::chrono::steady_clock::now();
+    while (bound_port_.load() == 0) {
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - start).count();
+      if (elapsed > timeout_ms) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return bound_port_.load();
+  }
 
   // Get latest frame (thread-safe, returns false if no new frame)
   bool get_latest_frame(MirrorFrame& out);

@@ -104,15 +104,12 @@ bool initializeMultiReceiver() {
         auto device_ids = g_multi_receiver->getDeviceIds();
         MLOG_INFO("gui", "Multi-receiver: started with %zu device(s)", device_ids.size());
 
-        auto devices = g_adb_manager->getUniqueDevices();
-        for (const auto& dev : devices) {
-            MLOG_INFO("gui", "  - %s -> port %d", dev.display_name.c_str(), dev.assigned_port);
-        }
+        // Port info is logged by assignPorts() in AdbDeviceManager
 
         // Auto-start screen capture
         std::string host_ip = mirage::config::getConfig().network.pc_ip;
         int success = g_adb_manager->startScreenCaptureOnAll(host_ip, mirage::config::getConfig().network.video_base_port);
-        MLOG_INFO("gui", "Screen capture started: %d/%zu devices", success, devices.size());
+        MLOG_INFO("gui", "Screen capture started: %d/%zu devices", success, device_ids.size());
         return true;
     }
 
