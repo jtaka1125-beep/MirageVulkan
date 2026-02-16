@@ -101,7 +101,7 @@ python scripts/full_build.py
 
 ## テスト
 
-15テストスイート、全PASS:
+16テストスイート、全PASS:
 
 | テスト | 内容 |
 |---|---|
@@ -120,6 +120,7 @@ python scripts/full_build.py
 | GuiLogicTest | GUIレイアウト/状態ロジック |
 | ResultTest | Result型エラーハンドリング |
 | RouteControllerTest | ルーティング判定ロジック |
+| AdbDeviceManagerTest | ADBデバイス検出ロジック |
 
 ## 設定
 
