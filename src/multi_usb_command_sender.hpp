@@ -144,6 +144,7 @@ public:
     // Set callback for error notifications
     void set_error_callback(ErrorCallback cb) { error_callback_ = cb; }
 
+#ifdef USE_LIBUSB
     // Callback invoked after AOA strings are sent but BEFORE AOA_START_ACCESSORY
     // This is where HID devices must be registered (AOA v2 requirement)
     using PreStartCallback = std::function<bool(libusb_device_handle* handle, int aoa_version)>;
@@ -152,6 +153,7 @@ public:
     // Callback invoked after a device is opened post re-enumeration
     using DeviceOpenedCallback = std::function<void(const std::string& usb_id, libusb_device_handle* handle)>;
     void set_device_opened_callback(DeviceOpenedCallback cb) { device_opened_callback_ = cb; }
+#endif
 
     // Callback invoked when a device is disconnected (for HID cleanup etc.)
     using DeviceClosedCallback = std::function<void(const std::string& usb_id)>;
@@ -189,8 +191,10 @@ public:
     int send_back_all();
     int send_key_all(int keycode);
 
+#ifdef USE_LIBUSB
     // Quick AOA version check without mode switch
     int check_aoa_version(libusb_device* dev);
+#endif
 
     // Get first device ID (for backward compatibility)
     std::string get_first_device_id() const;
@@ -239,8 +243,10 @@ private:
     VideoDataCallback video_callback_;
     AudioCallback audio_callback_;
     ErrorCallback error_callback_;
+#ifdef USE_LIBUSB
     PreStartCallback pre_start_callback_;
     DeviceOpenedCallback device_opened_callback_;
+#endif
     DeviceClosedCallback device_closed_callback_;
 
     // Error statistics (atomic for thread-safe reads)

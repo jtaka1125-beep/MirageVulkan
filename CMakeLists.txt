@@ -59,6 +59,9 @@ set(CORE_SOURCES
 # Video pipeline (Vulkan Video + FFmpeg fallback)
 set(VIDEO_SOURCES
     src/video/vulkan_video_decoder.cpp
+    src/video/vulkan_video_session.cpp
+    src/video/vulkan_video_dpb.cpp
+    src/video/vulkan_video_decode_impl.cpp
     src/video/vulkan_video_decoder.hpp
     src/video/h264_parser.cpp
     src/video/h264_parser.hpp
@@ -301,6 +304,9 @@ if(BUILD_TESTS)
         add_executable(test_vulkan_video
             tests/test_vulkan_video.cpp
             src/video/vulkan_video_decoder.cpp
+            src/video/vulkan_video_session.cpp
+            src/video/vulkan_video_dpb.cpp
+            src/video/vulkan_video_decode_impl.cpp
             src/video/h264_parser.cpp
             src/video/yuv_converter.cpp
             src/vulkan/vulkan_context.cpp
@@ -328,6 +334,9 @@ if(BUILD_TESTS)
         add_executable(test_e2e_decode
             tests/test_e2e_decode.cpp
             src/video/vulkan_video_decoder.cpp
+            src/video/vulkan_video_session.cpp
+            src/video/vulkan_video_dpb.cpp
+            src/video/vulkan_video_decode_impl.cpp
             src/video/h264_parser.cpp
             src/video/yuv_converter.cpp
             src/vulkan/vulkan_context.cpp
