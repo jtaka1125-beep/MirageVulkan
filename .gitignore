@@ -47,3 +47,4 @@ driver_installer/*.exe
 macro_editor_venv/  
 *.pyc  
 __pycache__/  
+"*.idsig"  
