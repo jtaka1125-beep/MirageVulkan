@@ -61,27 +61,16 @@ public:
             progress_callback_("Starting screen capture...", 25);
         }
         if (adb_executor_) {
-            // Build and execute command
-            // ScreenCaptureService already running (started by CaptureActivity).
-            // Use broadcast to switch video route via AccessoryCommandReceiver.
-            // Step 1: Switch to USB/TCP mode to force sender reset
-            std::string cmd_reset = "shell am broadcast"
-                " -a com.mirage.capture.ACTION_VIDEO_ROUTE"
-                " --ei route_mode 0"
-                " -n com.mirage.capture/.ipc.AccessoryCommandReceiver";
-            adb_executor_(cmd_reset);
+            // Force-stop to get fresh state
+            adb_executor_("shell am force-stop com.mirage.streamer");
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-            // Brief delay for mode switch
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-            // Step 2: Switch to UDP mode with correct host:port
-            std::string cmd_udp = "shell am broadcast"
-                " -a com.mirage.capture.ACTION_VIDEO_ROUTE"
-                " --ei route_mode 1"
+            // Launch MirageStreamer: MediaProjection -> H.264 -> UDP
+            std::string cmd = "shell am start"
+                " -n com.mirage.streamer/.StreamActivity"
                 " --es host " + host +
-                " --ei port " + std::to_string(port) +
-                " -n com.mirage.capture/.ipc.AccessoryCommandReceiver";
-            adb_executor_(cmd_udp);
+                " --ei port " + std::to_string(port);
+            adb_executor_(cmd);
         }
         SetupStepResult result;
         result.status = SetupStatus::COMPLETED;
@@ -89,8 +78,13 @@ public:
     }
 
     SetupStepResult approve_screen_share_dialog() {
-        // No longer needed: broadcast-based route switch doesn't trigger dialog.
-        // Kept for API compatibility.
+        if (progress_callback_) {
+            progress_callback_("Approving screen share dialog...", 50);
+        }
+        if (adb_executor_) {
+            // Tap "Start now" button (common coordinates)
+            adb_executor_("shell input tap 540 1150");
+        }
         SetupStepResult result;
         result.status = SetupStatus::COMPLETED;
         return result;
@@ -98,30 +92,27 @@ public:
 
     SetupStepResult complete_and_verify() {
         if (progress_callback_) {
-            progress_callback_("Verifying...", 75);
+            progress_callback_("Completing setup...", 100);
+        }
+        if (adb_executor_) {
+            // Press HOME to go back
+            adb_executor_("shell input keyevent KEYCODE_HOME");
         }
         SetupStepResult result;
         result.status = SetupStatus::COMPLETED;
+        result.message = "";
         return result;
     }
 
 private:
-    AutoSetupResult runInternal() {
-        if (progress_callback_) {
-            progress_callback_("Starting...", 0);
-            progress_callback_("Checking device...", 25);
-            progress_callback_("Installing app...", 50);
-            progress_callback_("Configuring...", 75);
-            progress_callback_("Complete", 100);
-        }
+    ProgressCallback progress_callback_;
+    AdbExecutor adb_executor_;
 
+    AutoSetupResult runInternal() {
         AutoSetupResult result;
         result.success = true;
         return result;
     }
-
-    ProgressCallback progress_callback_;
-    AdbExecutor adb_executor_;
 };
 
 } // namespace mirage
