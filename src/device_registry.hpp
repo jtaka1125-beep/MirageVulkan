@@ -18,6 +18,13 @@ struct DeviceEntity {
     std::string model;              // "A9"
     std::string manufacturer;       // "RebotAi"
 
+    // --- ディスプレイ・OS ---
+    int screen_width = 0;           // 物理解像度 幅 (例: 800)
+    int screen_height = 0;          // 物理解像度 高さ (例: 1340)
+    int screen_density = 0;         // DPI (例: 240)
+    std::string android_version;    // "15" (ro.build.version.release)
+    int sdk_level = 0;              // 35 (ro.build.version.sdk)
+
     // --- ADB接続 ---
     std::string adb_usb_id;         // "adb-A9250700956-xxx" (USB ADB, 空=未接続)
     std::string adb_wifi_id;        // "192.168.0.6:5555" (WiFi ADB, 空=未接続)
@@ -62,6 +69,11 @@ struct DeviceEntity {
     std::string preferredAdbId() const {
         return !adb_usb_id.empty() ? adb_usb_id : adb_wifi_id;
     }
+    std::string resolutionString() const {
+        if (screen_width > 0 && screen_height > 0)
+            return std::to_string(screen_width) + "x" + std::to_string(screen_height);
+        return "unknown";
+    }
 };
 
 // =============================================================================
@@ -93,6 +105,10 @@ public:
     void setAdbWifi(const std::string& hw_id, const std::string& adb_id, const std::string& ip = "");
     void setAoaConnected(const std::string& hw_id, bool connected);
     void setVideoPort(const std::string& hw_id, int port);
+
+    // --- ディスプレイ・OS情報更新 ---
+    void setScreenInfo(const std::string& hw_id, int width, int height, int density);
+    void setAndroidVersion(const std::string& hw_id, const std::string& version, int sdk);
 
     // --- 状態変更 ---
     void setVideoRoute(const std::string& hw_id, DeviceEntity::VideoRoute route);

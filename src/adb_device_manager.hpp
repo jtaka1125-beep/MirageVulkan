@@ -30,6 +30,13 @@ public:
         std::string ip_address;       // IP address (for WiFi or for USB with IP)
         bool is_online = false;
 
+        // --- ディスプレイ・OS ---
+        int screen_width = 0;         // 物理解像度 幅 (例: 800)
+        int screen_height = 0;        // 物理解像度 高さ (例: 1340)
+        int screen_density = 0;       // DPI (例: 240)
+        std::string android_version;  // "15" (ro.build.version.release)
+        int sdk_level = 0;            // 35 (ro.build.version.sdk)
+
         // For duplicate detection
         std::string unique_key() const { return hardware_id.empty() ? adb_id : hardware_id; }
     };
@@ -47,6 +54,13 @@ public:
         std::string preferred_adb_id;
         ConnectionType preferred_type;
         std::string ip_address;
+
+        // --- ディスプレイ・OS ---
+        int screen_width = 0;
+        int screen_height = 0;
+        int screen_density = 0;
+        std::string android_version;
+        int sdk_level = 0;
 
         // Assigned port for screen capture (each device gets unique port)
         int assigned_port = 0;
@@ -111,6 +125,10 @@ public:
 
     // Delete file from device
     bool deleteFile(const std::string& adb_id, const std::string& remote_path);
+
+    // --- ディスプレイ・OS情報取得 ---
+    // ADB経由で解像度・OS情報を取得してDeviceInfo/UniqueDeviceに格納
+    void queryScreenInfo(const std::string& adb_id);
 
 private:
     // Parse `adb devices` output
