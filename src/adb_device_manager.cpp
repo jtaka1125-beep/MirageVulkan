@@ -563,12 +563,16 @@ bool AdbDeviceManager::deleteFile(const std::string& adb_id, const std::string& 
 bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::string& host, int port) {
     MLOG_INFO("adb", "Starting screen capture on %s -> %s:%d", adb_id.c_str(), host.c_str(), port);
 
-    // Create AutoSetup with device-specific ADB executor
-    mirage::AutoSetup setup;
-    setup.set_adb_executor([this, &adb_id](const std::string& cmd) -> std::string {
-        // adbCommand expects command like "shell dumpsys...", not just "dumpsys..."
+    // Create persistent AutoSetup (must outlive this function for bridge thread)
+    auto setup_ptr = std::make_shared<mirage::AutoSetup>();
+    setup_ptr->set_adb_executor([this, adb_id](const std::string& cmd) -> std::string {
         return adbCommand(adb_id, cmd);
     });
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        active_setups_[adb_id] = setup_ptr;  // Keep alive
+    }
+    auto& setup = *setup_ptr;
 
     // Start screen capture
     auto result1 = setup.start_screen_capture(host, port);

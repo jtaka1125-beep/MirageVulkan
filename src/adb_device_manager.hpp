@@ -4,6 +4,8 @@
 #include <map>
 #include <mutex>
 #include <cstdint>
+#include <memory>
+#include "auto_setup.hpp"
 #include <fstream>
 
 namespace gui {
@@ -150,6 +152,7 @@ private:
     mutable std::mutex mutex_;
     std::map<std::string, DeviceInfo> devices_;           // adb_id -> DeviceInfo
     std::map<std::string, UniqueDevice> unique_devices_;  // hardware_id -> UniqueDevice
+    std::map<std::string, std::shared_ptr<mirage::AutoSetup>> active_setups_;  // adb_id -> persistent AutoSetup
 };
 
 } // namespace gui

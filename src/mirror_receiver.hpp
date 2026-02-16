@@ -96,6 +96,8 @@ public:
 private:
   void receive_thread(uint16_t port);
   void process_rtp_packet(const uint8_t* data, size_t len);
+  void process_raw_h264(const uint8_t* data, size_t len);
+  size_t find_start_code(const uint8_t* data, size_t len, size_t offset);
   void decode_nal(const uint8_t* data, size_t len);
   void generate_test_frame(int w, int h);
 
@@ -165,6 +167,9 @@ private:
   std::vector<uint8_t> cached_pps_;
   bool sps_logged_ = false;
   bool pps_logged_ = false;
+
+  // Raw H.264 Annex B accumulation buffer (for scrcpy raw_stream=true)
+  std::vector<uint8_t> raw_h264_buf_;
 
   // Reusable annexb buffer for decode_nal (avoids per-NAL heap allocation)
   std::vector<uint8_t> annexb_buf_;
