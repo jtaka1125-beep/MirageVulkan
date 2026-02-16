@@ -262,7 +262,7 @@ void MirrorReceiver::receive_thread(uint16_t port) {
   struct sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = INADDR_ANY;
-  addr.sin_port = htons(port);
+  addr.sin_port = htons(port);  // port=0 means OS assigns an available port
 
   if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
     MLOG_ERROR("mirror", "bind() failed on port %d", port);
@@ -270,7 +270,18 @@ void MirrorReceiver::receive_thread(uint16_t port) {
     running_.store(false);
     return;
   }
-  MLOG_INFO("mirror", "Listening on UDP port %d", port);
+
+  // Get actual bound port (especially when port=0 was used)
+  struct sockaddr_in bound_addr{};
+  socklen_t addr_len = sizeof(bound_addr);
+  if (getsockname(sock, (struct sockaddr*)&bound_addr, &addr_len) == 0) {
+    uint16_t actual_port = ntohs(bound_addr.sin_port);
+    bound_port_.store(actual_port);
+    MLOG_INFO("mirror", "Listening on UDP port %d", actual_port);
+  } else {
+    bound_port_.store(port);
+    MLOG_INFO("mirror", "Listening on UDP port %d (getsockname failed)", port);
+  }
 
   uint8_t buf[65536];
   while (running_.load()) {

@@ -17,9 +17,6 @@ bool MultiDeviceReceiver::start(uint16_t base_port) {
         return false;
     }
 
-    // Assign ports to all devices
-    adb_manager_->assignPorts(base_port);
-
     auto devices = adb_manager_->getUniqueDevices();
     if (devices.empty()) {
         MLOG_INFO("multi", "No devices found");
@@ -32,17 +29,20 @@ bool MultiDeviceReceiver::start(uint16_t base_port) {
         ReceiverEntry entry;
         entry.hardware_id = device.hardware_id;
         entry.display_name = device.display_name;
-        entry.port = device.assigned_port;
         entry.receiver = std::make_unique<MirrorReceiver>();
         entry.last_stats_time = std::chrono::steady_clock::now();
 
-        if (entry.receiver->start(static_cast<uint16_t>(entry.port))) {
+        // Use port=0 for OS-assigned port (or base_port if specified)
+        uint16_t request_port = (base_port == 0) ? 0 : base_port++;
+        if (entry.receiver->start(request_port)) {
+            // Get actual bound port from receiver
+            entry.port = entry.receiver->getPort();
             MLOG_INFO("multi", "Started receiver for %s on port %d", device.display_name.c_str(), entry.port);
 
             port_to_device_[entry.port] = device.hardware_id;
             receivers_[device.hardware_id] = std::move(entry);
         } else {
-            MLOG_ERROR("multi", "Failed to start receiver for %s on port %d", device.display_name.c_str(), entry.port);
+            MLOG_ERROR("multi", "Failed to start receiver for %s", device.display_name.c_str());
         }
     }
 

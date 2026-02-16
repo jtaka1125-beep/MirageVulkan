@@ -69,6 +69,9 @@ public:
 
   bool running() const { return running_.load(); }
 
+  // Get assigned port (valid after start(), returns 0 if not started)
+  uint16_t getPort() const { return bound_port_.load(); }
+
   // Get latest frame (thread-safe, returns false if no new frame)
   bool get_latest_frame(MirrorFrame& out);
 
@@ -88,6 +91,7 @@ private:
   void generate_test_frame(int w, int h);
 
   std::atomic<bool> running_{false};
+  std::atomic<uint16_t> bound_port_{0};  // Actual port after bind (0 = auto-assign)
   std::thread thread_;
 
   // Frame buffer (double buffered)
