@@ -2,7 +2,7 @@
 #include <string>
 #include <map>
 #include <vector>
-#include <mutex>
+#include <shared_mutex>
 #include <functional>
 #include <cstdint>
 
@@ -131,7 +131,7 @@ public:
 private:
     void notify(const std::string& hw_id, const std::string& field);
 
-    mutable std::mutex mutex_;              // Protects device data
+    mutable std::shared_mutex mutex_;       // Protects device data (shared for reads)
     mutable std::mutex callback_mutex_;     // Protects change_cb_ (separate to prevent deadlock)
     std::map<std::string, DeviceEntity> devices_;           // hw_id -> entity
     std::map<std::string, std::string> usb_serial_map_;     // usb_serial -> hw_id

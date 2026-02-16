@@ -2,6 +2,7 @@
 #include "mirage_log.hpp"
 #include <cstdio>
 #include <algorithm>
+#include <shared_mutex>
 
 namespace gui {
 
@@ -10,7 +11,7 @@ namespace gui {
 // =============================================================================
 
 DeviceEntity& DeviceRegistry::registerOrUpdate(const std::string& hardware_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock lock(mutex_);
 
     auto it = devices_.find(hardware_id);
     if (it != devices_.end()) {
@@ -25,19 +26,19 @@ DeviceEntity& DeviceRegistry::registerOrUpdate(const std::string& hardware_id) {
 }
 
 DeviceEntity* DeviceRegistry::findByHardwareId(const std::string& hw_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     auto it = devices_.find(hw_id);
     return (it != devices_.end()) ? &it->second : nullptr;
 }
 
 const DeviceEntity* DeviceRegistry::findByHardwareId(const std::string& hw_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     auto it = devices_.find(hw_id);
     return (it != devices_.end()) ? &it->second : nullptr;
 }
 
 DeviceEntity* DeviceRegistry::findByUsbSerial(const std::string& serial) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock lock(mutex_);  // May modify usb_serial_map_
     auto it = usb_serial_map_.find(serial);
     if (it != usb_serial_map_.end()) {
         auto dit = devices_.find(it->second);
@@ -60,7 +61,7 @@ DeviceEntity* DeviceRegistry::findByUsbSerial(const std::string& serial) {
 }
 
 DeviceEntity* DeviceRegistry::findByAdbId(const std::string& adb_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     auto it = adb_id_map_.find(adb_id);
     if (it != adb_id_map_.end()) {
         auto dit = devices_.find(it->second);
@@ -70,7 +71,7 @@ DeviceEntity* DeviceRegistry::findByAdbId(const std::string& adb_id) {
 }
 
 DeviceEntity* DeviceRegistry::findByPort(int video_port) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     auto it = port_map_.find(video_port);
     if (it != port_map_.end()) {
         auto dit = devices_.find(it->second);
@@ -80,7 +81,7 @@ DeviceEntity* DeviceRegistry::findByPort(int video_port) {
 }
 
 std::vector<DeviceEntity> DeviceRegistry::getAllDevices() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     std::vector<DeviceEntity> result;
     result.reserve(devices_.size());
     for (const auto& [hw_id, dev] : devices_) {
@@ -90,7 +91,7 @@ std::vector<DeviceEntity> DeviceRegistry::getAllDevices() const {
 }
 
 std::vector<std::string> DeviceRegistry::getAllHardwareIds() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     std::vector<std::string> ids;
     ids.reserve(devices_.size());
     for (const auto& [hw_id, dev] : devices_) {
@@ -100,7 +101,7 @@ std::vector<std::string> DeviceRegistry::getAllHardwareIds() const {
 }
 
 size_t DeviceRegistry::deviceCount() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     return devices_.size();
 }
 
@@ -110,7 +111,7 @@ size_t DeviceRegistry::deviceCount() const {
 
 void DeviceRegistry::setAdbUsb(const std::string& hw_id, const std::string& adb_id, const std::string& usb_serial) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
 
@@ -142,7 +143,7 @@ void DeviceRegistry::setAdbUsb(const std::string& hw_id, const std::string& adb_
 
 void DeviceRegistry::setAdbWifi(const std::string& hw_id, const std::string& adb_id, const std::string& ip) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
 
@@ -163,7 +164,7 @@ void DeviceRegistry::setAdbWifi(const std::string& hw_id, const std::string& adb
 
 void DeviceRegistry::setAoaConnected(const std::string& hw_id, bool connected) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
 
@@ -178,7 +179,7 @@ void DeviceRegistry::setAoaConnected(const std::string& hw_id, bool connected) {
 
 void DeviceRegistry::setVideoPort(const std::string& hw_id, int port) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
 
@@ -200,7 +201,7 @@ void DeviceRegistry::setVideoPort(const std::string& hw_id, int port) {
 
 void DeviceRegistry::setVideoRoute(const std::string& hw_id, DeviceEntity::VideoRoute route) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
         it->second.video_route = route;
@@ -211,7 +212,7 @@ void DeviceRegistry::setVideoRoute(const std::string& hw_id, DeviceEntity::Video
 
 void DeviceRegistry::setControlRoute(const std::string& hw_id, DeviceEntity::ControlRoute route) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
         it->second.control_route = route;
@@ -222,7 +223,7 @@ void DeviceRegistry::setControlRoute(const std::string& hw_id, DeviceEntity::Con
 
 void DeviceRegistry::setTargetFps(const std::string& hw_id, int fps) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
         it->second.target_fps = fps;
@@ -233,7 +234,7 @@ void DeviceRegistry::setTargetFps(const std::string& hw_id, int fps) {
 
 void DeviceRegistry::setMainDevice(const std::string& hw_id) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
 
         // Clear old main
         for (auto& [id, dev] : devices_) {
@@ -254,7 +255,7 @@ void DeviceRegistry::setMainDevice(const std::string& hw_id) {
 
 void DeviceRegistry::setStatus(const std::string& hw_id, DeviceEntity::Status status) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock lock(mutex_);
         auto it = devices_.find(hw_id);
         if (it == devices_.end()) return;
         it->second.status = status;
@@ -264,7 +265,7 @@ void DeviceRegistry::setStatus(const std::string& hw_id, DeviceEntity::Status st
 }
 
 void DeviceRegistry::updateStats(const std::string& hw_id, float fps, float bandwidth) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock lock(mutex_);
     auto it = devices_.find(hw_id);
     if (it == devices_.end()) return;
     it->second.current_fps = fps;
@@ -273,7 +274,7 @@ void DeviceRegistry::updateStats(const std::string& hw_id, float fps, float band
 }
 
 std::string DeviceRegistry::getMainDeviceId() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
     return main_device_id_;
 }
 
@@ -303,7 +304,7 @@ void DeviceRegistry::notify(const std::string& hw_id, const std::string& field) 
 // =============================================================================
 
 void DeviceRegistry::dump() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock lock(mutex_);
 
     MLOG_INFO("Registry", "=== DeviceRegistry: %zu devices ===", devices_.size());
     for (const auto& [hw_id, dev] : devices_) {
