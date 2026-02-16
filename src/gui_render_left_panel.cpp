@@ -66,9 +66,13 @@ void GuiApplication::renderLeftPanel() {
                              ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoBringToFrontOnFocus |
                              ImGuiWindowFlags_NoFocusOnAppearing |
-                             ImGuiWindowFlags_NoNavFocus;
+                             ImGuiWindowFlags_NoNavFocus |
+                             ImGuiWindowFlags_NoScrollbar;
 
     ImGui::Begin("LeftPanel", nullptr, flags);
+
+    // Make the content scrollable
+    ImGui::BeginChild("LeftPanelContent", ImVec2(0, 0), false, ImGuiWindowFlags_None);
 
     // === Device Selection ===
     ImGui::Text(u8"デバイス");
@@ -401,8 +405,9 @@ void GuiApplication::renderLeftPanel() {
     static const char* log_level_items[] = { u8"全て", u8"情報以上", u8"警告以上", u8"エラー" };
     ImGui::Combo(u8"レベル", &log_level_filter, log_level_items, IM_ARRAYSIZE(log_level_items));
 
-    // Log area
+    // Log area - use remaining space, minimum 150px
     float logHeight = ImGui::GetContentRegionAvail().y;
+    if (logHeight < 150.0f) logHeight = 150.0f;
     ImGui::BeginChild("LogScroll", ImVec2(0, logHeight), true);
 
     {
@@ -435,6 +440,8 @@ void GuiApplication::renderLeftPanel() {
     }
 
     ImGui::EndChild();
+
+    ImGui::EndChild();  // End LeftPanelContent
 
     ImGui::End();
 }

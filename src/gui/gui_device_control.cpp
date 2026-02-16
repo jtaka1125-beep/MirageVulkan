@@ -401,6 +401,17 @@ bool renderDeviceADBButton(const std::string& device_id) {
 }
 
 void renderDeviceControlPanel() {
+    // Position in top-right area, below title bar - always set position on first frame
+    static bool first_frame = true;
+    ImGuiIO& io = ImGui::GetIO();
+    float panel_width = 280.0f;
+
+    if (first_frame) {
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - panel_width - 10, 30));
+        ImGui::SetNextWindowCollapsed(true);  // Start collapsed
+        first_frame = false;
+    }
+
     if (!ImGui::Begin("Device Control", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return;
