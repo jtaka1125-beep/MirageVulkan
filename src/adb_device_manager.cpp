@@ -595,8 +595,10 @@ bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::
 }
 
 int AdbDeviceManager::startScreenCaptureOnAll(const std::string& host, int base_port) {
-    // First assign ports to all devices
-    assignPorts(base_port);
+    // Assign ports only if base_port > 0 (otherwise pre-assigned via setDevicePort)
+    if (base_port > 0) {
+        assignPorts(base_port);
+    }
 
     auto devices = getUniqueDevices();
     int success_count = 0;
@@ -652,6 +654,15 @@ int AdbDeviceManager::getAssignedPort(const std::string& hardware_id) const {
         return it->second.assigned_port;
     }
     return 0;
+}
+
+void AdbDeviceManager::setDevicePort(const std::string& hardware_id, int port) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = unique_devices_.find(hardware_id);
+    if (it != unique_devices_.end()) {
+        it->second.assigned_port = port;
+        MLOG_INFO("adb", "Assigned port %d to %s", port, it->second.display_name.c_str());
+    }
 }
 
 bool AdbDeviceManager::getDeviceByPort(int port, UniqueDevice& out) const {

@@ -64,6 +64,7 @@ public:
 
     // Get all hardware IDs of managed devices
     std::vector<std::string> getDeviceIds() const;
+    int getPortForDevice(const std::string& hardware_id) const;
 
     // Feed RTP packet to the first device's receiver (for USB video)
     void feed_rtp_packet(const uint8_t* data, size_t len);

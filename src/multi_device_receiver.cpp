@@ -197,6 +197,13 @@ std::vector<std::string> MultiDeviceReceiver::getDeviceIds() const {
     return ids;
 }
 
+int MultiDeviceReceiver::getPortForDevice(const std::string& hardware_id) const {
+    std::lock_guard<std::mutex> lock(receivers_mutex_);
+    auto it = receivers_.find(hardware_id);
+    if (it != receivers_.end()) return it->second.port;
+    return 0;
+}
+
 void MultiDeviceReceiver::feed_rtp_packet(const uint8_t* data, size_t len) {
     std::lock_guard<std::mutex> lock(receivers_mutex_);
 

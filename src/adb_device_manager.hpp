@@ -104,6 +104,7 @@ public:
 
     // Get assigned port for device by hardware_id
     int getAssignedPort(const std::string& hardware_id) const;
+    void setDevicePort(const std::string& hardware_id, int port);
 
     // Get device by assigned port
     bool getDeviceByPort(int port, UniqueDevice& out) const;
