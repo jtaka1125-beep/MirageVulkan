@@ -16,6 +16,7 @@ C++/Python/Kotlinソースを解析し、AIが高速に全体把握できる
   thread_map.json       - スレッド生成・mutex箇所
   layer_map.json        - 層別ファイル分類・統計
   file_summary.json     - ファイル別行数・複雑度ヒント
+  risk_summary.json     - リスク集約（並行性・巨大ファイル・結合度）
 
 Usage:
     python generate_project_cache.py
@@ -27,6 +28,7 @@ import json
 import glob
 import subprocess
 import datetime
+from collections import defaultdict
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 SRC_DIR = os.path.join(ROOT, "src")
@@ -138,7 +140,6 @@ def count_lines(filepath):
 
 
 def get_git_info():
-    """Gitの現在コミット情報を取得"""
     info = {}
     try:
         r = subprocess.run(["git", "log", "-1", "--format=%h|%H|%s|%ai"],
@@ -149,12 +150,10 @@ def get_git_info():
             info["full_hash"] = parts[1]
             info["message"] = parts[2]
             info["date"] = parts[3]
-
         r = subprocess.run(["git", "rev-list", "--count", "HEAD"],
                            capture_output=True, text=True, cwd=ROOT, timeout=5)
         if r.returncode == 0:
             info["commit_count"] = int(r.stdout.strip())
-
         r = subprocess.run(["git", "remote", "get-url", "origin"],
                            capture_output=True, text=True, cwd=ROOT, timeout=5)
         if r.returncode == 0:
@@ -169,8 +168,6 @@ def get_git_info():
 def generate_manifest(src_files, test_files):
     git = get_git_info()
     layers = sorted(set(classify_layer(f) for f in src_files))
-
-    # エントリーポイント検出（main関数）
     entry_points = []
     for f in src_files:
         try:
@@ -179,7 +176,6 @@ def generate_manifest(src_files, test_files):
                     entry_points.append(os.path.relpath(f, ROOT).replace("\\", "/"))
         except:
             pass
-
     return {
         "project": "MirageVulkan",
         "generated_at": datetime.datetime.now().isoformat(),
@@ -198,12 +194,8 @@ def generate_manifest(src_files, test_files):
             {"model": "A9", "resolution": "800x1340", "android": 15},
         ],
         "cache_files": [
-            "project_manifest.json",
-            "class_index.json",
-            "include_graph.json",
-            "thread_map.json",
-            "layer_map.json",
-            "file_summary.json",
+            "project_manifest.json", "class_index.json", "include_graph.json",
+            "thread_map.json", "layer_map.json", "file_summary.json", "risk_summary.json",
         ],
     }
 
@@ -215,11 +207,9 @@ def generate_class_index(src_files):
         for c in extract_classes(f):
             c["layer"] = layer
             all_classes.append(c)
-
     by_layer = {}
     for c in all_classes:
         by_layer.setdefault(c["layer"], []).append(c)
-
     return {
         "generated_at": datetime.datetime.now().isoformat(),
         "total_classes": len([c for c in all_classes if c["kind"] == "class"]),
@@ -236,14 +226,11 @@ def generate_include_graph(hpp_files):
         includes = extract_includes(f)
         if includes:
             graph[rel] = includes
-
     reverse = {}
     for src, deps in graph.items():
         for dep in deps:
             reverse.setdefault(dep, []).append(src)
-
     most_depended = sorted(reverse.items(), key=lambda x: -len(x[1]))[:10]
-
     return {
         "generated_at": datetime.datetime.now().isoformat(),
         "total_files": len(graph),
@@ -261,14 +248,12 @@ def generate_thread_map(src_files):
         if threads:
             fname = threads[0]["file"]
             by_file[fname] = threads
-
     all_mutexes = {}
     for f in src_files:
         rel = os.path.relpath(f, ROOT).replace("\\", "/")
         mutexes = extract_mutexes(f)
         if mutexes:
             all_mutexes[rel] = mutexes
-
     return {
         "generated_at": datetime.datetime.now().isoformat(),
         "total_thread_points": len(all_threads),
@@ -292,7 +277,6 @@ def generate_layer_map(src_files):
         layers.setdefault(layer, []).append({
             "file": rel, "total_lines": total, "code_lines": code,
         })
-
     stats = {}
     for layer, files in layers.items():
         stats[layer] = {
@@ -301,7 +285,6 @@ def generate_layer_map(src_files):
             "code_lines": sum(f["code_lines"] for f in files),
             "files": [f["file"] for f in files],
         }
-
     return {
         "generated_at": datetime.datetime.now().isoformat(),
         "layers": stats,
@@ -317,21 +300,15 @@ def generate_file_summary(src_files):
         classes = extract_classes(f)
         threads = extract_threads(f)
         mutexes = extract_mutexes(f)
-
         files.append({
-            "file": rel,
-            "layer": classify_layer(f),
-            "total_lines": total,
-            "code_lines": code,
-            "classes": len(classes),
-            "class_names": [c["name"] for c in classes],
-            "thread_points": len(threads),
-            "mutex_points": len(mutexes),
+            "file": rel, "layer": classify_layer(f),
+            "total_lines": total, "code_lines": code,
+            "classes": len(classes), "class_names": [c["name"] for c in classes],
+            "thread_points": len(threads), "mutex_points": len(mutexes),
             "complexity": "high" if (len(threads) > 2 or len(mutexes) > 3 or code > 500)
                           else "medium" if (len(threads) > 0 or len(mutexes) > 0 or code > 200)
                           else "low",
         })
-
     files.sort(key=lambda x: -x["code_lines"])
     return {
         "generated_at": datetime.datetime.now().isoformat(),
@@ -341,13 +318,66 @@ def generate_file_summary(src_files):
     }
 
 
+def generate_risk_summary(index_dir):
+    """既存キャッシュからリスクサマリーを生成（最後に実行）"""
+    with open(os.path.join(index_dir, "file_summary.json")) as f:
+        fs = json.load(f)
+    with open(os.path.join(index_dir, "include_graph.json")) as f:
+        ig = json.load(f)
+
+    risk = {"generated_at": datetime.datetime.now().isoformat()}
+
+    # High concurrency files
+    high_conc = []
+    for fi in fs["files"]:
+        tp, mp = fi["thread_points"], fi["mutex_points"]
+        if tp >= 2 or mp >= 3:
+            high_conc.append({"file": fi["file"], "threads": tp, "mutexes": mp,
+                             "code_lines": fi["code_lines"], "layer": fi["layer"]})
+    high_conc.sort(key=lambda x: -(x["threads"] + x["mutexes"]))
+    risk["high_concurrency_files"] = high_conc
+
+    # Largest files (>300 code lines)
+    largest = [{"file": fi["file"], "code_lines": fi["code_lines"], "layer": fi["layer"]}
+               for fi in fs["files"] if fi["code_lines"] > 300]
+    largest.sort(key=lambda x: -x["code_lines"])
+    risk["largest_files"] = largest
+
+    # High include coupling
+    risk["high_include_coupling"] = ig.get("reverse_top10", [])
+
+    # Threads without mutex (race condition risk)
+    risk["threads_without_mutex"] = [
+        {"file": fi["file"], "threads": fi["thread_points"], "layer": fi["layer"]}
+        for fi in fs["files"] if fi["thread_points"] > 0 and fi["mutex_points"] == 0
+    ]
+
+    # Complexity distribution
+    risk["complexity_distribution"] = {
+        level: len([f for f in fs["files"] if f["complexity"] == level])
+        for level in ["high", "medium", "low"]
+    }
+
+    # Layer balance
+    layer_lines = defaultdict(int)
+    layer_files = defaultdict(int)
+    for fi in fs["files"]:
+        layer_lines[fi["layer"]] += fi["code_lines"]
+        layer_files[fi["layer"]] += 1
+    risk["layer_balance"] = {
+        k: {"files": layer_files[k], "code_lines": v}
+        for k, v in sorted(layer_lines.items(), key=lambda x: -x[1])
+    }
+
+    return risk
+
+
 # ─── Main ──────────────────────────────────────────────────
 
 def main():
     os.makedirs(INDEX_DIR, exist_ok=True)
     os.makedirs(REVIEW_DIR, exist_ok=True)
 
-    # ソースファイル収集
     src_files = set()
     for ext in ["*.hpp", "*.cpp", "*.h"]:
         src_files.update(glob.glob(os.path.join(SRC_DIR, ext)))
@@ -361,6 +391,7 @@ def main():
     print(f"C++ソース: {len(src_files)} 件")
     print(f"テスト: {len(test_files)} 件\n")
 
+    # Phase 1: ソース解析
     generators = [
         ("project_manifest.json", lambda: generate_manifest(src_files, test_files)),
         ("class_index.json", lambda: generate_class_index(src_files)),
@@ -378,10 +409,25 @@ def main():
         size = os.path.getsize(path) / 1024
         print(f"  {name:<25} {size:>6.1f}KB")
 
+    # Phase 2: リスクサマリー（他JSONに依存）
+    risk = generate_risk_summary(INDEX_DIR)
+    risk_path = os.path.join(INDEX_DIR, "risk_summary.json")
+    with open(risk_path, "w", encoding="utf-8") as f:
+        json.dump(risk, f, indent=2, ensure_ascii=False)
+    size = os.path.getsize(risk_path) / 1024
+    print(f"  {'risk_summary.json':<25} {size:>6.1f}KB")
+
+    # サマリー
+    print(f"\n  High concurrency: {len(risk['high_concurrency_files'])} files")
+    print(f"  Largest (>300L):  {len(risk['largest_files'])} files")
+    print(f"  Complexity: H={risk['complexity_distribution']['high']} "
+          f"M={risk['complexity_distribution']['medium']} "
+          f"L={risk['complexity_distribution']['low']}")
+
     print(f"\n出力先:")
     print(f"  index:        {INDEX_DIR}")
     print(f"  review_cache: {REVIEW_DIR}")
-    print(f"\nAIがproject_manifest.jsonを最初に読めばプロジェクト全体を即座に把握可能。")
+    print(f"\nAIが project_manifest.json → risk_summary.json の順に読めば即座に全体把握可能。")
 
 
 if __name__ == "__main__":
