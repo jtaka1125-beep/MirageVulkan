@@ -422,6 +422,14 @@ if(BUILD_TESTS)
         target_link_libraries(test_gui_logic PRIVATE gtest)
         target_compile_definitions(test_gui_logic PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+        # Result type test (header-only)
+        add_executable(test_result
+            tests/test_result.cpp
+        )
+        target_include_directories(test_result PRIVATE src)
+        target_link_libraries(test_result PRIVATE gtest)
+        target_compile_definitions(test_result PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
         enable_testing()
         add_test(NAME VulkanVideoTest COMMAND test_vulkan_video)
         add_test(NAME H264ParserTest COMMAND test_h264_parser)
@@ -436,6 +444,7 @@ if(BUILD_TESTS)
         add_test(NAME MirrorReceiverTest COMMAND test_mirror_receiver)
         add_test(NAME HybridSenderTest COMMAND test_hybrid_sender)
         add_test(NAME GuiLogicTest COMMAND test_gui_logic)
+        add_test(NAME ResultTest COMMAND test_result)
 
         message(STATUS "Tests enabled")
     else()

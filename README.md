@@ -101,7 +101,7 @@ python scripts/full_build.py
 
 ## テスト
 
-13テストスイート、全PASS:
+14テストスイート、全PASS:
 
 | テスト | 内容 |
 |---|---|
@@ -118,6 +118,7 @@ python scripts/full_build.py
 | MirrorReceiverTest | RTPパケット受信 |
 | HybridSenderTest | コマンド送信 |
 | GuiLogicTest | GUIレイアウト/状態ロジック |
+| ResultTest | Result型エラーハンドリング |
 
 ## 設定
 
