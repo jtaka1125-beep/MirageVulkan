@@ -61,7 +61,7 @@ public:
         }
         if (adb_executor_) {
             // Build and execute command
-            std::string cmd = "shell am start-foreground-service -n com.example.mirrorsender/.ScreenCaptureService "
+            std::string cmd = "shell am start-foreground-service -n com.mirage.capture/.capture.ScreenCaptureService "
                              "--es HOST " + host + " --ei PORT " + std::to_string(port);
             adb_executor_(cmd);
         }
