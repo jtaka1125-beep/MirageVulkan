@@ -10,17 +10,19 @@
 
 | 項目 | 結果 |
 |------|------|
-| **総合評価** | **A- (85/100)** |
-| コード規模 | 25,306行 / 101ファイル |
+| **総合評価** | **A- (90/100)** |
+| コード規模 | 27,000行+ / 102ファイル |
 | ビルド (Release) | ✅ 成功 (11.1 MB) |
 | ビルド (Debug) | ✅ 成功 |
-| テスト | ✅ 6/6 全パス (0.64秒) |
+| テスト | ✅ **13/13 全パス** (1.27秒) |
 | クリティカルバグ | ✅ 全件解消 |
 | アーキテクチャ | A- (明確なモジュール分離) |
 | Vulkan Video実装 | A- (DPB/POC計算が正確) |
 | 通信層 | A- (Dual-pipe設計が堅実) |
-| GUI | B+ (デッドロック対策済み) |
-| テストカバレッジ | C+ (通信/GUI系テストなし) |
+| GUI | B+ (デッドロック対策済み、ロジックテスト追加) |
+| テストカバレッジ | **B+** (通信層+GUIロジックテスト追加) |
+| 設定管理 | **B+** (外部設定ファイル対応) |
+| コード品質 | **A-** (VID0定数統一、NALキュー上限設定済み) |
 
 ---
 
@@ -45,15 +47,22 @@
 - `mirage_vulkan_debug.exe`: 11.1 MB
 - 前回のファイルロック問題は解消
 
-### テスト: ✅ 6/6 PASS (0.64秒)
+### テスト: ✅ 13/13 PASS (1.27秒)
 | テスト | 時間 | カバー範囲 |
 |--------|------|------------|
-| VulkanVideoTest | 0.28s | Vulkan Video API、DPB管理 |
+| VulkanVideoTest | 0.15s | Vulkan Video API、DPB管理 |
 | H264ParserTest | 0.01s | NALパース、SPS/PPS、MMCO |
-| E2EDecodeTest | 0.29s | パース→デコード→出力の一貫テスト |
+| E2EDecodeTest | 0.17s | パース→デコード→出力の一貫テスト |
 | EventBusTest | 0.01s | 型安全pub/sub、RAII解除 |
 | Vid0ParserTest | 0.02s | VID0カスタムプロトコルパース |
 | AdbSecurityTest | 0.01s | IP検証、パストラバーサル防止 |
+| AoaHidTest | 0.01s | AOA HIDコマンド生成 |
+| MiraProtocolTest | 0.01s | MIRAプロトコル構築 |
+| FrameDispatcherTest | 0.02s | フレーム配信ロジック |
+| RttBandwidthTest | 0.78s | RTT/帯域幅計測 |
+| MirrorReceiverTest | 0.01s | RTPパケットパース |
+| HybridSenderTest | 0.01s | コマンド送信 |
+| GuiLogicTest | 0.01s | GUIレイアウト、状態管理、スワイプ計算 |
 
 ---
 

@@ -8,6 +8,8 @@
 #include <functional>
 #include <cstring>
 
+#include "vid0_parser.hpp"  // Common VID0 constants
+
 #ifdef USE_LIBUSB
 #include <libusb-1.0/libusb.h>
 #include "mirage_protocol.hpp"
@@ -29,7 +31,8 @@ namespace gui {
  */
 class UsbVideoReceiver {
 public:
-    static constexpr uint32_t USB_VIDEO_MAGIC = 0x56494430;
+    // Use common VID0 constant from vid0_parser.hpp
+    static constexpr uint32_t USB_VIDEO_MAGIC = mirage::video::VID0_MAGIC;
 
     static constexpr size_t USB_BUFFER_SIZE = 131072;
     static constexpr size_t RING_BUFFER_SIZE = 1024 * 1024;

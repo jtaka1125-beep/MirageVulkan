@@ -146,9 +146,11 @@ set(IMGUI_SOURCES
 )
 
 # =============================================================================
-# Main executable
+# Object Library (shared between Release and Debug)
 # =============================================================================
-add_executable(mirage_vulkan WIN32
+# This avoids compiling the same sources twice for Release/Debug builds
+
+add_library(mirage_core OBJECT
     ${CORE_SOURCES}
     ${VIDEO_SOURCES}
     ${VULKAN_SOURCES}
@@ -156,6 +158,21 @@ add_executable(mirage_vulkan WIN32
     ${COMM_SOURCES}
     ${IMGUI_SOURCES}
 )
+
+target_include_directories(mirage_core PUBLIC
+    src
+    src/gui
+    src/video
+    src/vulkan
+    ${CMAKE_SOURCE_DIR}/third_party
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+
+# =============================================================================
+# Main executable (Release)
+# =============================================================================
+add_executable(mirage_vulkan WIN32 $<TARGET_OBJECTS:mirage_core>)
 
 target_include_directories(mirage_vulkan PRIVATE
     src
@@ -181,8 +198,8 @@ if(USE_FFMPEG)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(FFMPEG REQUIRED libavcodec libavutil libswscale)
 
-    target_include_directories(mirage_vulkan PRIVATE ${FFMPEG_INCLUDE_DIRS})
-    target_compile_definitions(mirage_vulkan PRIVATE USE_FFMPEG)
+    target_include_directories(mirage_core PUBLIC ${FFMPEG_INCLUDE_DIRS})
+    target_compile_definitions(mirage_core PUBLIC USE_FFMPEG)
     target_link_directories(mirage_vulkan PRIVATE ${FFMPEG_LIBRARY_DIRS})
     list(APPEND MIRAGE_LIBS ${FFMPEG_LIBRARIES})
 
@@ -196,8 +213,8 @@ if(USE_LIBUSB)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 
-    target_include_directories(mirage_vulkan PRIVATE ${LIBUSB_INCLUDE_DIRS})
-    target_compile_definitions(mirage_vulkan PRIVATE USE_LIBUSB)
+    target_include_directories(mirage_core PUBLIC ${LIBUSB_INCLUDE_DIRS})
+    target_compile_definitions(mirage_core PUBLIC USE_LIBUSB)
     target_link_directories(mirage_vulkan PRIVATE ${LIBUSB_LIBRARY_DIRS})
     list(APPEND MIRAGE_LIBS ${LIBUSB_LIBRARIES})
 
@@ -215,9 +232,9 @@ list(APPEND MIRAGE_LIBS bthprops)
 target_link_libraries(mirage_vulkan PRIVATE ${MIRAGE_LIBS})
 
 # =============================================================================
-# Compiler settings
+# Compiler settings (apply to object library)
 # =============================================================================
-target_compile_definitions(mirage_vulkan PRIVATE
+target_compile_definitions(mirage_core PUBLIC
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -226,25 +243,20 @@ target_compile_definitions(mirage_vulkan PRIVATE
 )
 
 if(USE_VULKAN_VIDEO)
-    target_compile_definitions(mirage_vulkan PRIVATE USE_VULKAN_VIDEO)
+    target_compile_definitions(mirage_core PUBLIC USE_VULKAN_VIDEO)
 endif()
 
-target_compile_options(mirage_vulkan PRIVATE
+target_compile_options(mirage_core PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /W4>
     $<$<CXX_COMPILER_ID:GNU>:-finput-charset=UTF-8 -Wall -Wextra>
 )
 
+target_link_libraries(mirage_core PUBLIC Vulkan::Vulkan)
+
 # =============================================================================
-# Debug version
+# Debug version (reuses object library)
 # =============================================================================
-add_executable(mirage_vulkan_debug
-    ${CORE_SOURCES}
-    ${VIDEO_SOURCES}
-    ${VULKAN_SOURCES}
-    ${GUI_SOURCES}
-    ${COMM_SOURCES}
-    ${IMGUI_SOURCES}
-)
+add_executable(mirage_vulkan_debug $<TARGET_OBJECTS:mirage_core>)
 
 target_include_directories(mirage_vulkan_debug PRIVATE
     src
@@ -257,28 +269,17 @@ target_include_directories(mirage_vulkan_debug PRIVATE
 )
 
 if(USE_FFMPEG)
-    target_include_directories(mirage_vulkan_debug PRIVATE ${FFMPEG_INCLUDE_DIRS})
     target_link_directories(mirage_vulkan_debug PRIVATE ${FFMPEG_LIBRARY_DIRS})
 endif()
 
 if(USE_LIBUSB)
-    target_include_directories(mirage_vulkan_debug PRIVATE ${LIBUSB_INCLUDE_DIRS})
     target_link_directories(mirage_vulkan_debug PRIVATE ${LIBUSB_LIBRARY_DIRS})
 endif()
 
 target_link_libraries(mirage_vulkan_debug PRIVATE ${MIRAGE_LIBS})
 
-target_compile_definitions(mirage_vulkan_debug PRIVATE
-    UNICODE
-    _UNICODE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
-    VK_USE_PLATFORM_WIN32_KHR
-    _DEBUG
-    $<$<BOOL:${USE_FFMPEG}>:USE_FFMPEG>
-    $<$<BOOL:${USE_LIBUSB}>:USE_LIBUSB>
-    $<$<BOOL:${USE_VULKAN_VIDEO}>:USE_VULKAN_VIDEO>
-)
+# Debug-specific definitions only
+target_compile_definitions(mirage_vulkan_debug PRIVATE _DEBUG)
 
 # =============================================================================
 # Tests
@@ -397,6 +398,30 @@ if(BUILD_TESTS)
         target_link_libraries(test_rtt_bandwidth PRIVATE gtest)
         target_compile_definitions(test_rtt_bandwidth PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+        # Mirror receiver RTP parsing test (header-only)
+        add_executable(test_mirror_receiver
+            tests/test_mirror_receiver.cpp
+        )
+        target_include_directories(test_mirror_receiver PRIVATE src)
+        target_link_libraries(test_mirror_receiver PRIVATE gtest)
+        target_compile_definitions(test_mirror_receiver PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # Hybrid command sender test (header-only, uses mirage_protocol.hpp)
+        add_executable(test_hybrid_sender
+            tests/test_hybrid_sender.cpp
+        )
+        target_include_directories(test_hybrid_sender PRIVATE src)
+        target_link_libraries(test_hybrid_sender PRIVATE gtest)
+        target_compile_definitions(test_hybrid_sender PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # GUI logic test (headless, no Vulkan dependencies)
+        add_executable(test_gui_logic
+            tests/test_gui_logic.cpp
+        )
+        target_include_directories(test_gui_logic PRIVATE src)
+        target_link_libraries(test_gui_logic PRIVATE gtest)
+        target_compile_definitions(test_gui_logic PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
         enable_testing()
         add_test(NAME VulkanVideoTest COMMAND test_vulkan_video)
         add_test(NAME H264ParserTest COMMAND test_h264_parser)
@@ -408,6 +433,9 @@ if(BUILD_TESTS)
         add_test(NAME MiraProtocolTest COMMAND test_mira_protocol)
         add_test(NAME FrameDispatcherTest COMMAND test_frame_dispatcher)
         add_test(NAME RttBandwidthTest COMMAND test_rtt_bandwidth)
+        add_test(NAME MirrorReceiverTest COMMAND test_mirror_receiver)
+        add_test(NAME HybridSenderTest COMMAND test_hybrid_sender)
+        add_test(NAME GuiLogicTest COMMAND test_gui_logic)
 
         message(STATUS "Tests enabled")
     else()

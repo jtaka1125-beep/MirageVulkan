@@ -46,7 +46,8 @@ MirageVulkan/
 ├── driver_installer/       WinUSBドライバインストーラ
 ├── macro_editor/           マクロエディタ (Python)
 ├── tools/archive/          デバッグツールアーカイブ
-├── config.json             外部設定ファイル
+├── config.json             アプリ設定ファイル (ネットワーク等)
+├── src/mirage_config.hpp   システム設定 (パス、フォント等)
 ├── CMakeLists.txt          C++ ビルド設定
 └── MIGRATION_PLAN.md       MirageComplete→MirageVulkan移行計画
 ```
@@ -100,7 +101,7 @@ python scripts/full_build.py
 
 ## テスト
 
-10テストスイート、全PASS:
+13テストスイート、全PASS:
 
 | テスト | 内容 |
 |---|---|
@@ -114,6 +115,21 @@ python scripts/full_build.py
 | MiraProtocolTest | MIRAプロトコル |
 | FrameDispatcherTest | フレーム配信 |
 | RttBandwidthTest | RTT/帯域幅計測 |
+| MirrorReceiverTest | RTPパケット受信 |
+| HybridSenderTest | コマンド送信 |
+| GuiLogicTest | GUIレイアウト/状態ロジック |
+
+## 設定
+
+### 環境変数によるオーバーライド
+
+| 変数名 | 説明 | デフォルト |
+|---|---|---|
+| `MIRAGE_LOG_DIR` | ログ出力ディレクトリ | `%APPDATA%\MirageSystem` |
+| `MIRAGE_TEMP_DIR` | 一時ファイルディレクトリ | システム一時フォルダ |
+| `MIRAGE_AOA_SWITCH` | aoa_switch.exe パス | 実行ファイルと同階層 |
+| `MIRAGE_VIDEO_FPS` | デフォルトFPS | 30 |
+| `MIRAGE_UDP_PORT` | UDP受信ポート | 5000 |
 
 ## 対応端末
 

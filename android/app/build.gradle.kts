@@ -18,9 +18,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("../mirage.keystore")
-            storePassword = "mirage123"
-            keyAlias = "mirage"
-            keyPassword = "mirage123"
+            storePassword = System.getenv("MIRAGE_KEYSTORE_PASS") ?: ""
+            keyAlias = System.getenv("MIRAGE_KEY_ALIAS") ?: "mirage"
+            keyPassword = System.getenv("MIRAGE_KEY_PASS") ?: ""
         }
     }
 

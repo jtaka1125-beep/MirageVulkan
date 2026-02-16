@@ -48,6 +48,8 @@
 #include <thread>
 #include <vector>
 
+#include "vid0_parser.hpp"  // Common VID0 constants
+
 namespace mirage {
 
 // =============================================================================
@@ -56,7 +58,8 @@ namespace mirage {
 namespace constants {
     static constexpr int MAX_SLOTS = 10;
     static constexpr float ASPECT_RATIO = 16.0f / 9.0f;
-    static constexpr uint32_t USB_VIDEO_MAGIC = 0x56494430;  // "VID0"
+    // Use common VID0 constant from vid0_parser.hpp
+    static constexpr uint32_t USB_VIDEO_MAGIC = video::VID0_MAGIC;
     static constexpr size_t USB_VIDEO_BUFFER_MAX = 128 * 1024;
     static constexpr size_t USB_VIDEO_BUFFER_TRIM = 32 * 1024;
     static constexpr size_t RTP_PACKET_MAX_LEN = 65535;

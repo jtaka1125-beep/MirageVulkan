@@ -17,6 +17,7 @@
 #include <fstream>
 #include <windows.h>
 #include "mirage_log.hpp"
+#include "mirage_config.hpp"
 
 // ImGui Win32 message handler
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -556,17 +557,13 @@ bool GuiApplication::setupImGuiVulkan(HWND hwnd) {
 
     ImFontConfig fontConfig;
     fontConfig.MergeMode = false;
-    const char* fontPaths[] = {
-        "C:\\Windows\\Fonts\\YuGothM.ttc",
-        "C:\\Windows\\Fonts\\YuGothR.ttc",
-        "C:\\Windows\\Fonts\\meiryo.ttc",
-        "C:\\Windows\\Fonts\\msgothic.ttc",
-        nullptr
-    };
+
+    // Load fonts from configuration
+    const auto& sys_config = config::getSystemConfig();
     ImFont* font = nullptr;
-    for (int i = 0; fontPaths[i]; i++) {
-        font = io.Fonts->AddFontFromFileTTF(fontPaths[i], base_font_size_, &fontConfig, io.Fonts->GetGlyphRangesJapanese());
-        if (font) { MLOG_INFO("app", "Font: %s", fontPaths[i]); break; }
+    for (const auto& path : sys_config.font_paths) {
+        font = io.Fonts->AddFontFromFileTTF(path.c_str(), base_font_size_, &fontConfig, io.Fonts->GetGlyphRangesJapanese());
+        if (font) { MLOG_INFO("app", "Font: %s", path.c_str()); break; }
     }
     if (!font) io.Fonts->AddFontDefault();
     io.FontGlobalScale = scale;

@@ -12,6 +12,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #include "mirage_log.hpp"
+#include "mirage_config.hpp"
 #include "event_bus.hpp"
 #include "frame_dispatcher.hpp"
 #include "gui_state.hpp"
@@ -499,8 +500,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-    // Open log file for debugging
-    mirage::log::openLogFile("C:\\MirageWork\\MirageComplete\\build\\mirage_gui.log");
+    // Initialize configuration and open log file
+    auto& sys_config = mirage::config::getSystemConfig();
+    mirage::config::applyEnvironmentOverrides(sys_config);
+    std::string log_path = sys_config.log_directory + "\\" + sys_config.log_filename;
+    mirage::log::openLogFile(log_path.c_str());
 
     try {
 

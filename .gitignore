@@ -50,3 +50,4 @@ __pycache__/
 "*.idsig"  
 logs/  
 screenshots/  
+analysis/  
