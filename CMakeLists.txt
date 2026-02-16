@@ -100,6 +100,7 @@ set(VULKAN_SOURCES
 # GUI
 set(GUI_SOURCES
     src/gui/gui_main.cpp
+    src/gui/gui_init.cpp
     src/gui/gui_command.cpp
     src/gui/gui_window.cpp
     src/gui/gui_threads.cpp
