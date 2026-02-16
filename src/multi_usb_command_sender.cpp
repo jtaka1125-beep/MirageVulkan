@@ -895,11 +895,19 @@ int MultiUsbCommandSender::send_swipe_all(int, int, int, int, int) { return 0; }
 int MultiUsbCommandSender::send_back_all() { return 0; }
 int MultiUsbCommandSender::send_key_all(int) { return 0; }
 
+// =============================================================================
+// Video Control Commands (stub when !USE_LIBUSB)
+// =============================================================================
+uint32_t MultiUsbCommandSender::send_video_fps(const std::string&, int) { return 0; }
+uint32_t MultiUsbCommandSender::send_video_route(const std::string&, uint8_t, const std::string&, int) { return 0; }
+uint32_t MultiUsbCommandSender::send_video_idr(const std::string&) { return 0; }
+
 #endif // USE_LIBUSB
 
 
+#ifdef USE_LIBUSB
 // =============================================================================
-// Video Control Commands
+// Video Control Commands (real implementation)
 // =============================================================================
 
 uint32_t MultiUsbCommandSender::send_video_fps(const std::string& usb_id, int fps) {
@@ -927,5 +935,6 @@ uint32_t MultiUsbCommandSender::send_video_route(const std::string& usb_id, uint
 uint32_t MultiUsbCommandSender::send_video_idr(const std::string& usb_id) {
     return queue_command(usb_id, CMD_VIDEO_IDR, nullptr, 0);
 }
+#endif
 
 } // namespace gui
