@@ -48,3 +48,4 @@ macro_editor_venv/
 *.pyc  
 __pycache__/  
 "*.idsig"  
+logs/  
