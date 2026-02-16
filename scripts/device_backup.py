@@ -95,7 +95,7 @@ def backup_device(serial, backup_dir, skip_ab=False):
 
     # 2. インストール済みAPK一覧
     print(f"  [2/9] パッケージ一覧...")
-    pkgs = shell(serial, "pm list packages -f")
+    pkgs = shell(serial, "pm list packages -f | grep -i mirage")
     with open(os.path.join(backup_dir, "installed_packages.txt"), "w", encoding="utf-8") as f:
         f.write(pkgs)
     pkg_count = len([l for l in pkgs.split("\n") if l.strip()])
