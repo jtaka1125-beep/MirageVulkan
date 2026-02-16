@@ -304,6 +304,163 @@ TEST(HybridSender, AckResponse) {
     EXPECT_EQ(status, 0);
 }
 
+// ===========================================================================
+// ACK status codes
+// ===========================================================================
+TEST(HybridSender, AckStatusError) {
+    // ACK with error status
+    uint8_t ack_payload[] = {0x01, 0x00, 0x00, 0x00, 0x01};  // seq=1, status=1 (error)
+    auto packet = build_packet(CMD_ACK, 0, ack_payload, sizeof(ack_payload));
+
+    PacketHeader hdr;
+    ASSERT_TRUE(parse_header(packet.data(), packet.size(), hdr));
+
+    uint8_t status = packet[HEADER_SIZE + 4];
+    EXPECT_EQ(status, 1);  // Error
+}
+
+// ===========================================================================
+// Device ID format validation (USB serial format tests)
+// ===========================================================================
+namespace {
+
+bool isValidUsbId(const std::string& id) {
+    // USB device ID should be non-empty, alphanumeric + some special chars
+    if (id.empty()) return false;
+    if (id == "_pending") return false;  // Reserved internal key
+    for (char c : id) {
+        if (!std::isalnum(c) && c != '-' && c != '_' && c != ':' && c != '.') {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // anonymous namespace
+
+TEST(HybridSender, ValidUsbIds) {
+    EXPECT_TRUE(isValidUsbId("A9250700956"));
+    EXPECT_TRUE(isValidUsbId("R3CT40XXXXX"));
+    EXPECT_TRUE(isValidUsbId("emulator-5554"));
+    EXPECT_TRUE(isValidUsbId("usb:1-2.3"));
+}
+
+TEST(HybridSender, InvalidUsbIds) {
+    EXPECT_FALSE(isValidUsbId(""));
+    EXPECT_FALSE(isValidUsbId("_pending"));  // Internal reserved
+    EXPECT_FALSE(isValidUsbId("device with spaces"));
+}
+
+// ===========================================================================
+// Fallback priority logic tests (3-tier: AOA_HID > MIRA_USB > ADB)
+// ===========================================================================
+namespace {
+
+enum class FallbackTier { AOA_HID = 1, MIRA_USB = 2, ADB_FALLBACK = 3 };
+
+// Simulates the 3-tier fallback decision logic
+FallbackTier determineFallbackTier(bool hid_available, bool usb_available, bool adb_available) {
+    if (hid_available) return FallbackTier::AOA_HID;
+    if (usb_available) return FallbackTier::MIRA_USB;
+    if (adb_available) return FallbackTier::ADB_FALLBACK;
+    return FallbackTier::ADB_FALLBACK;  // Default
+}
+
+} // anonymous namespace
+
+TEST(HybridSender, FallbackPriorityAllAvailable) {
+    // All methods available - should use AOA_HID (highest priority)
+    auto tier = determineFallbackTier(true, true, true);
+    EXPECT_EQ(tier, FallbackTier::AOA_HID);
+}
+
+TEST(HybridSender, FallbackPriorityNoHid) {
+    // HID not available, USB available
+    auto tier = determineFallbackTier(false, true, true);
+    EXPECT_EQ(tier, FallbackTier::MIRA_USB);
+}
+
+TEST(HybridSender, FallbackPriorityAdbOnly) {
+    // Only ADB available
+    auto tier = determineFallbackTier(false, false, true);
+    EXPECT_EQ(tier, FallbackTier::ADB_FALLBACK);
+}
+
+TEST(HybridSender, FallbackPriorityHidOverUsb) {
+    // HID and ADB available, no USB
+    auto tier = determineFallbackTier(true, false, true);
+    EXPECT_EQ(tier, FallbackTier::AOA_HID);
+}
+
+// ===========================================================================
+// Screen coordinate validation for HID
+// ===========================================================================
+TEST(HybridSender, ScreenDimensionValidation) {
+    // Valid dimensions should produce non-zero HID coords
+    EXPECT_GT(pixelToHidX(500, 1080), 0);
+    EXPECT_GT(pixelToHidY(500, 1920), 0);
+
+    // Invalid dimensions should produce zero
+    EXPECT_EQ(pixelToHidX(500, 0), 0);
+    EXPECT_EQ(pixelToHidY(500, -1), 0);
+}
+
+TEST(HybridSender, HidCoordinateForDifferentResolutions) {
+    // Test various common Android resolutions
+    // 1080x1920 (FHD portrait)
+    EXPECT_NEAR(pixelToHidX(540, 1080), 16383, 10);  // Center X
+
+    // 1200x2000 (Npad X1)
+    EXPECT_NEAR(pixelToHidX(600, 1200), 16383, 10);
+
+    // 800x1340 (A9)
+    EXPECT_NEAR(pixelToHidX(400, 800), 16383, 10);
+}
+
+// ===========================================================================
+// Video route command payload
+// ===========================================================================
+TEST(HybridSender, VideoRoutePayload) {
+    // Video route: mode(1) + host(32) + port(2)
+    std::vector<uint8_t> payload(35, 0);
+    payload[0] = 2;  // Mode: UDP
+    strcpy(reinterpret_cast<char*>(&payload[1]), "192.168.0.100");
+    payload[33] = 0xB8;  // Port 5000 (little-endian)
+    payload[34] = 0x13;
+
+    auto packet = build_packet(CMD_VIDEO_ROUTE, 10, payload.data(), payload.size());
+
+    PacketHeader hdr;
+    ASSERT_TRUE(parse_header(packet.data(), packet.size(), hdr));
+    EXPECT_EQ(hdr.cmd, CMD_VIDEO_ROUTE);
+    EXPECT_EQ(hdr.payload_len, 35u);
+}
+
+// ===========================================================================
+// Click by ID/Text command payloads
+// ===========================================================================
+TEST(HybridSender, ClickIdPayload) {
+    std::string resource_id = "com.app:id/button_ok";
+    auto packet = build_packet(CMD_CLICK_ID, 100,
+        reinterpret_cast<const uint8_t*>(resource_id.c_str()), resource_id.size());
+
+    PacketHeader hdr;
+    ASSERT_TRUE(parse_header(packet.data(), packet.size(), hdr));
+    EXPECT_EQ(hdr.cmd, CMD_CLICK_ID);
+    EXPECT_EQ(hdr.payload_len, resource_id.size());
+}
+
+TEST(HybridSender, ClickTextPayload) {
+    std::string text = "OK";
+    auto packet = build_packet(CMD_CLICK_TEXT, 101,
+        reinterpret_cast<const uint8_t*>(text.c_str()), text.size());
+
+    PacketHeader hdr;
+    ASSERT_TRUE(parse_header(packet.data(), packet.size(), hdr));
+    EXPECT_EQ(hdr.cmd, CMD_CLICK_TEXT);
+    EXPECT_EQ(hdr.payload_len, text.size());
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
