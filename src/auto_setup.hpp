@@ -7,6 +7,7 @@
 
 #include <string>
 #include <functional>
+#include <thread>
 
 namespace mirage {
 
@@ -61,9 +62,26 @@ public:
         }
         if (adb_executor_) {
             // Build and execute command
-            std::string cmd = "shell am start-foreground-service -n com.mirage.capture/.capture.ScreenCaptureService "
-                             "--es HOST " + host + " --ei PORT " + std::to_string(port);
-            adb_executor_(cmd);
+            // ScreenCaptureService already running (started by CaptureActivity).
+            // Use broadcast to switch video route via AccessoryCommandReceiver.
+            // Step 1: Switch to USB/TCP mode to force sender reset
+            std::string cmd_reset = "shell am broadcast"
+                " -a com.mirage.capture.ACTION_VIDEO_ROUTE"
+                " --ei route_mode 0"
+                " -n com.mirage.capture/.ipc.AccessoryCommandReceiver";
+            adb_executor_(cmd_reset);
+
+            // Brief delay for mode switch
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+            // Step 2: Switch to UDP mode with correct host:port
+            std::string cmd_udp = "shell am broadcast"
+                " -a com.mirage.capture.ACTION_VIDEO_ROUTE"
+                " --ei route_mode 1"
+                " --es host " + host +
+                " --ei port " + std::to_string(port) +
+                " -n com.mirage.capture/.ipc.AccessoryCommandReceiver";
+            adb_executor_(cmd_udp);
         }
         SetupStepResult result;
         result.status = SetupStatus::COMPLETED;
@@ -71,13 +89,8 @@ public:
     }
 
     SetupStepResult approve_screen_share_dialog() {
-        if (progress_callback_) {
-            progress_callback_("Approving screen share dialog...", 50);
-        }
-        if (adb_executor_) {
-            // Tap "Start now" button (common coordinates)
-            adb_executor_("shell input tap 540 1150");
-        }
+        // No longer needed: broadcast-based route switch doesn't trigger dialog.
+        // Kept for API compatibility.
         SetupStepResult result;
         result.status = SetupStatus::COMPLETED;
         return result;
