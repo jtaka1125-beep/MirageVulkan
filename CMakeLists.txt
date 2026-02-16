@@ -459,6 +459,14 @@ if(BUILD_TESTS)
         target_link_libraries(test_adb_device_manager PRIVATE gtest)
         target_compile_definitions(test_adb_device_manager PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+        # USB command packet building test
+        add_executable(test_usb_command
+            tests/test_usb_command.cpp
+        )
+        target_include_directories(test_usb_command PRIVATE src)
+        target_link_libraries(test_usb_command PRIVATE gtest)
+        target_compile_definitions(test_usb_command PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
         enable_testing()
         add_test(NAME VulkanVideoTest COMMAND test_vulkan_video)
         add_test(NAME H264ParserTest COMMAND test_h264_parser)
@@ -476,6 +484,7 @@ if(BUILD_TESTS)
         add_test(NAME ResultTest COMMAND test_result)
         add_test(NAME RouteControllerTest COMMAND test_route_controller)
         add_test(NAME AdbDeviceManagerTest COMMAND test_adb_device_manager)
+        add_test(NAME UsbCommandTest COMMAND test_usb_command)
 
         message(STATUS "Tests enabled")
     else()
