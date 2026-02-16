@@ -66,6 +66,7 @@ public:
 
         // Assigned port for screen capture (each device gets unique port)
         int assigned_port = 0;
+        int assigned_tcp_port = 0;  // scrcpy TCP port (from AutoSetup)
     };
 
     AdbDeviceManager() = default;

@@ -116,6 +116,16 @@ bool initializeMultiReceiver() {
         std::string host_ip = mirage::config::getConfig().network.pc_ip;
         int success = g_adb_manager->startScreenCaptureOnAll(host_ip, 0);  // 0 = use pre-assigned ports
         MLOG_INFO("gui", "Screen capture started: %d/%zu devices", success, device_ids.size());
+
+        // Switch MirrorReceivers to TCP direct mode (bypass UDP packet loss)
+        if (success > 0 && g_multi_receiver) {
+            auto devices = g_adb_manager->getUniqueDevices();
+            for (const auto& dev : devices) {
+                if (dev.assigned_tcp_port > 0) {
+                    g_multi_receiver->restart_as_tcp(dev.hardware_id, dev.assigned_tcp_port);
+                }
+            }
+        }
         return true;
     }
 

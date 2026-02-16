@@ -66,6 +66,9 @@ public:
     std::vector<std::string> getDeviceIds() const;
     int getPortForDevice(const std::string& hardware_id) const;
 
+    // Restart a device receiver in TCP mode (scrcpy direct connection)
+    bool restart_as_tcp(const std::string& hardware_id, uint16_t tcp_port);
+
     // Feed RTP packet to the first device's receiver (for USB video)
     void feed_rtp_packet(const uint8_t* data, size_t len);
 

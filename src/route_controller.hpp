@@ -4,6 +4,7 @@
 #include <string>
 #include <functional>
 #include <map>
+#include <chrono>
 
 namespace gui {
 
@@ -103,6 +104,9 @@ private:
     static constexpr int SUB_FPS_HIGH = 30;
     static constexpr int SUB_FPS_MED = 15;
     static constexpr int SUB_FPS_LOW = 10;
+
+    // Throttled debug log
+    std::chrono::steady_clock::time_point last_debug_log_{};
 
     FpsCommandCallback fps_callback_;
     RouteCommandCallback route_callback_;

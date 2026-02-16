@@ -99,7 +99,7 @@ public:
         adb_executor_("push tools/scrcpy-server-v3.3.4 /data/local/tmp/scrcpy-server.jar");
 
         // 2. Kill any existing scrcpy on this device
-        adb_executor_("shell pkill -f scrcpy 2>/dev/null");
+        adb_executor_("shell pkill -f scrcpy");
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         // 3. ADB forward
@@ -131,7 +131,7 @@ public:
         if (progress_callback_)
             progress_callback_("Connecting to scrcpy stream...", 50);
 
-        // Start bridge thread
+        // Start bridge thread: TCP (scrcpy) -> UDP (MirrorReceiver)
         bridge_running_ = true;
         bridge_thread_ = std::thread(&AutoSetup::bridge_loop, this);
 
@@ -149,6 +149,8 @@ public:
             progress_callback_("No permission dialog needed (scrcpy)", 75);
         return result;
     }
+
+    int get_tcp_port() const { return tcp_port_; }
 
     SetupStepResult complete_and_verify() {
         SetupStepResult result;
@@ -244,13 +246,11 @@ private:
                 MLOG_WARN("adb", "Bridge: TCP recv returned %d", n);
                 break;
             }
-            // Forward raw H.264 to UDP (MirrorReceiver parses NAL units)
-            // Send in chunks <= 1400 bytes for UDP MTU
-            for (int offset = 0; offset < n; offset += 1400) {
-                int chunk = std::min(n - offset, 1400);
-                sendto(udp_sock, buf + offset, chunk, 0,
-                       (sockaddr*)&udp_dest, sizeof(udp_dest));
-            }
+            // Forward raw H.264 to UDP (localhost - no MTU fragmentation needed)
+            // Send entire TCP recv chunk as single UDP datagram
+            // Localhost UDP supports up to 65535 bytes without fragmentation issues
+            sendto(udp_sock, buf, n, 0,
+                   (sockaddr*)&udp_dest, sizeof(udp_dest));
             total += n;
 
             auto now = std::chrono::steady_clock::now();

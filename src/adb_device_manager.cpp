@@ -593,9 +593,25 @@ bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::
     auto result3 = setup.complete_and_verify();
     MLOG_INFO("adb", "Complete and verify: %s", result3.message.c_str());
 
-    return (result2.status == mirage::SetupStatus::COMPLETED ||
-            result2.status == mirage::SetupStatus::SKIPPED) &&
-           (result3.status == mirage::SetupStatus::COMPLETED);
+    bool ok = (result2.status == mirage::SetupStatus::COMPLETED ||
+              result2.status == mirage::SetupStatus::SKIPPED) &&
+             (result3.status == mirage::SetupStatus::COMPLETED);
+
+    if (ok) {
+        int tcp_port = setup.get_tcp_port();
+        MLOG_INFO("adb", "Success (port %d) - TCP mode on port %d", port, tcp_port);
+        // Store TCP port for multi_device_receiver to use
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& [key, ud] : unique_devices_) {
+                if (ud.preferred_adb_id == adb_id) {
+                    ud.assigned_tcp_port = tcp_port;
+                    break;
+                }
+            }
+        }
+    }
+    return ok;
 }
 
 int AdbDeviceManager::startScreenCaptureOnAll(const std::string& host, int base_port) {

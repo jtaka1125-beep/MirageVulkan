@@ -316,6 +316,90 @@ static inline uint16_t rd16(const uint8_t* p) {
 }
 
 // ==============================================================================
+// TCP receive mode - connects directly to scrcpy-server via ADB forward
+// Eliminates UDP packet loss that causes green screen / block artifacts
+// ==============================================================================
+bool MirrorReceiver::start_tcp(uint16_t tcp_port) {
+  tcp_port_ = tcp_port;
+  if (!init_decoder()) return false;
+  running_.store(true);
+  bound_port_.store(tcp_port);  // Report the TCP port as "bound"
+  thread_ = std::thread(&MirrorReceiver::tcp_receive_thread, this, tcp_port);
+  decode_thread_ = std::thread(&MirrorReceiver::decode_thread_func, this);
+  return true;
+}
+
+void MirrorReceiver::tcp_receive_thread(uint16_t tcp_port) {
+  MLOG_INFO("mirror", "TCP receive thread: connecting to localhost:%d", tcp_port);
+
+#ifdef _WIN32
+  SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (sock == INVALID_SOCKET) {
+    MLOG_ERROR("mirror", "TCP socket creation failed");
+    running_.store(false);
+    return;
+  }
+
+  // TCP_NODELAY for low latency
+  int nodelay = 1;
+  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
+
+  // Large receive buffer
+  int bufsize = 4 * 1024 * 1024;
+  setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char*)&bufsize, sizeof(bufsize));
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(tcp_port);
+  inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+  // Retry connect (scrcpy server may still be starting)
+  bool connected = false;
+  for (int i = 0; i < 30 && running_.load(); i++) {
+    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == 0) {
+      connected = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+
+  if (!connected) {
+    MLOG_ERROR("mirror", "TCP connect to localhost:%d failed after retries", tcp_port);
+    closesocket(sock);
+    running_.store(false);
+    return;
+  }
+
+  MLOG_INFO("mirror", "TCP connected to scrcpy on port %d", tcp_port);
+
+  // Set recv timeout so we can check running_ flag
+  DWORD tv = 100;  // 100ms
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+
+  char buf[65536];
+  while (running_.load()) {
+    int n = recv(sock, buf, sizeof(buf), 0);
+    if (n > 0) {
+      bytes_received_.fetch_add(n);
+      process_raw_h264(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(n));
+    } else if (n == 0) {
+      MLOG_WARN("mirror", "TCP connection closed by server");
+      break;
+    } else {
+      int err = WSAGetLastError();
+      if (err != WSAETIMEDOUT && err != WSAEWOULDBLOCK) {
+        MLOG_ERROR("mirror", "TCP recv error: %d", err);
+        break;
+      }
+    }
+  }
+
+  closesocket(sock);
+#endif
+  MLOG_INFO("mirror", "TCP receive thread ended");
+}
+
+// ==============================================================================
 // Raw H.264 Annex B stream processing (for scrcpy raw_stream=true)
 // Accumulates UDP chunks and extracts NAL units at start code boundaries
 // ==============================================================================

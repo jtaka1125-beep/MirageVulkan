@@ -4,6 +4,22 @@
 
 namespace gui {
 
+static const char* stateToStr(RouteController::State s) {
+    switch (s) {
+    case RouteController::State::NORMAL: return "NORMAL";
+    case RouteController::State::USB_OFFLOAD: return "USB_OFFLOAD";
+    case RouteController::State::FPS_REDUCED: return "FPS_REDUCED";
+    case RouteController::State::USB_FAILED: return "USB_FAILED";
+    case RouteController::State::WIFI_FAILED: return "WIFI_FAILED";
+    case RouteController::State::BOTH_DEGRADED: return "BOTH_DEGRADED";
+    default: return "?";
+    }
+}
+
+static const char* routeToStr(RouteController::VideoRoute r) {
+    return r == RouteController::VideoRoute::WIFI ? "WIFI" : "USB";
+}
+
 RouteController::RouteController() {
     wifi_host_ = mirage::config::getConfig().network.pc_ip;
     current_.video = VideoRoute::USB;
@@ -11,6 +27,7 @@ RouteController::RouteController() {
     current_.main_fps = MAIN_FPS_HIGH;  // 60 FPS for main device
     current_.sub_fps = SUB_FPS_HIGH;    // 30 FPS for sub devices
     current_.state = State::NORMAL;
+    last_debug_log_ = std::chrono::steady_clock::now();
 }
 
 void RouteController::registerDevice(const std::string& device_id, bool is_main, int wifi_port) {
@@ -37,6 +54,10 @@ RouteController::RouteDecision RouteController::evaluate(
 {
     RouteDecision decision = current_;
 
+    const State prev_state = state_;
+    const RouteDecision prev_decision = current_;
+    const auto now = std::chrono::steady_clock::now();
+
     // Track consecutive states for hysteresis
     if (usb.is_congested) {
         consecutive_usb_congestion_++;
@@ -59,65 +80,86 @@ RouteController::RouteDecision RouteController::evaluate(
         consecutive_wifi_failure_ = 0;
     }
 
+    const bool wifi_failed = (consecutive_wifi_failure_ >= FAILURE_THRESHOLD);
+    const bool usb_failed = (consecutive_usb_failure_ >= FAILURE_THRESHOLD);
+    const bool usb_congested = (consecutive_usb_congestion_ >= CONGESTION_THRESHOLD);
+
+    const float wifi_loss = wifi.packet_loss_rate;
+
+    const auto log_tick = std::chrono::duration_cast<std::chrono::seconds>(now - last_debug_log_).count();
+    if (log_tick >= 10) {
+        last_debug_log_ = now;
+        MLOG_INFO(
+            "RouteCtrl",
+            "tick: state=%s usb[bw=%.1f rtt=%.1f alive=%d cong=%d ccong=%d cfail=%d] wifi[bw=%.1f loss=%.2f alive=%d cfail=%d] decision[route=%s main=%d sub=%d]",
+            stateToStr(state_),
+            usb.bandwidth_mbps, usb.ping_rtt_ms, usb.is_alive ? 1 : 0, usb.is_congested ? 1 : 0,
+            consecutive_usb_congestion_, consecutive_usb_failure_,
+            wifi.bandwidth_mbps, wifi_loss, wifi.is_alive ? 1 : 0, consecutive_wifi_failure_,
+            routeToStr(current_.video), current_.main_fps, current_.sub_fps
+        );
+    }
+
     // State machine
     switch (state_) {
     case State::NORMAL:
-        if (consecutive_usb_failure_ >= FAILURE_THRESHOLD) {
+        if (usb_failed) {
             // USB died
             state_ = State::USB_FAILED;
             decision.video = VideoRoute::WIFI;
             decision.control = ControlRoute::WIFI_ADB;
             decision.main_fps = MAIN_FPS_MED;
             decision.sub_fps = SUB_FPS_MED;
-            MLOG_INFO("RouteCtrl", "USB FAILED -> fallback to WiFi");
-        } else if (consecutive_wifi_failure_ >= FAILURE_THRESHOLD) {
+            MLOG_INFO("RouteCtrl", "NORMAL -> USB_FAILED (usb dead)");
+        } else if (wifi_failed) {
             // WiFi died
             state_ = State::WIFI_FAILED;
             decision.video = VideoRoute::USB;
             decision.control = ControlRoute::USB;
             decision.main_fps = MAIN_FPS_LOW;
             decision.sub_fps = SUB_FPS_LOW;
-            MLOG_INFO("RouteCtrl", "WiFi FAILED -> USB only + FPS reduced");
-        } else if (consecutive_usb_congestion_ >= CONGESTION_THRESHOLD) {
+            MLOG_INFO("RouteCtrl", "NORMAL -> WIFI_FAILED (wifi dead)");
+        } else if (usb_congested) {
             // USB congested -> offload video to WiFi
             state_ = State::USB_OFFLOAD;
             decision.video = VideoRoute::WIFI;
             decision.control = ControlRoute::USB;  // Keep control on USB
-            MLOG_INFO("RouteCtrl", "USB congested -> offload video to WiFi");
+            MLOG_INFO("RouteCtrl", "NORMAL -> USB_OFFLOAD (usb congested)");
         }
         break;
 
     case State::USB_OFFLOAD:
-        if (consecutive_usb_failure_ >= FAILURE_THRESHOLD) {
+        if (usb_failed) {
             state_ = State::USB_FAILED;
             decision.control = ControlRoute::WIFI_ADB;
-            MLOG_INFO("RouteCtrl", "USB died while offloaded -> full WiFi");
-        } else if (!usb.is_congested && !wifi.is_alive) {
-            // WiFi died while offloaded, USB recovered
+            MLOG_INFO("RouteCtrl", "USB_OFFLOAD -> USB_FAILED (usb dead)");
+        } else if (wifi_failed) {
+            // WiFi died while offloaded -> back to USB + FPS reduced
             state_ = State::WIFI_FAILED;
             decision.video = VideoRoute::USB;
+            decision.control = ControlRoute::USB;
             decision.main_fps = MAIN_FPS_LOW;
             decision.sub_fps = SUB_FPS_LOW;
-            MLOG_INFO("RouteCtrl", "WiFi died -> back to USB + FPS reduced");
-        } else if (wifi.packet_loss_rate > 0.1f) {
+            MLOG_INFO("RouteCtrl", "USB_OFFLOAD -> WIFI_FAILED (wifi dead)");
+        } else if (wifi_loss > 0.10f) {
             // WiFi has high packet loss -> reduce FPS
             state_ = State::FPS_REDUCED;
             decision.main_fps = adjustFps(decision.main_fps, MAIN_FPS_LOW, -5);
             decision.sub_fps = adjustFps(decision.sub_fps, SUB_FPS_LOW, -5);
-            MLOG_INFO("RouteCtrl", "WiFi packet loss -> reduce FPS");
+            MLOG_INFO("RouteCtrl", "USB_OFFLOAD -> FPS_REDUCED (wifi loss %.2f)", wifi_loss);
         } else if (!usb.is_congested) {
             consecutive_recovery_++;
             if (consecutive_recovery_ >= RECOVERY_THRESHOLD) {
                 state_ = State::NORMAL;
                 decision.video = VideoRoute::USB;
                 consecutive_recovery_ = 0;
-                MLOG_INFO("RouteCtrl", "USB recovered -> back to normal");
+                MLOG_INFO("RouteCtrl", "USB_OFFLOAD -> NORMAL (usb recovered)");
             }
         }
         break;
 
     case State::FPS_REDUCED:
-        if (!usb.is_congested && wifi.packet_loss_rate < 0.05f) {
+        if (!usb.is_congested && wifi_loss < 0.05f && !wifi_failed) {
             consecutive_recovery_++;
             if (consecutive_recovery_ >= RECOVERY_THRESHOLD) {
                 // Gradually increase FPS
@@ -126,16 +168,32 @@ RouteController::RouteDecision RouteController::evaluate(
 
                 if (decision.main_fps >= MAIN_FPS_HIGH) {
                     state_ = State::USB_OFFLOAD;
-                    MLOG_INFO("RouteCtrl", "FPS recovered -> USB_OFFLOAD");
+                    MLOG_INFO("RouteCtrl", "FPS_REDUCED -> USB_OFFLOAD (fps recovered)");
                 }
                 consecutive_recovery_ = 0;
             }
         } else {
             consecutive_recovery_ = 0;
             // Continue reducing if needed
-            if (wifi.packet_loss_rate > 0.15f) {
+            if (wifi_loss > 0.15f) {
                 decision.main_fps = adjustFps(decision.main_fps, MAIN_FPS_LOW, -5);
                 decision.sub_fps = adjustFps(decision.sub_fps, SUB_FPS_LOW, -5);
+            }
+            if (wifi_failed) {
+                state_ = State::WIFI_FAILED;
+                decision.video = VideoRoute::USB;
+                decision.control = ControlRoute::USB;
+                decision.main_fps = MAIN_FPS_LOW;
+                decision.sub_fps = SUB_FPS_LOW;
+                MLOG_INFO("RouteCtrl", "FPS_REDUCED -> WIFI_FAILED (wifi dead)");
+            }
+            if (usb_failed) {
+                state_ = State::USB_FAILED;
+                decision.video = VideoRoute::WIFI;
+                decision.control = ControlRoute::WIFI_ADB;
+                decision.main_fps = MAIN_FPS_MED;
+                decision.sub_fps = SUB_FPS_MED;
+                MLOG_INFO("RouteCtrl", "FPS_REDUCED -> USB_FAILED (usb dead)");
             }
         }
         break;
@@ -147,7 +205,7 @@ RouteController::RouteDecision RouteController::evaluate(
                 state_ = State::USB_OFFLOAD;
                 decision.control = ControlRoute::USB;
                 consecutive_recovery_ = 0;
-                MLOG_INFO("RouteCtrl", "USB recovered -> USB_OFFLOAD");
+                MLOG_INFO("RouteCtrl", "USB_FAILED -> USB_OFFLOAD (usb recovered)");
             }
         } else {
             consecutive_recovery_ = 0;
@@ -164,7 +222,7 @@ RouteController::RouteDecision RouteController::evaluate(
 
                 if (decision.main_fps >= MAIN_FPS_HIGH) {
                     state_ = State::NORMAL;
-                    MLOG_INFO("RouteCtrl", "WiFi recovered -> NORMAL");
+                    MLOG_INFO("RouteCtrl", "WIFI_FAILED -> NORMAL (wifi recovered)");
                 }
                 consecutive_recovery_ = 0;
             }
@@ -179,12 +237,12 @@ RouteController::RouteDecision RouteController::evaluate(
             state_ = State::WIFI_FAILED;
             decision.video = VideoRoute::USB;
             decision.control = ControlRoute::USB;
-            MLOG_INFO("RouteCtrl", "USB recovered from degraded");
+            MLOG_INFO("RouteCtrl", "BOTH_DEGRADED -> WIFI_FAILED (usb recovered)");
         } else if (wifi.is_alive) {
             state_ = State::USB_FAILED;
             decision.video = VideoRoute::WIFI;
             decision.control = ControlRoute::WIFI_ADB;
-            MLOG_INFO("RouteCtrl", "WiFi recovered from degraded");
+            MLOG_INFO("RouteCtrl", "BOTH_DEGRADED -> USB_FAILED (wifi recovered)");
         }
         break;
     }
@@ -196,6 +254,17 @@ RouteController::RouteDecision RouteController::evaluate(
         decision.main_fps != current_.main_fps ||
         decision.sub_fps != current_.sub_fps) {
         applyDecision(decision);
+    }
+
+    // Extra one-shot summary on state change
+    if (prev_state != state_) {
+        MLOG_INFO(
+            "RouteCtrl",
+            "STATE %s -> %s | usb(bw=%.1f rtt=%.1f alive=%d cong=%d) wifi(bw=%.1f loss=%.2f alive=%d)",
+            stateToStr(prev_state), stateToStr(state_),
+            usb.bandwidth_mbps, usb.ping_rtt_ms, usb.is_alive ? 1 : 0, usb.is_congested ? 1 : 0,
+            wifi.bandwidth_mbps, wifi_loss, wifi.is_alive ? 1 : 0
+        );
     }
 
     current_ = decision;
@@ -232,7 +301,7 @@ int RouteController::adjustFps(int current, int target, int step) {
 
 void RouteController::forceState(State state) {
     state_ = state;
-    MLOG_INFO("RouteCtrl", "Force state: %d", static_cast<int>(state));
+    MLOG_INFO("RouteCtrl", "Force state: %s", stateToStr(state_));
 }
 
 void RouteController::resetToNormal() {

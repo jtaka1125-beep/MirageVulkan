@@ -73,7 +73,9 @@ private:
     static constexpr float USB_CONGESTION_THRESHOLD_MBPS = 25.0f;
     static constexpr float USB_RTT_THRESHOLD_MS = 50.0f;
     static constexpr float WIFI_LOSS_THRESHOLD = 0.1f;  // 10%
-    static constexpr int ALIVE_TIMEOUT_MS = 3000;
+
+    // WiFi/USB は瞬断しがちなので少し長め（特に WiFi 側）
+    static constexpr int ALIVE_TIMEOUT_MS = 5000;
 };
 
 } // namespace gui

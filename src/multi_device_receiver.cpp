@@ -52,6 +52,38 @@ bool MultiDeviceReceiver::start(uint16_t base_port) {
     return running_;
 }
 
+bool MultiDeviceReceiver::restart_as_tcp(const std::string& hardware_id, uint16_t tcp_port) {
+    std::lock_guard<std::mutex> lock(receivers_mutex_);
+    auto it = receivers_.find(hardware_id);
+    if (it == receivers_.end()) {
+        MLOG_ERROR("multi", "restart_as_tcp: device %s not found", hardware_id.c_str());
+        return false;
+    }
+
+    auto& entry = it->second;
+    int old_port = entry.port;
+
+    // Stop existing UDP receiver
+    if (entry.receiver) {
+        entry.receiver->stop();
+    }
+
+    // Create new receiver in TCP mode
+    entry.receiver = std::make_unique<MirrorReceiver>();
+    if (entry.receiver->start_tcp(tcp_port)) {
+        entry.port = tcp_port;
+        port_to_device_.erase(old_port);
+        port_to_device_[tcp_port] = hardware_id;
+        MLOG_INFO("multi", "Restarted %s in TCP mode on port %d (was UDP %d)",
+                  entry.display_name.c_str(), tcp_port, old_port);
+        return true;
+    } else {
+        MLOG_ERROR("multi", "Failed to restart %s in TCP mode on port %d",
+                   entry.display_name.c_str(), tcp_port);
+        return false;
+    }
+}
+
 void MultiDeviceReceiver::stop() {
     if (!running_) return;
 

@@ -67,6 +67,9 @@ public:
   // Start decoder + decode thread only (no UDP socket) - for TCP receiver mode
   bool start_decoder_only();
 
+  // Start TCP receive mode (connects to localhost:tcp_port for raw H.264)
+  bool start_tcp(uint16_t tcp_port);
+
   bool running() const { return running_.load(); }
 
   // Get assigned port (valid after start(), returns 0 if not started)
@@ -95,6 +98,7 @@ public:
 
 private:
   void receive_thread(uint16_t port);
+  void tcp_receive_thread(uint16_t tcp_port);
   void process_rtp_packet(const uint8_t* data, size_t len);
   void process_raw_h264(const uint8_t* data, size_t len);
   size_t find_start_code(const uint8_t* data, size_t len, size_t offset);
@@ -102,7 +106,8 @@ private:
   void generate_test_frame(int w, int h);
 
   std::atomic<bool> running_{false};
-  std::atomic<uint16_t> bound_port_{0};  // Actual port after bind (0 = auto-assign)
+  std::atomic<uint16_t> bound_port_{0};
+  uint16_t tcp_port_{0};  // TCP port for scrcpy direct connection  // Actual port after bind (0 = auto-assign)
   std::thread thread_;
 
   // Frame buffer (double buffered)
