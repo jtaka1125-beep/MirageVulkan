@@ -32,8 +32,9 @@ bool MultiDeviceReceiver::start(uint16_t base_port) {
         entry.receiver = std::make_unique<MirrorReceiver>();
         entry.last_stats_time = std::chrono::steady_clock::now();
 
-        // Use port=0 for OS-assigned port (or base_port if specified)
-        uint16_t request_port = (base_port == 0) ? 0 : base_port++;
+        // Always use port=0 for OS-assigned port to avoid TIME_WAIT conflicts
+        uint16_t request_port = 0;
+        (void)base_port;  // base_port kept for API compatibility
         if (entry.receiver->start(request_port)) {
             // Get actual bound port from receiver
             entry.port = entry.receiver->getPort();

@@ -62,7 +62,7 @@ std::string execCommandHidden(const std::string& cmd) {
     si.wShowWindow = SW_HIDE;
 
     PROCESS_INFORMATION pi = {};
-    std::string cmd_copy = cmd;
+    std::string cmd_copy = "cmd /c " + cmd;
 
     if (CreateProcessA(nullptr, cmd_copy.data(), nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
@@ -220,6 +220,7 @@ std::vector<std::string> AdbDeviceManager::parseAdbDevices() {
 
     // Use hidden window execution to prevent console flash
     std::string result = execCommandHidden(cmd);
+    MLOG_INFO("adb", "Raw adb output (%zu bytes): [%s]", result.size(), result.substr(0, 500).c_str());
     if (result.empty()) {
         MLOG_ERROR("adb", "ERROR: Failed to execute 'adb devices'");
         return devices;
