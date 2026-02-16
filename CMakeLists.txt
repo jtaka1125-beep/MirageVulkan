@@ -132,6 +132,7 @@ set(COMM_SOURCES
     src/aoa_hid_touch.cpp
     src/adb_touch_fallback.cpp
     src/usb_device_discovery.cpp
+    src/usb_command_api.cpp
     src/bandwidth_monitor.cpp
     src/route_controller.cpp
     src/winusb_checker.cpp
