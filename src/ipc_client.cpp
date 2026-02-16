@@ -13,7 +13,7 @@ namespace gui {
 MirageIpcClient::MirageIpcClient(std::wstring pipe_name) : pipe_name_(std::move(pipe_name)) {}
 MirageIpcClient::~MirageIpcClient() { close(); }
 
-bool MirageIpcClient::connect(int timeout_ms) {
+bool MirageIpcClient::connect(int /*timeout_ms*/) {
 #ifdef _WIN32
   close();
 

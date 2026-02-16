@@ -35,8 +35,8 @@ using namespace mirage::gui::init;
 // Main Entry Point
 // =============================================================================
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-                   LPSTR lpCmdLine, int nCmdShow) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
+                   LPSTR /*lpCmdLine*/, int nCmdShow) {
 
     // Initialize Winsock
     WSADATA wsaData;
@@ -146,10 +146,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
 
     // Initialize components
-    bool multi_recv_active = initializeMultiReceiver();
+    (void)initializeMultiReceiver();
     initializeHybridCommand();
-    bool tcp_recv_active = initializeTcpReceiver();
-    MLOG_INFO("gui", "TCP receiver: %s", tcp_recv_active ? "active" : "inactive");
+    (void)initializeTcpReceiver();
+    MLOG_INFO("gui", "Receivers initialized");
     initializeRouting();
 
     // Initialize IPC (fallback)

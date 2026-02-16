@@ -663,7 +663,6 @@ void GuiApplication::vulkanEndFrame() {
     static std::atomic<int> end_frame_count{0};
     int efc = end_frame_count.fetch_add(1);
 
-    VkDevice dev = vk_context_->device();
     uint32_t fi = vk_current_frame_;
     VkCommandBuffer cmd = vk_command_buffers_[fi];
 

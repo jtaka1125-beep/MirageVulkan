@@ -8,7 +8,7 @@
 
 namespace mirage::vk {
 
-bool VulkanTexture::create(VulkanContext& ctx, VkDescriptorPool pool, int w, int h) {
+bool VulkanTexture::create(VulkanContext& ctx, VkDescriptorPool /*pool*/, int w, int h) {
     ctx_ = &ctx;
     width_ = w; height_ = h;
     VkDevice dev = ctx_->device();

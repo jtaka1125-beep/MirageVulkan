@@ -146,23 +146,8 @@ std::string sanitizeCommand(const std::string& command) {
     return command;
 }
 
-/**
- * Escape a string for safe use in shell commands
- */
-std::string escapeShellArg(const std::string& arg) {
-    std::string escaped;
-    escaped.reserve(arg.length() * 2);
-
-    for (char c : arg) {
-        // Escape special characters
-        if (std::strchr(SHELL_METACHARACTERS, c) != nullptr) {
-            escaped += '\\';
-        }
-        escaped += c;
-    }
-
-    return escaped;
-}
+// Note: escapeShellArg was removed as unused. If needed for future shell escaping,
+// implement using platform-specific APIs (e.g., CommandLineToArgvW on Windows).
 
 /**
  * Get platform-appropriate temporary directory

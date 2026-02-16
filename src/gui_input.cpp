@@ -149,7 +149,7 @@ void GuiApplication::onMouseDoubleClick(int button, int x, int y) {
 // Click Processing
 // =============================================================================
 
-void GuiApplication::processMainViewClick(int local_x, int local_y, bool is_double) {
+void GuiApplication::processMainViewClick(int local_x, int local_y, bool /*is_double*/) {
     // Variables to hold data for callbacks (called outside mutex)
     std::string device_id;
     int dev_x = -1, dev_y = -1;
@@ -536,7 +536,7 @@ void GuiApplication::onKeyDown(int vkey) {
     }
 }
 
-void GuiApplication::onKeyUp(int vkey) {
+void GuiApplication::onKeyUp(int /*vkey*/) {
     // Currently no key-up handling needed
 }
 

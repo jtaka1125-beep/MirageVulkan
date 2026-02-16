@@ -42,7 +42,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             // Get window border sizes
             RECT windowRect = {0, 0, 100, 100};
-            RECT clientRect = {0, 0, 100, 100};
             AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
             int borderW = (windowRect.right - windowRect.left) - 100;
             int borderH = (windowRect.bottom - windowRect.top) - 100;

@@ -453,7 +453,7 @@ bool VulkanYuvConverter::createOutputImage(uint32_t width, uint32_t height) {
     return true;
 }
 
-bool VulkanYuvConverter::convert(VkImage nv12_input,
+bool VulkanYuvConverter::convert(VkImage /*nv12_input*/,
                                   VkImageView y_view,
                                   VkImageView uv_view,
                                   uint32_t width,

@@ -32,10 +32,8 @@ bool VulkanVideoDecoder::createVideoSession() {
     profile_info.lumaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
     profile_info.chromaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
 
-    VkVideoProfileListInfoKHR profile_list = {};
-    profile_list.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
-    profile_list.profileCount = 1;
-    profile_list.pProfiles = &profile_info;
+    // Note: VkVideoProfileListInfoKHR is used for image/buffer creation in DPB,
+    // not needed here since we use profile_info directly for session creation.
 
     // Query capabilities for stdHeaderVersion
     VkVideoDecodeH264CapabilitiesKHR h264_caps = {};
