@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <vector>
 #include <mutex>
@@ -37,7 +37,7 @@ struct MirrorFrame {
 /**
  * UDP Mirror Receiver
  * - Receives RTP H.264 packets on specified port
- * - Depacketizes and decodes via FFmpeg (or test pattern if USE_FFMPEG not defined)
+ * - Depacketizes and decodes via UnifiedDecoder/FFmpeg (or test pattern)
  * - Provides latest frame for display
  */
 class MirrorReceiver {
@@ -92,25 +92,28 @@ public:
   uint64_t nals_received() const { return nals_received_.load(); }
   uint64_t frames_decoded() const { return frames_decoded_.load(); }
   uint64_t bytes_received() const { return bytes_received_.load(); }
+  uint64_t gaps_detected() const { return gaps_detected_.load(); }
 
   // Feed RTP packet from external source (e.g., USB AOA)
   void feed_rtp_packet(const uint8_t* data, size_t len);
+
+  // Feed raw H.264 Annex B data from external source (e.g., scrcpy TCP)
+  void process_raw_h264(const uint8_t* data, size_t len);
 
 private:
   void receive_thread(uint16_t port);
   void tcp_receive_thread(uint16_t tcp_port);
   void process_rtp_packet(const uint8_t* data, size_t len);
-  void process_raw_h264(const uint8_t* data, size_t len);
   size_t find_start_code(const uint8_t* data, size_t len, size_t offset);
   void decode_nal(const uint8_t* data, size_t len);
   void generate_test_frame(int w, int h);
 
   std::atomic<bool> running_{false};
   std::atomic<uint16_t> bound_port_{0};
-  uint16_t tcp_port_{0};  // TCP port for scrcpy direct connection  // Actual port after bind (0 = auto-assign)
+  uint16_t tcp_port_{0};  // TCP port for scrcpy direct connection
   std::thread thread_;
 
-  // Frame buffer (double buffered)
+  // Frame buffer
   std::mutex frame_mtx_;
   MirrorFrame current_frame_;
   bool has_new_frame_ = false;
@@ -126,20 +129,23 @@ private:
   std::atomic<uint64_t> nals_received_{0};
   std::atomic<uint64_t> frames_decoded_{0};
   std::atomic<uint64_t> bytes_received_{0};
+  std::atomic<uint64_t> gaps_detected_{0};
+
+  // Recovery controls
+  std::atomic<bool> need_idr_{false};           // drop until next IDR
+  std::atomic<bool> request_decoder_flush_{false};
 
   // Decode thread (separated from receive for pipeline parallelism)
   std::thread decode_thread_;
   void decode_thread_func();
-  
+
   // NAL queue (receive -> decode)
-  struct NalUnit {
-    std::vector<uint8_t> data;
-  };
+  struct NalUnit { std::vector<uint8_t> data; };
   std::queue<NalUnit> nal_queue_;
   std::mutex nal_queue_mtx_;
   std::condition_variable nal_queue_cv_;
   static constexpr size_t MAX_NAL_QUEUE_SIZE = 128;
-  
+
   // Enqueue NAL for async decode
   void enqueue_nal(const uint8_t* data, size_t len);
 
@@ -161,7 +167,7 @@ private:
   VkQueue vk_video_decode_queue_ = VK_NULL_HANDLE;
   bool use_unified_decoder_ = false;
 
-  // Legacy FFmpeg decoder (fallback if UnifiedDecoder not available)
+  // Legacy FFmpeg decoder
 #ifdef USE_FFMPEG
   std::unique_ptr<H264Decoder> decoder_;
   void on_decoded_frame(const uint8_t* rgba, int width, int height, uint64_t pts);
@@ -176,7 +182,7 @@ private:
   // Raw H.264 Annex B accumulation buffer (for scrcpy raw_stream=true)
   std::vector<uint8_t> raw_h264_buf_;
 
-  // Reusable annexb buffer for decode_nal (avoids per-NAL heap allocation)
+  // Reusable annexb buffer for decode_nal
   std::vector<uint8_t> annexb_buf_;
 };
 

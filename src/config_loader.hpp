@@ -210,5 +210,83 @@ inline AppConfig& getConfig() {
     return config;
 }
 
+
+// =============================================================================
+// Device Registry - loads expected resolution from devices.json
+// =============================================================================
+struct ExpectedDeviceSpec {
+    std::string hardware_id;
+    int screen_width = 0;
+    int screen_height = 0;
+    int screen_density = 0;
+};
+
+class ExpectedSizeRegistry {
+public:
+    static ExpectedSizeRegistry& instance() {
+        static ExpectedSizeRegistry reg;
+        return reg;
+    }
+
+    // Load from devices.json (call once at startup)
+    bool loadDevices(const std::string& path = "C:/MirageWork/MirageComplete/build/devices.json") {
+        std::ifstream file(path);
+        if (!file.is_open()) {
+            MLOG_WARN("ExpectedSizeRegistry", "devices.json not found: %s", path.c_str());
+            return false;
+        }
+
+#if MIRAGE_HAS_JSON
+        try {
+            nlohmann::json j = nlohmann::json::parse(file);
+            if (!j.contains("devices") || !j["devices"].is_array()) {
+                MLOG_WARN("ExpectedSizeRegistry", "Invalid devices.json format");
+                return false;
+            }
+
+            devices_.clear();
+            for (const auto& dev : j["devices"]) {
+                ExpectedDeviceSpec spec;
+                spec.hardware_id = dev.value("hardware_id", "");
+                spec.screen_width = dev.value("screen_width", 0);
+                spec.screen_height = dev.value("screen_height", 0);
+                spec.screen_density = dev.value("screen_density", 0);
+
+                if (!spec.hardware_id.empty() && spec.screen_width > 0 && spec.screen_height > 0) {
+                    devices_[spec.hardware_id] = spec;
+                    MLOG_INFO("ExpectedSizeRegistry", "Loaded: %s -> %dx%d",
+                              spec.hardware_id.c_str(), spec.screen_width, spec.screen_height);
+                }
+            }
+            MLOG_INFO("ExpectedSizeRegistry", "Loaded %zu devices", devices_.size());
+            return true;
+        } catch (const nlohmann::json::exception& e) {
+            MLOG_ERROR("ExpectedSizeRegistry", "JSON parse error: %s", e.what());
+            return false;
+        }
+#else
+        MLOG_WARN("ExpectedSizeRegistry", "nlohmann/json not available");
+        return false;
+#endif
+    }
+
+    // Get expected resolution for device (returns false if unknown)
+    bool getExpectedSize(const std::string& hardware_id, int& out_w, int& out_h) const {
+        auto it = devices_.find(hardware_id);
+        if (it != devices_.end()) {
+            out_w = it->second.screen_width;
+            out_h = it->second.screen_height;
+            return true;
+        }
+        return false;
+    }
+
+    const std::map<std::string, ExpectedDeviceSpec>& allDevices() const { return devices_; }
+
+private:
+    ExpectedSizeRegistry() = default;
+    std::map<std::string, ExpectedDeviceSpec> devices_;
+};
+
 } // namespace config
 } // namespace mirage

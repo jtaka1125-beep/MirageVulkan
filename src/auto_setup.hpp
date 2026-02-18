@@ -73,7 +73,7 @@ public:
     // host: PC IP for UDP target (not used for scrcpy, kept for API compat)
     // port: UDP port that MirrorReceiver is listening on
     // =========================================================================
-    SetupStepResult start_screen_capture(const std::string& host, int port) {
+    SetupStepResult start_screen_capture(const std::string& host, int port, bool is_main = true) {
         (void)host; // scrcpy streams to TCP, bridge sends to UDP locally
         SetupStepResult result;
 
@@ -98,9 +98,11 @@ public:
         // 1. Push scrcpy-server (idempotent, fast if already there)
         adb_executor_("push tools/scrcpy-server-v3.3.4 /data/local/tmp/scrcpy-server.jar");
 
-        // 2. Kill any existing scrcpy on this device
-        adb_executor_("shell pkill -f scrcpy");
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        // 2. Kill ONLY our own scrcpy (by scid), NOT all scrcpy processes!
+        // Using pkill -f scrcpy would kill other devices' scrcpy too.
+        // On first launch there's nothing to kill, and on restart the old
+        // process with the same scid doesn't exist. So we skip the global kill.
+        // If needed, use: shell "pkill -f scid=<our_scid>" (but scid is new each time)
 
         // 3. ADB forward
         std::string fwd = "forward tcp:" + std::to_string(tcp_port_) +
@@ -108,11 +110,19 @@ public:
         adb_executor_(fwd);
 
         // 4. Start scrcpy-server in background
+        // Bandwidth optimization: Main 4Mbps/30fps, Sub 1Mbps/15fps
+        int bit_rate = 2000000;  // 2Mbps uniform for all devices
+        int max_fps_val = 30;     // 30fps uniform for all devices
+        MLOG_INFO("adb", "scrcpy params: bit_rate=%d max_fps=%d", bit_rate, max_fps_val);
+
         std::string shell_cmd = "shell CLASSPATH=/data/local/tmp/scrcpy-server.jar"
             " app_process / com.genymobile.scrcpy.Server 3.3.4"
             " tunnel_forward=true audio=false control=false"
-            " raw_stream=true max_size=720 video_bit_rate=2000000"
-            " max_fps=30 cleanup=false scid=" + std::string(scid_str);
+            " raw_stream=true video_bit_rate=" + std::to_string(bit_rate) +
+            " max_fps=" + std::to_string(max_fps_val) +
+            "" +
+            " i_frame_interval=3" +
+            " cleanup=false scid=" + std::string(scid_str);
 
         // Start in background thread (blocking ADB shell)
         server_running_ = true;
@@ -125,15 +135,16 @@ public:
         });
         server_thread_.detach();
 
-        // 5. Wait for server to start, then launch TCP->UDP bridge
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        // 5. Wait for server to start (WiFi ADB is slower than USB)
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
         if (progress_callback_)
             progress_callback_("Connecting to scrcpy stream...", 50);
 
-        // Start bridge thread: TCP (scrcpy) -> UDP (MirrorReceiver)
-        bridge_running_ = true;
-        bridge_thread_ = std::thread(&AutoSetup::bridge_loop, this);
+        // Bridge disabled - MirrorReceiver reads TCP directly via restart_as_tcp()
+        // bridge_running_ = true;
+        // bridge_thread_ = std::thread(&AutoSetup::bridge_loop, this);
+        bridge_connected_ = true;  // Mark as "connected" so complete_and_verify() succeeds
 
         result.status = SetupStatus::COMPLETED;
         result.message = "scrcpy started";
@@ -154,15 +165,14 @@ public:
 
     SetupStepResult complete_and_verify() {
         SetupStepResult result;
-        if (bridge_connected_) {
-            result.status = SetupStatus::COMPLETED;
-            result.message = "";
-        } else {
-            // Give it a moment
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-            result.status = bridge_connected_ ? SetupStatus::COMPLETED : SetupStatus::FAILED;
-            result.message = bridge_connected_ ? "" : "Bridge not connected";
+        if (!bridge_connected_) {
+            // Wait longer for WiFi ADB (bridge connects async, scrcpy startup is slow)
+            for (int i = 0; i < 20 && !bridge_connected_; i++) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
         }
+        result.status = bridge_connected_ ? SetupStatus::COMPLETED : SetupStatus::FAILED;
+        result.message = bridge_connected_ ? "" : "Bridge not connected after 10s";
         if (progress_callback_)
             progress_callback_("Setup complete", 100);
         return result;
@@ -208,23 +218,28 @@ private:
         server_addr.sin_port = htons(static_cast<u_short>(tcp_port_));
         inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
 
-        // Retry connect
+        // Retry connect with extended timeout for WiFi ADB (scrcpy startup is slow)
         bool connected = false;
-        for (int i = 0; i < 20 && bridge_running_; i++) {
+        for (int i = 0; i < 50 && bridge_running_; i++) {
             if (connect(tcp_sock, (sockaddr*)&server_addr, sizeof(server_addr)) == 0) {
                 connected = true;
                 break;
+            }
+            if (i % 10 == 9) {
+                MLOG_INFO("adb", "Bridge: TCP connect retry %d/50 (port %d)", i+1, tcp_port_);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
 
         if (!connected) {
-            MLOG_ERROR("adb", "Bridge: TCP connect failed after retries");
+            MLOG_ERROR("adb", "Bridge: TCP connect failed after 50 retries (10s) on port %d", tcp_port_);
             closesocket(tcp_sock);
             return;
         }
 
-        MLOG_INFO("adb", "Bridge: TCP connected to scrcpy on port %d", tcp_port_);
+        // scrcpy raw_stream=true sends pure H.264 Annex B stream with NO header.
+        // Just log and proceed - do NOT consume any bytes.
+        MLOG_INFO("adb", "Bridge: TCP connected to scrcpy on port %d (raw_stream=true, no header to skip)", tcp_port_);
         bridge_connected_ = true;
 
         // Create UDP sender

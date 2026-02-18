@@ -58,6 +58,7 @@ inline auto& g_bandwidth_monitor      = mirage::ctx().bandwidth_monitor;
 inline auto& g_route_controller       = mirage::ctx().route_controller;
 inline auto& g_route_eval_running     = mirage::ctx().route_eval_running;
 inline auto& g_route_eval_thread      = mirage::ctx().route_eval_thread;
+inline auto& g_macro_api_server       = mirage::ctx().macro_api_server;
 
 #ifdef USE_AI
 inline auto& g_ai_engine              = mirage::ctx().ai_engine;

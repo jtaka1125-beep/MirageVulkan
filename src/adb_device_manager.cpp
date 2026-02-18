@@ -315,6 +315,18 @@ std::string AdbDeviceManager::getHardwareId(const std::string& adb_id) {
 void AdbDeviceManager::refresh() {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    // Save port assignments before clearing (these are set by startScreenCapture)
+    std::unordered_map<std::string, int> saved_tcp_ports;
+    std::unordered_map<std::string, int> saved_assigned_ports;
+    for (const auto& [hw_id, ud] : unique_devices_) {
+        if (ud.assigned_tcp_port > 0) {
+            saved_tcp_ports[hw_id] = ud.assigned_tcp_port;
+        }
+        if (ud.assigned_port > 0) {
+            saved_assigned_ports[hw_id] = ud.assigned_port;
+        }
+    }
+
     // Clear old data
     devices_.clear();
     unique_devices_.clear();
@@ -332,7 +344,7 @@ void AdbDeviceManager::refresh() {
         // Get hardware ID
         info.hardware_id = getHardwareId(adb_id);
 
-        // Get device model
+        // Get device model and serial (ro.serialno) for cross-matching
         info.model = getDeviceProp(adb_id, "ro.product.model");
         info.manufacturer = getDeviceProp(adb_id, "ro.product.manufacturer");
 
@@ -354,8 +366,87 @@ void AdbDeviceManager::refresh() {
         }
 
         devices_[adb_id] = info;
+    }
 
-        // Group by hardware ID
+    // =========================================================================
+    // hardware_id統一パス: android_id取得失敗のUSBデバイスをWiFiデバイスと照合
+    // android_id成功時のフォーマット: "xxxxxxxx_NNNNNNN" (8文字+_+ハッシュ)
+    // ro.serialnoフォールバック: "_"を含まない文字列
+    // =========================================================================
+    {
+        // WiFiデバイスのIP→hardware_idマップを構築
+        std::map<std::string, std::string> wifi_ip_to_hwid;
+        // WiFiデバイスのmodel→hardware_idマップを構築 (IPマッチ失敗時のフォールバック)
+        std::map<std::string, std::string> wifi_model_to_hwid;
+        for (const auto& [adb_id, info] : devices_) {
+            if (info.conn_type != ConnectionType::WiFi) continue;
+            // android_idが正常取得できたWiFiデバイスのみ対象 ("_"を含む)
+            if (info.hardware_id.find('_') == std::string::npos) continue;
+
+            if (!info.ip_address.empty()) {
+                wifi_ip_to_hwid[info.ip_address] = info.hardware_id;
+            }
+            if (!info.model.empty()) {
+                wifi_model_to_hwid[info.model] = info.hardware_id;
+            }
+        }
+
+        // USBデバイスでandroid_id取得失敗したものを照合
+        for (auto& [adb_id, info] : devices_) {
+            if (info.conn_type != ConnectionType::USB) continue;
+            // android_idが正常取得できていれば統一不要 ("_"を含む)
+            if (info.hardware_id.find('_') != std::string::npos) continue;
+
+            std::string old_hwid = info.hardware_id;
+
+            // 優先度1: IPアドレスでマッチ
+            if (!info.ip_address.empty()) {
+                auto it = wifi_ip_to_hwid.find(info.ip_address);
+                if (it != wifi_ip_to_hwid.end()) {
+                    info.hardware_id = it->second;
+                    MLOG_INFO("adb", "デバイス統一(IP一致): USB:%s の hardware_id を %s → %s に更新 (IP=%s)",
+                              adb_id.c_str(), old_hwid.c_str(), info.hardware_id.c_str(), info.ip_address.c_str());
+                    continue;
+                }
+            }
+
+            // 優先度2: モデル名でマッチ (同一モデルが1台のみの場合)
+            if (!info.model.empty()) {
+                // 同一モデルのWiFiデバイスが1つだけか確認
+                int wifi_count = 0;
+                std::string matched_hwid;
+                for (const auto& [other_id, other_info] : devices_) {
+                    if (other_info.conn_type != ConnectionType::WiFi) continue;
+                    if (other_info.hardware_id.find('_') == std::string::npos) continue;
+                    if (other_info.model == info.model) {
+                        wifi_count++;
+                        matched_hwid = other_info.hardware_id;
+                    }
+                }
+                // 同一モデルが複数あると誤マッチするので1台のみの場合に限定
+                if (wifi_count == 1) {
+                    // さらに: このhardware_idのUSBデバイスがまだ統一されていないことを確認
+                    bool already_unified = false;
+                    for (const auto& [other_id, other_info] : devices_) {
+                        if (other_id == adb_id) continue;
+                        if (other_info.conn_type == ConnectionType::USB && other_info.hardware_id == matched_hwid) {
+                            already_unified = true;
+                            break;
+                        }
+                    }
+                    if (!already_unified) {
+                        info.hardware_id = matched_hwid;
+                        MLOG_INFO("adb", "デバイス統一(モデル一致): USB:%s の hardware_id を %s → %s に更新 (model=%s)",
+                                  adb_id.c_str(), old_hwid.c_str(), info.hardware_id.c_str(), info.model.c_str());
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    // Build unique devices (hardware_id統一済みのdevices_からグルーピング)
+    for (const auto& [adb_id, info] : devices_) {
         auto& unique = unique_devices_[info.hardware_id];
         unique.hardware_id = info.hardware_id;
         unique.model = info.model;
@@ -383,6 +474,18 @@ void AdbDeviceManager::refresh() {
             // Fall back to WiFi
             unique.preferred_adb_id = unique.wifi_connections[0];
             unique.preferred_type = ConnectionType::WiFi;
+        }
+    }
+
+    // Restore saved port assignments
+    for (auto& [hw_id, ud] : unique_devices_) {
+        auto tcp_it = saved_tcp_ports.find(hw_id);
+        if (tcp_it != saved_tcp_ports.end()) {
+            ud.assigned_tcp_port = tcp_it->second;
+        }
+        auto port_it = saved_assigned_ports.find(hw_id);
+        if (port_it != saved_assigned_ports.end()) {
+            ud.assigned_port = port_it->second;
         }
     }
 
@@ -560,8 +663,12 @@ bool AdbDeviceManager::deleteFile(const std::string& adb_id, const std::string& 
     return true;
 }
 
-bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::string& host, int port) {
+bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::string& host, int port, bool is_main) {
     MLOG_INFO("adb", "Starting screen capture on %s -> %s:%d", adb_id.c_str(), host.c_str(), port);
+
+    // Kill any lingering scrcpy-server before starting new one
+    adbCommand(adb_id, "shell pkill -f scrcpy");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // Create persistent AutoSetup (must outlive this function for bridge thread)
     auto setup_ptr = std::make_shared<mirage::AutoSetup>();
@@ -575,7 +682,7 @@ bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::
     auto& setup = *setup_ptr;
 
     // Start screen capture
-    auto result1 = setup.start_screen_capture(host, port);
+    auto result1 = setup.start_screen_capture(host, port, is_main);
     if (result1.status != mirage::SetupStatus::COMPLETED) {
         MLOG_ERROR("adb", "Failed to start screen capture: %s", result1.message.c_str());
         return false;
@@ -603,11 +710,42 @@ bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::
         // Store TCP port for multi_device_receiver to use
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            bool found = false;
             for (auto& [key, ud] : unique_devices_) {
+                MLOG_INFO("adb", "  tcp_port match check: key=%s preferred=%s vs adb_id=%s",
+                          key.c_str(), ud.preferred_adb_id.c_str(), adb_id.c_str());
                 if (ud.preferred_adb_id == adb_id) {
                     ud.assigned_tcp_port = tcp_port;
+                    found = true;
+                    MLOG_INFO("adb", "  -> matched by preferred_adb_id, tcp_port=%d", tcp_port);
                     break;
                 }
+            }
+            if (!found) {
+                // Fallback: check if adb_id appears in any wifi_connections or usb_connections
+                for (auto& [key, ud] : unique_devices_) {
+                    for (const auto& wc : ud.wifi_connections) {
+                        if (wc == adb_id) {
+                            ud.assigned_tcp_port = tcp_port;
+                            found = true;
+                            MLOG_INFO("adb", "  -> matched by wifi_connection, tcp_port=%d", tcp_port);
+                            break;
+                        }
+                    }
+                    if (found) break;
+                    for (const auto& uc : ud.usb_connections) {
+                        if (uc == adb_id) {
+                            ud.assigned_tcp_port = tcp_port;
+                            found = true;
+                            MLOG_INFO("adb", "  -> matched by usb_connection, tcp_port=%d", tcp_port);
+                            break;
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+            if (!found) {
+                MLOG_WARN("adb", "  -> NO MATCH for adb_id=%s, tcp_port lost!", adb_id.c_str());
             }
         }
     }
@@ -623,17 +761,19 @@ int AdbDeviceManager::startScreenCaptureOnAll(const std::string& host, int base_
     auto devices = getUniqueDevices();
     int success_count = 0;
 
+    bool is_first_device = true;
     for (const auto& device : devices) {
         int device_port = device.assigned_port;
-        MLOG_INFO("adb", "Starting screen capture on %s (%s) -> %s:%d", device.display_name.c_str(), device.preferred_adb_id.c_str(),
-                host.c_str(), device_port);
+        MLOG_INFO("adb", "Starting screen capture on %s (%s) -> %s:%d (is_main=%d)", device.display_name.c_str(), device.preferred_adb_id.c_str(),
+                host.c_str(), device_port, is_first_device);
 
-        if (startScreenCapture(device.preferred_adb_id, host, device_port)) {
+        if (startScreenCapture(device.preferred_adb_id, host, device_port, is_first_device)) {
             success_count++;
             MLOG_INFO("adb", "Success (port %d)", device_port);
         } else {
             MLOG_ERROR("adb", "Failed");
         }
+        is_first_device = false;
 
         // Small delay between devices
         std::this_thread::sleep_for(std::chrono::milliseconds(500));

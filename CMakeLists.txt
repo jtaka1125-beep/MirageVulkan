@@ -22,6 +22,7 @@ option(USE_VULKAN_VIDEO "Enable Vulkan Video H.264 decode" ON)
 option(USE_FFMPEG "Enable FFmpeg fallback decoder" ON)
 option(USE_LIBUSB "Enable USB AOA video receiver" ON)
 option(BUILD_TESTS "Build test executables" ON)
+option(USE_OCR "Enable Tesseract OCR frame analysis" OFF)
 
 # =============================================================================
 # Find Vulkan
@@ -126,6 +127,7 @@ set(COMM_SOURCES
     src/hybrid_receiver.cpp
     src/multi_device_receiver.cpp
     src/tcp_video_receiver.cpp
+    src/macro_api_server.cpp
     src/adb_device_manager.cpp
     src/device_registry.cpp
     src/aoa_protocol.cpp
@@ -205,7 +207,7 @@ if(USE_FFMPEG)
 
     target_include_directories(mirage_core PUBLIC ${FFMPEG_INCLUDE_DIRS})
     target_compile_definitions(mirage_core PUBLIC USE_FFMPEG)
-    target_link_directories(mirage_vulkan PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    target_link_directories(mirage_core PUBLIC ${FFMPEG_LIBRARY_DIRS})
     list(APPEND MIRAGE_LIBS ${FFMPEG_LIBRARIES})
 
     message(STATUS "FFmpeg enabled: ${FFMPEG_LIBRARIES}")
@@ -220,7 +222,7 @@ if(USE_LIBUSB)
 
     target_include_directories(mirage_core PUBLIC ${LIBUSB_INCLUDE_DIRS})
     target_compile_definitions(mirage_core PUBLIC USE_LIBUSB)
-    target_link_directories(mirage_vulkan PRIVATE ${LIBUSB_LIBRARY_DIRS})
+    target_link_directories(mirage_core PUBLIC ${LIBUSB_LIBRARY_DIRS})
     list(APPEND MIRAGE_LIBS ${LIBUSB_LIBRARIES})
 
     message(STATUS "USB AOA enabled: libusb-1.0")
@@ -233,6 +235,35 @@ list(APPEND MIRAGE_LIBS ole32 uuid)
 
 # Bluetooth
 list(APPEND MIRAGE_LIBS bthprops)
+
+# Tesseract OCR
+if(USE_OCR)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(TESSERACT REQUIRED tesseract)
+    pkg_check_modules(LEPTONICA REQUIRED lept)
+
+    target_sources(mirage_core PRIVATE src/frame_analyzer.cpp)
+    target_include_directories(mirage_core PRIVATE ${TESSERACT_INCLUDE_DIRS} ${LEPTONICA_INCLUDE_DIRS})
+    target_link_directories(mirage_core PUBLIC ${TESSERACT_LIBRARY_DIRS} ${LEPTONICA_LIBRARY_DIRS})
+    target_compile_definitions(mirage_core PRIVATE MIRAGE_OCR_ENABLED=1)
+    list(APPEND MIRAGE_LIBS ${TESSERACT_LIBRARIES} ${LEPTONICA_LIBRARIES})
+
+    message(STATUS "Tesseract OCR enabled: ${TESSERACT_LIBRARIES}")
+else()
+    message(STATUS "Tesseract OCR disabled")
+endif()
+
+# OBJECT ライブラリは target_link_directories の PUBLIC 伝播をサポートしないため
+# 消費側ターゲットに直接設定する必要がある
+if(USE_FFMPEG)
+    target_link_directories(mirage_vulkan PRIVATE ${FFMPEG_LIBRARY_DIRS})
+endif()
+if(USE_LIBUSB)
+    target_link_directories(mirage_vulkan PRIVATE ${LIBUSB_LIBRARY_DIRS})
+endif()
+if(USE_OCR)
+    target_link_directories(mirage_vulkan PRIVATE ${TESSERACT_LIBRARY_DIRS} ${LEPTONICA_LIBRARY_DIRS})
+endif()
 
 target_link_libraries(mirage_vulkan PRIVATE ${MIRAGE_LIBS})
 
@@ -273,12 +304,16 @@ target_include_directories(mirage_vulkan_debug PRIVATE
     ${IMGUI_DIR}/backends
 )
 
+# OBJECT ライブラリは target_link_directories の PUBLIC 伝播をサポートしないため
+# 消費側ターゲットに直接設定する必要がある
 if(USE_FFMPEG)
     target_link_directories(mirage_vulkan_debug PRIVATE ${FFMPEG_LIBRARY_DIRS})
 endif()
-
 if(USE_LIBUSB)
     target_link_directories(mirage_vulkan_debug PRIVATE ${LIBUSB_LIBRARY_DIRS})
+endif()
+if(USE_OCR)
+    target_link_directories(mirage_vulkan_debug PRIVATE ${TESSERACT_LIBRARY_DIRS} ${LEPTONICA_LIBRARY_DIRS})
 endif()
 
 target_link_libraries(mirage_vulkan_debug PRIVATE ${MIRAGE_LIBS})
@@ -486,6 +521,28 @@ if(BUILD_TESTS)
         add_test(NAME AdbDeviceManagerTest COMMAND test_adb_device_manager)
         add_test(NAME UsbCommandTest COMMAND test_usb_command)
 
+        # Frame Analyzer OCR test
+        if(USE_OCR)
+            add_executable(test_frame_analyzer
+                tests/test_frame_analyzer.cpp
+                src/frame_analyzer.cpp
+            )
+            target_include_directories(test_frame_analyzer PRIVATE src)
+            target_link_libraries(test_frame_analyzer PRIVATE
+                gtest ${TESSERACT_LIBRARIES} ${LEPTONICA_LIBRARIES}
+            )
+            target_link_directories(test_frame_analyzer PRIVATE
+                ${TESSERACT_LIBRARY_DIRS} ${LEPTONICA_LIBRARY_DIRS}
+            )
+            target_compile_definitions(test_frame_analyzer PRIVATE
+                WIN32_LEAN_AND_MEAN NOMINMAX MIRAGE_OCR_ENABLED=1
+            )
+            target_include_directories(test_frame_analyzer PRIVATE
+                ${TESSERACT_INCLUDE_DIRS} ${LEPTONICA_INCLUDE_DIRS}
+            )
+            add_test(NAME FrameAnalyzerTest COMMAND test_frame_analyzer)
+        endif()
+
         message(STATUS "Tests enabled")
     else()
         message(WARNING "GoogleTest not found, tests disabled")
@@ -547,4 +604,5 @@ message(STATUS "  Vulkan Video: ${USE_VULKAN_VIDEO}")
 message(STATUS "  FFmpeg:       ${USE_FFMPEG}")
 message(STATUS "  USB AOA:      ${USE_LIBUSB}")
 message(STATUS "  Tests:        ${BUILD_TESTS}")
+message(STATUS "  OCR:          ${USE_OCR}")
 message(STATUS "")

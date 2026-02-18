@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem - TCP Video Receiver (ADB Forward Mode)
 // =============================================================================
 
@@ -123,11 +123,19 @@ bool TcpVideoReceiver::start(int base_port) {
     int port_offset = 0;
 
     for (const auto& dev : devices) {
-        if (dev.usb_connections.empty()) {
-            MLOG_INFO("tcpvideo", "Skipping %s (no USB connection)", dev.display_name.c_str());
-            continue;
+        // Use preferred_adb_id (USB preferred, WiFi fallback) instead of requiring USB
+        std::string serial = dev.preferred_adb_id;
+        if (serial.empty()) {
+            // Fallback: try USB first, then WiFi
+            if (!dev.usb_connections.empty()) {
+                serial = dev.usb_connections[0];
+            } else if (!dev.wifi_connections.empty()) {
+                serial = dev.wifi_connections[0];
+            } else {
+                MLOG_INFO("tcpvideo", "Skipping %s (no ADB connection)", dev.display_name.c_str());
+                continue;
+            }
         }
-        const std::string& serial = dev.usb_connections[0];
         int local_port = base_port + port_offset;
 
         DeviceEntry entry;
@@ -150,7 +158,7 @@ bool TcpVideoReceiver::start(int base_port) {
         port_offset++;
     }
 
-    if (devices_.empty()) { running_.store(false); MLOG_WARN("tcpvideo", "No USB devices"); return false; }
+    if (devices_.empty()) { running_.store(false); MLOG_WARN("tcpvideo", "No devices available for TCP video"); return false; }
     MLOG_INFO("tcpvideo", "Started %zu TCP video receivers", devices_.size());
     return true;
 }
@@ -206,6 +214,8 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
     MLOG_INFO("tcpvideo", "Receiver thread started: %s (port %d)", hardware_id.c_str(), local_port);
 
     int reconnect_delay_ms = RECONNECT_INIT_MS;
+    int no_data_count = 0;
+    bool scrcpy_launched = false;
 
     while (running_.load()) {
         if (!setupAdbForward(serial, local_port)) {
@@ -248,6 +258,15 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
         MLOG_INFO("tcpvideo", "Connected to %s via TCP port %d", hardware_id.c_str(), local_port);
 
         bool got_data = false;
+        bool is_raw_h264 = false;  // auto-detected on first data
+        bool format_detected = false;
+
+        // scrcpy sends codec header on each new connection
+        {
+            std::lock_guard<std::mutex> lock(devices_mutex_);
+            auto it = devices_.find(hardware_id);
+            if (it != devices_.end()) it->second.header_skipped = false;
+        }
         std::vector<uint8_t> stream_buffer;
         std::vector<uint8_t> recv_buf(TCP_RECV_BUF_SIZE);
 
@@ -260,7 +279,27 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                     reconnect_delay_ms = RECONNECT_INIT_MS;
                 }
                 stream_buffer.insert(stream_buffer.end(), recv_buf.begin(), recv_buf.begin() + received);
-                parseVid0Stream(hardware_id, stream_buffer);
+
+                // Auto-detect stream format on first data chunk
+                if (!format_detected && stream_buffer.size() >= 4) {
+                    if (stream_buffer[0] == 0x56 && stream_buffer[1] == 0x49 &&
+                        stream_buffer[2] == 0x44 && stream_buffer[3] == 0x30) {
+                        is_raw_h264 = false;
+                        MLOG_INFO("tcpvideo", "[%s] Detected VID0 stream format", hardware_id.c_str());
+                    } else {
+                        is_raw_h264 = true;
+                        MLOG_INFO("tcpvideo", "[%s] Detected raw H.264 stream (scrcpy mode)", hardware_id.c_str());
+                    }
+                    format_detected = true;
+                }
+
+                if (format_detected) {
+                    if (is_raw_h264) {
+                        parseRawH264Stream(hardware_id, stream_buffer);
+                    } else {
+                        parseVid0Stream(hardware_id, stream_buffer);
+                    }
+                }
             } else if (received == 0) {
                 break;
             } else {
@@ -279,9 +318,21 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
 
         if (running_.load()) {
             if (!got_data) {
+                no_data_count++;
                 reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
-                MLOG_INFO("tcpvideo", "No data from %s, backoff %dms", hardware_id.c_str(), reconnect_delay_ms);
+                MLOG_INFO("tcpvideo", "No data from %s (attempt %d), backoff %dms",
+                          hardware_id.c_str(), no_data_count, reconnect_delay_ms);
+
+                // After 2 failed attempts, try launching scrcpy-server
+                if (no_data_count == 2 && !scrcpy_launched) {
+                    MLOG_INFO("tcpvideo", "[%s] APK not responding, launching scrcpy-server...", hardware_id.c_str());
+                    if (launchScrcpyServer(serial, local_port)) {
+                        scrcpy_launched = true;
+                        reconnect_delay_ms = RECONNECT_INIT_MS;  // Reset backoff after scrcpy launch
+                    }
+                }
             } else {
+                no_data_count = 0;  // Reset on successful data
                 MLOG_INFO("tcpvideo", "Reconnecting %s in %dms...", hardware_id.c_str(), reconnect_delay_ms);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
@@ -317,6 +368,118 @@ void TcpVideoReceiver::parseVid0Stream(const std::string& hardware_id,
 
     if (result.sync_errors > 0) {
         MLOG_WARN("tcpvideo", "VID0 sync errors: %d for %s", result.sync_errors, hardware_id.c_str());
+    }
+}
+
+
+// =============================================================================
+// scrcpy-server auto-launch (fallback when APK not running)
+// =============================================================================
+
+bool TcpVideoReceiver::launchScrcpyServer(const std::string& serial, int local_port) {
+    // Generate unique SCID for this session
+    uint32_t scid = static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count() & 0x0FFFFFFF) | 0x10000000;
+    char scid_str[16];
+    snprintf(scid_str, sizeof(scid_str), "%08x", scid);
+
+    MLOG_INFO("tcpvideo", "[scrcpy] Launching for %s (scid=%s)", serial.c_str(), scid_str);
+
+    // Kill any existing scrcpy process on device
+    std::string kill_cmd = "adb -s " + serial + " shell \"pkill -f scrcpy 2>/dev/null; pkill -f app_process 2>/dev/null\"";
+    execCommandHidden(kill_cmd);
+    // Wait for LocalServerSocket release after killing scrcpy
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+
+    // Remove old forward
+    std::string rm_fwd = "adb -s " + serial + " forward --remove tcp:" + std::to_string(local_port) + " 2>&1";
+    execCommandHidden(rm_fwd);
+
+    // Push scrcpy-server jar (idempotent)
+    std::string push_cmd = "adb -s " + serial + " push tools\\scrcpy-server-v3.3.4 /data/local/tmp/scrcpy-server.jar 2>&1";
+    std::string push_result = execCommandHidden(push_cmd);
+    MLOG_INFO("tcpvideo", "[scrcpy] push: %s", push_result.c_str());
+
+    // Setup forward to scrcpy abstract socket
+    std::string abstract_name = std::string("localabstract:scrcpy_") + scid_str;
+    std::string fwd_cmd = "adb -s " + serial + " forward tcp:" + std::to_string(local_port) + " " + abstract_name + " 2>&1";
+    std::string fwd_result = execCommandHidden(fwd_cmd);
+    if (fwd_result.find("error") != std::string::npos) {
+        MLOG_ERROR("tcpvideo", "[scrcpy] forward failed: %s", fwd_result.c_str());
+        return false;
+    }
+
+    // Start scrcpy-server in background (fire-and-forget via CreateProcess)
+    // NOTE: No quotes around shell command — Windows CreateProcess passes args directly
+    std::string start_cmd = "adb -s " + serial + " shell "
+        "CLASSPATH=/data/local/tmp/scrcpy-server.jar "
+        "app_process / com.genymobile.scrcpy.Server 3.3.4 "
+        "tunnel_forward=true audio=false control=false "
+        "raw_stream=true max_size=800 video_bit_rate=2000000 "
+        "max_fps=30 cleanup=false scid=" + std::string(scid_str);
+
+    // Launch async: we use CreateProcess with no-wait
+#ifdef _WIN32
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    std::string cmd_line = start_cmd;
+    if (CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        MLOG_INFO("tcpvideo", "[scrcpy] Server process launched for %s", serial.c_str());
+    } else {
+        MLOG_ERROR("tcpvideo", "[scrcpy] CreateProcess failed for %s", serial.c_str());
+        return false;
+    }
+#else
+    std::string bg_cmd = start_cmd + " &";
+    system(bg_cmd.c_str());
+#endif
+
+    // Wait for server to initialize
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    MLOG_INFO("tcpvideo", "[scrcpy] Ready, forward tcp:%d -> %s", local_port, abstract_name.c_str());
+    return true;
+}
+
+// =============================================================================
+// Raw H.264 stream parser (for scrcpy raw_stream=true)
+// =============================================================================
+
+void TcpVideoReceiver::parseRawH264Stream(const std::string& hardware_id,
+                                            std::vector<uint8_t>& buffer) {
+    MirrorReceiver* decoder = nullptr;
+    bool* header_skipped = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(devices_mutex_);
+        auto it = devices_.find(hardware_id);
+        if (it == devices_.end() || !it->second.decoder) return;
+        decoder = it->second.decoder.get();
+        header_skipped = &it->second.header_skipped;
+    }
+
+    if (!*header_skipped) {
+        // scrcpy raw_stream=true sends 12-byte codec header first:
+        // codec_id (4 bytes) + width (4 bytes) + height (4 bytes)
+        if (buffer.size() < 12) return;  // ヘッダ未到着、次のrecvを待つ
+
+        uint32_t codec_id = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
+        uint32_t width = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
+        uint32_t height = (buffer[8] << 24) | (buffer[9] << 16) | (buffer[10] << 8) | buffer[11];
+        MLOG_INFO("tcpvideo", "[%s] scrcpy codec header: id=%u, %ux%u",
+                  hardware_id.c_str(), codec_id, width, height);
+
+        buffer.erase(buffer.begin(), buffer.begin() + 12);
+        *header_skipped = true;
+    }
+
+    // Feed raw H.264 Annex B data directly to decoder's process_raw_h264
+    if (!buffer.empty()) {
+        decoder->process_raw_h264(buffer.data(), buffer.size());
+        buffer.clear();
     }
 }
 

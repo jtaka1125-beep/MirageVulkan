@@ -116,7 +116,7 @@ bool MirrorReceiver::init_decoder() {
   if (decoder_) return true;  // Already initialized
 
   decoder_ = std::make_unique<H264Decoder>();
-  if (!decoder_->init()) {
+  if (!decoder_->init(false)) {
     decoder_.reset();
     return false;
   }
@@ -161,7 +161,7 @@ bool MirrorReceiver::start(uint16_t port) {
   // Start receive thread with exception safety
   try {
     thread_ = std::thread(&MirrorReceiver::receive_thread, this, port);
-  decode_thread_ = std::thread(&MirrorReceiver::decode_thread_func, this);
+    decode_thread_ = std::thread(&MirrorReceiver::decode_thread_func, this);
   } catch (const std::system_error& e) {
     MLOG_ERROR("mirror", "Failed to start thread: %s", e.what());
     running_.store(false);
@@ -178,7 +178,7 @@ void MirrorReceiver::stop() {
   running_.store(false);
   // Wake up decode thread
   nal_queue_cv_.notify_all();
-  
+
   if (thread_.joinable()) {
     thread_.join();
   }
@@ -287,9 +287,6 @@ void MirrorReceiver::receive_thread(uint16_t port) {
   while (running_.load()) {
     int len = recvfrom(sock, (char*)buf, sizeof(buf), 0, nullptr, nullptr);
     if (len > 0) {
-      // Process UDP packet for WiFi fallback mode
-      // In hybrid mode, USB AOA is preferred, but WiFi packets are still processed
-      // when available for redundancy/fallback purposes
       bytes_received_.fetch_add(len);
       process_rtp_packet(buf, static_cast<size_t>(len));
     } else if (len < 0) {
@@ -305,7 +302,6 @@ void MirrorReceiver::receive_thread(uint16_t port) {
       }
 #endif
     }
-    // len == 0 means connection closed (for TCP), or empty packet for UDP - ignore
   }
 
   closesocket(sock);
@@ -406,7 +402,6 @@ void MirrorReceiver::tcp_receive_thread(uint16_t tcp_port) {
 void MirrorReceiver::process_raw_h264(const uint8_t* data, size_t len) {
   // Append to accumulation buffer
   raw_h264_buf_.insert(raw_h264_buf_.end(), data, data + len);
-  bytes_received_.fetch_add(len);
 
   // Extract complete NAL units (delimited by 00 00 00 01)
   while (raw_h264_buf_.size() >= 4) {
@@ -466,19 +461,7 @@ size_t MirrorReceiver::find_start_code(const uint8_t* data, size_t len, size_t o
 void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
   if (len < 12) return;
 
-  // Debug: log first few bytes of first packets
-  static std::atomic<int> dbg_count{0};
-  int c = dbg_count.fetch_add(1);
-  if (c < 5) {
-    MLOG_INFO("mirror", "[RTP-DBG] pkt #%d len=%zu bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-              c+1, len,
-              data[0], data[1], data[2], data[3],
-              data[4], data[5], data[6], data[7],
-              data[8], data[9], data[10], data[11]);
-  }
-
   // Check if this is raw H.264 Annex B (from scrcpy bridge) or RTP
-  // Raw H.264 starts with 00 00 00 01 or 00 00 01, RTP has version=2 in bits 7-6
   uint8_t version = (data[0] >> 6) & 0x03;
   if (version != 2) {
     // Not RTP - treat as raw H.264 Annex B stream chunk
@@ -494,29 +477,17 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
   uint16_t prev_seq = last_seq_.load(std::memory_order_relaxed);
   last_seq_.store(seq, std::memory_order_relaxed);
 
-  // RTPヘッダー解极E
-  // byte 0: V(2), P(1), X(1), CC(4)
-  // byte 1: M(1), PT(7)
-  uint8_t cc = data[0] & 0x0F;        // CSRC count (max 15)
+  uint8_t cc = data[0] & 0x0F;
   bool has_extension = (data[0] & 0x10) != 0;
 
-  size_t header_len = 12 + (cc * 4);  // 基本ヘッダー + CSRC
-
-  // Validate header length doesn't exceed packet
+  size_t header_len = 12 + (cc * 4);
   if (len < header_len) return;
 
-  // 拡張ヘッダーがある場吁E
   if (has_extension) {
-    // Need at least 4 more bytes for extension header
     if (len < header_len + 4) return;
-
-    // 拡張ヘッダー長は最後�E2バイト！E2ビット単位！E
     uint16_t ext_len = rd16(data + header_len + 2);
-
-    // Validate extension doesn't cause overflow
     size_t ext_bytes = 4 + (static_cast<size_t>(ext_len) * 4);
     if (ext_bytes > 65535 || header_len + ext_bytes > len) return;
-
     header_len += ext_bytes;
   }
 
@@ -524,18 +495,15 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
 
   const uint8_t* payload = data + header_len;
   size_t payload_len = len - header_len;
-
   if (payload_len < 1) return;
 
   uint8_t nal_type = payload[0] & 0x1F;
 
   if (nal_type >= 1 && nal_type <= 23) {
-    // Single NAL unit packet - reduce logging
     enqueue_nal(payload, payload_len);
     nals_received_.fetch_add(1);
   }
   else if (nal_type == 24) {
-    // STAP-A: Single-time aggregation packet (often contains SPS+PPS)
     size_t p = 1;
     while (p + 2 <= payload_len) {
       uint16_t sz = rd16(payload + p);
@@ -555,30 +523,40 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
     uint8_t real_type = fu_header & 0x1F;
     uint8_t nri = payload[0] & 0x60;
 
-    // Reduced logging for FU-A
-
     if (start) {
-      // 新しいNAL開姁E
       fu_buf_.clear();
       fu_buf_.push_back(nri | real_type);
       fu_buf_.insert(fu_buf_.end(), payload + 2, payload + payload_len);
       fu_start_seq_ = seq;
       have_fu_ = true;
     } else if (have_fu_) {
-      // 継続パケチE�� - シーケンス番号の連続性チェチE���E�ラチE�Eアラウンド対応！E
-      // uint16_t同士の比輁E��自動的にラチE�Eアラウンドを処琁E
       uint16_t expected = static_cast<uint16_t>(prev_seq + 1);
       if (seq != expected) {
-        MLOG_INFO("mirror", "[FU-A] Gap! expected=%u got=%u, dropping", static_cast<unsigned>(expected), static_cast<unsigned>(seq));
+        gaps_detected_.fetch_add(1);
+        need_idr_.store(true);
+        request_decoder_flush_.store(true);
+        MLOG_INFO("mirror", "[FU-A] Gap! expected=%u got=%u -> drop until IDR + flush", static_cast<unsigned>(expected), static_cast<unsigned>(seq));
         have_fu_ = false;
         fu_buf_.clear();
+
+        // Drop queued NALs to avoid building latency while waiting for recovery.
+        {
+          std::lock_guard<std::mutex> lk(nal_queue_mtx_);
+          while (!nal_queue_.empty()) nal_queue_.pop();
+        }
       } else {
-        // バッファサイズ制限チェチE���E�EoS防止�E�E
         size_t new_size = fu_buf_.size() + (payload_len - 2);
         if (new_size > MAX_FU_BUFFER_SIZE) {
-          MLOG_INFO("mirror", "[FU-A] Buffer overflow! size=%zu, dropping NAL", new_size);
+          gaps_detected_.fetch_add(1);
+          need_idr_.store(true);
+          request_decoder_flush_.store(true);
+          MLOG_INFO("mirror", "[FU-A] Buffer overflow! size=%zu -> drop until IDR + flush", new_size);
           have_fu_ = false;
           fu_buf_.clear();
+          {
+            std::lock_guard<std::mutex> lk(nal_queue_mtx_);
+            while (!nal_queue_.empty()) nal_queue_.pop();
+          }
         } else {
           fu_buf_.insert(fu_buf_.end(), payload + 2, payload + payload_len);
         }
@@ -601,7 +579,6 @@ void MirrorReceiver::enqueue_nal(const uint8_t* data, size_t len) {
   {
     std::lock_guard<std::mutex> lock(nal_queue_mtx_);
     if (nal_queue_.size() >= MAX_NAL_QUEUE_SIZE) {
-      // Drop oldest to prevent unbounded growth
       nal_queue_.pop();
     }
     NalUnit nal;
@@ -619,6 +596,16 @@ void MirrorReceiver::decode_thread_func() {
 
   while (running_.load()) {
     batch.clear();
+
+    // Apply requested decoder flush/reset in the decode thread context.
+    if (request_decoder_flush_.exchange(false)) {
+      MLOG_WARN("mirror", "Decoder flush requested (gap recovery)");
+      if (unified_decoder_) unified_decoder_->flush();
+#ifdef USE_FFMPEG
+      if (decoder_) decoder_->flush();
+#endif
+    }
+
     {
       std::unique_lock<std::mutex> lock(nal_queue_mtx_);
       nal_queue_cv_.wait_for(lock, std::chrono::milliseconds(2), [this] {
@@ -649,15 +636,7 @@ void MirrorReceiver::decode_nal(const uint8_t* data, size_t len) {
 
   uint8_t nal_type = data[0] & 0x1F;
 
-  static std::atomic<int> dbg_nal_count{0};
-  int nc = dbg_nal_count.fetch_add(1);
-  if (nc < 10) {
-    MLOG_INFO("mirror", "[NAL-DBG] #%d type=%u len=%zu", nc+1, nal_type, len);
-  }
-
-  // Cache SPS/PPS for stream recovery (only if size is reasonable)
-  // SPS should be at least 8 bytes and within MAX_SPS_SIZE
-  // PPS should be at least 2 bytes and within MAX_PPS_SIZE
+  // Cache SPS/PPS for stream recovery
   if (nal_type == 7 && len >= 8 && len <= MAX_SPS_SIZE) {
     cached_sps_.assign(data, data + len);
     if (!sps_logged_) {
@@ -670,6 +649,19 @@ void MirrorReceiver::decode_nal(const uint8_t* data, size_t len) {
       pps_logged_ = true;
       MLOG_INFO("mirror", "Cached PPS len=%zu", len);
     }
+  }
+
+  // Skip standalone SPS/PPS - they are cached above and will be prepended to IDR
+  if (nal_type == 7 || nal_type == 8) return;
+
+  // If we're recovering from packet loss, drop everything until next IDR.
+  if (need_idr_.load() && nal_type != 5) {
+    return;
+  }
+  if (need_idr_.load() && nal_type == 5) {
+    // We got an IDR, resume decoding.
+    need_idr_.store(false);
+    MLOG_WARN("mirror", "Recovery: IDR received, resume decoding");
   }
 
   // Lazy-init reusable buffer
@@ -690,40 +682,19 @@ void MirrorReceiver::decode_nal(const uint8_t* data, size_t len) {
     annexb_buf_.insert(annexb_buf_.end(), cached_pps_.begin(), cached_pps_.end());
   }
 
-  // Skip standalone SPS/PPS - they are cached above and will be prepended to IDR
-  if (nal_type == 7 || nal_type == 8) return;
-
   // startcode + NAL data
   annexb_buf_.push_back(0x00); annexb_buf_.push_back(0x00);
   annexb_buf_.push_back(0x00); annexb_buf_.push_back(0x01);
   annexb_buf_.insert(annexb_buf_.end(), data, data + len);
 
-  // Use UnifiedDecoder if available
   if (use_unified_decoder_ && unified_decoder_) {
     unified_decoder_->decode(annexb_buf_.data(), annexb_buf_.size(), 0);
-
-    // If no decoded frames yet and we're receiving data, show test frame
-    if (frames_decoded_.load() == 0 && packets_received_.load() > 50) {
-      static int test_throttle = 0;
-      if (++test_throttle % 30 == 0) {
-        generate_test_frame(640, 480);
-      }
-    }
     return;
   }
 
 #ifdef USE_FFMPEG
   if (decoder_) {
     decoder_->decode(annexb_buf_.data(), annexb_buf_.size());
-
-    // If no decoded frames yet and we're receiving data, show test frame
-    // This indicates connection is working but decoder is waiting for keyframe
-    if (frames_decoded_.load() == 0 && packets_received_.load() > 50) {
-      static int test_throttle = 0;
-      if (++test_throttle % 30 == 0) {
-        generate_test_frame(640, 480);
-      }
-    }
     return;
   }
 #endif
@@ -743,7 +714,6 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
   current_frame_.frame_id = ++test_frame_id_;
   current_frame_.pts_us = static_cast<uint64_t>(pts);
 
-  // Reuse existing buffer if size matches, avoiding reallocation
   if (current_frame_.rgba.size() == frame_bytes) {
     std::memcpy(current_frame_.rgba.data(), rgba, frame_bytes);
   } else {
@@ -771,7 +741,6 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
   current_frame_.frame_id = ++test_frame_id_;
   current_frame_.pts_us = pts;
 
-  // Reuse existing buffer if size matches, avoiding reallocation
   if (current_frame_.rgba.size() == frame_bytes) {
     std::memcpy(current_frame_.rgba.data(), rgba, frame_bytes);
   } else {
@@ -833,11 +802,6 @@ void MirrorReceiver::generate_test_frame(int w, int h) {
 }
 
 void MirrorReceiver::feed_rtp_packet(const uint8_t* data, size_t len) {
-  static std::atomic<int> feed_dbg{0};
-  int fd = feed_dbg.fetch_add(1);
-  if (fd < 5) {
-    MLOG_INFO("mirror", "[FEED-DBG] #%d len=%zu running=%d", fd+1, len, running_.load() ? 1 : 0);
-  }
   bytes_received_.fetch_add(len);
   process_rtp_packet(data, len);
 }

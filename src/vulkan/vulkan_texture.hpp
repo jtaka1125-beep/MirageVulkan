@@ -32,6 +32,7 @@ private:
     VkBuffer staging_ = VK_NULL_HANDLE;
     VkDeviceMemory staging_mem_ = VK_NULL_HANDLE;
     VkDeviceSize staging_size_ = 0;
+    void* staging_mapped_ = nullptr; // persistently mapped (HOST_COHERENT)
 
     int width_ = 0, height_ = 0;
     bool layout_initialized_ = false;
@@ -39,6 +40,13 @@ private:
     // Cached command buffer for update() reuse (avoids per-frame alloc/free)
     VkCommandBuffer cached_cmd_ = VK_NULL_HANDLE;
     VkCommandPool   cached_cmd_pool_ = VK_NULL_HANDLE;
+
+    // Sync: fence for the last upload so we don't vkQueueWaitIdle() every frame.
+    VkFence upload_fence_ = VK_NULL_HANDLE;
+
+    // Diagnostics / robustness
+    uint64_t last_submit_ms_ = 0;
+    uint32_t skipped_updates_ = 0;
 };
 
 } // namespace mirage::vk

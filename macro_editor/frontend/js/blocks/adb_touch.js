@@ -1,5 +1,6 @@
-// ADB operation blocks
+// ADB operation blocks + Screen Analysis blocks
 Blockly.defineBlocksWithJsonArray([
+  // ==================== Touch Operations ====================
   {
     "type": "adb_tap",
     "message0": "タップ x: %1 y: %2",
@@ -34,15 +35,7 @@ Blockly.defineBlocksWithJsonArray([
     "previousStatement": null, "nextStatement": null, "colour": 160,
     "tooltip": "長押し操作"
   },
-  {
-    "type": "adb_wait",
-    "message0": "待機 %1 秒",
-    "args0": [
-      {"type": "field_number", "name": "SECONDS", "value": 1, "min": 0.1, "precision": 0.1}
-    ],
-    "previousStatement": null, "nextStatement": null, "colour": 120,
-    "tooltip": "指定秒数待機"
-  },
+  // ==================== Input ====================
   {
     "type": "adb_keyevent",
     "message0": "キー %1",
@@ -65,6 +58,7 @@ Blockly.defineBlocksWithJsonArray([
     "previousStatement": null, "nextStatement": null, "colour": 45,
     "tooltip": "テキストを入力"
   },
+  // ==================== App ====================
   {
     "type": "adb_launch_app",
     "message0": "アプリ起動 %1",
@@ -83,6 +77,7 @@ Blockly.defineBlocksWithJsonArray([
     "previousStatement": null, "nextStatement": null, "colour": 330,
     "tooltip": "アプリを強制停止"
   },
+  // ==================== Screen ====================
   {
     "type": "adb_screenshot",
     "message0": "スクリーンショット保存 %1",
@@ -92,14 +87,77 @@ Blockly.defineBlocksWithJsonArray([
     "previousStatement": null, "nextStatement": null, "colour": 200,
     "tooltip": "スクリーンショットを撮影・保存"
   },
+  // ==================== Screen Analysis (Phase 6) ====================
   {
-    "type": "adb_log",
-    "message0": "ログ出力 %1",
+    "type": "adb_if_text",
+    "message0": "画面に「%1」が表示されたら",
     "args0": [
-      {"type": "field_input", "name": "MSG", "text": "ステップ完了"}
+      {"type": "field_input", "name": "TEXT", "text": "OK"}
     ],
-    "previousStatement": null, "nextStatement": null, "colour": 60,
-    "tooltip": "ログメッセージを出力"
+    "message1": "実行 %1",
+    "args1": [{"type": "input_statement", "name": "DO"}],
+    "previousStatement": null, "nextStatement": null, "colour": 210,
+    "tooltip": "画面テキストによる条件分岐（uiautomator使用）"
+  },
+  {
+    "type": "adb_find_and_tap",
+    "message0": "🔍 テキスト「%1」を探してタップ",
+    "args0": [
+      {"type": "field_input", "name": "TEXT", "text": "OK"}
+    ],
+    "previousStatement": null, "nextStatement": null, "colour": 210,
+    "tooltip": "画面上のテキストを検索し、見つかったらその座標をタップ"
+  },
+  {
+    "type": "adb_wait_for_text",
+    "message0": "🔍 テキスト「%1」が表示されるまで最大 %2 秒待機",
+    "args0": [
+      {"type": "field_input", "name": "TEXT", "text": "完了"},
+      {"type": "field_number", "name": "TIMEOUT", "value": 10, "min": 1, "max": 60}
+    ],
+    "previousStatement": null, "nextStatement": null, "colour": 210,
+    "tooltip": "指定テキストが画面に現れるまでポーリング待機"
+  },
+  {
+    "type": "adb_if_text_else",
+    "message0": "画面に「%1」があれば",
+    "args0": [
+      {"type": "field_input", "name": "TEXT", "text": "エラー"}
+    ],
+    "message1": "実行 %1",
+    "args1": [{"type": "input_statement", "name": "DO"}],
+    "message2": "なければ %1",
+    "args2": [{"type": "input_statement", "name": "ELSE"}],
+    "previousStatement": null, "nextStatement": null, "colour": 210,
+    "tooltip": "画面テキストの有無で分岐（if/else）"
+  },
+  {
+    "type": "adb_tap_element",
+    "message0": "🎯 要素タップ ID: %1",
+    "args0": [
+      {"type": "field_input", "name": "RES_ID", "text": "com.app:id/button_ok"}
+    ],
+    "previousStatement": null, "nextStatement": null, "colour": 280,
+    "tooltip": "resource-idで要素を特定してタップ（uiautomator検索）"
+  },
+  {
+    "type": "adb_assert_text",
+    "message0": "✅ テキスト「%1」が表示されていることを確認",
+    "args0": [
+      {"type": "field_input", "name": "TEXT", "text": "成功"}
+    ],
+    "previousStatement": null, "nextStatement": null, "colour": 65,
+    "tooltip": "画面にテキストが存在するか検証。なければエラー停止"
+  },
+  // ==================== Control ====================
+  {
+    "type": "adb_wait",
+    "message0": "待機 %1 秒",
+    "args0": [
+      {"type": "field_number", "name": "SECONDS", "value": 1, "min": 0.1, "precision": 0.1}
+    ],
+    "previousStatement": null, "nextStatement": null, "colour": 120,
+    "tooltip": "指定秒数待機"
   },
   {
     "type": "adb_repeat",
@@ -112,16 +170,15 @@ Blockly.defineBlocksWithJsonArray([
     "previousStatement": null, "nextStatement": null, "colour": 120,
     "tooltip": "指定回数繰り返し"
   },
+  // ==================== Utility ====================
   {
-    "type": "adb_if_text",
-    "message0": "画面に「%1」が表示されたら",
+    "type": "adb_log",
+    "message0": "ログ出力 %1",
     "args0": [
-      {"type": "field_input", "name": "TEXT", "text": "OK"}
+      {"type": "field_input", "name": "MSG", "text": "ステップ完了"}
     ],
-    "message1": "実行 %1",
-    "args1": [{"type": "input_statement", "name": "DO"}],
-    "previousStatement": null, "nextStatement": null, "colour": 210,
-    "tooltip": "画面テキストによる条件分岐"
+    "previousStatement": null, "nextStatement": null, "colour": 60,
+    "tooltip": "ログメッセージを出力"
   },
   {
     "type": "adb_container",
@@ -132,7 +189,7 @@ Blockly.defineBlocksWithJsonArray([
     "message1": "%1",
     "args1": [{"type": "input_statement", "name": "STEPS"}],
     "previousStatement": null, "nextStatement": null, "colour": 230,
-    "tooltip": "操作をグループ化。折りたたみ可能。録画結果もここに格納されます。"
+    "tooltip": "操作をグループ化。折りたたみ可能。"
   },
   {
     "type": "adb_screen_record",

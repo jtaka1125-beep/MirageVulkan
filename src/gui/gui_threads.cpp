@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem v2 GUI - Background Threads
 // =============================================================================
 #include "mirage_log.hpp"
@@ -215,6 +215,26 @@ void deviceUpdateThread() {
             }
 
             early_registration_done = true;
+
+            // DISABLED: Using TCP direct mode via restart_as_tcp instead
+            // Deferred TCP receiver startup: now that ADB devices are detected,
+            // start TCP video receiver if not already running
+            // if (!g_tcp_video_receiver && g_adb_manager) {
+            //     auto detected = g_adb_manager->getUniqueDevices();
+            //     if (!detected.empty()) {
+            //         MLOG_INFO("threads", "Deferred TCP receiver init: %zu devices detected", detected.size());
+            //         g_tcp_video_receiver = std::make_unique<::gui::TcpVideoReceiver>();
+            //         g_tcp_video_receiver->setDeviceManager(g_adb_manager.get());
+            //         if (g_tcp_video_receiver->start()) {
+            //             auto tcp_ids = g_tcp_video_receiver->getDeviceIds();
+            //             MLOG_INFO("threads", "TCP video receiver started: %zu device(s)", tcp_ids.size());
+            //             gui->logInfo(u8"TCP映像レシーバー起動: " + std::to_string(tcp_ids.size()) + u8"台");
+            //         } else {
+            //             MLOG_WARN("threads", "TCP video receiver failed to start (will retry via scrcpy)");
+            //             g_tcp_video_receiver.reset();
+            //         }
+            //     }
+            // }
         }
 
         auto now = std::chrono::steady_clock::now();
@@ -432,34 +452,31 @@ void deviceUpdateThread() {
             }
         }
 
+        // DISABLED: Using TCP direct mode via restart_as_tcp instead
         // Update video frames from TCP video receiver (ADB forward mode)
-        if (g_tcp_video_receiver && g_tcp_video_receiver->running()) {
-            auto device_ids = g_tcp_video_receiver->getDeviceIds();
-            for (const auto& hw_id : device_ids) {
-                ::gui::MirrorFrame frame;
-                if (g_tcp_video_receiver->get_latest_frame(hw_id, frame)) {
-                    if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-                        // Device already registered by early registration above,
-                        // but handle late-discovered devices too
-                        if (!g_multi_devices_added[hw_id]) {
-                            ::gui::AdbDeviceManager::UniqueDevice dev_info;
-                            std::string display_name = hw_id;
-                            if (g_adb_manager && g_adb_manager->getUniqueDevice(hw_id, dev_info)) {
-                                display_name = dev_info.display_name;
-                            }
-
-                            gui->addDevice(hw_id, display_name);
-                            mirage::dispatcher().registerDevice(hw_id, display_name, "tcp");
-                            g_multi_devices_added[hw_id] = true;
-                            gui->logInfo(u8"TCP映像受信開始: " + display_name);
-                        }
-
-                        mirage::dispatcher().dispatchFrame(hw_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
-                        mirage::dispatcher().dispatchStatus(hw_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
-                    }
-                }
-            }
-        }
+        // if (g_tcp_video_receiver && g_tcp_video_receiver->running()) {
+        //     auto device_ids = g_tcp_video_receiver->getDeviceIds();
+        //     for (const auto& hw_id : device_ids) {
+        //         ::gui::MirrorFrame frame;
+        //         if (g_tcp_video_receiver->get_latest_frame(hw_id, frame)) {
+        //             if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
+        //                 if (!g_multi_devices_added[hw_id]) {
+        //                     ::gui::AdbDeviceManager::UniqueDevice dev_info;
+        //                     std::string display_name = hw_id;
+        //                     if (g_adb_manager && g_adb_manager->getUniqueDevice(hw_id, dev_info)) {
+        //                         display_name = dev_info.display_name;
+        //                     }
+        //                     gui->addDevice(hw_id, display_name);
+        //                     mirage::dispatcher().registerDevice(hw_id, display_name, "tcp");
+        //                     g_multi_devices_added[hw_id] = true;
+        //                     gui->logInfo(u8"TCP映像受信開始: " + display_name);
+        //                 }
+        //                 mirage::dispatcher().dispatchFrame(hw_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
+        //                 mirage::dispatcher().dispatchStatus(hw_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
+        //             }
+        //         }
+        //     }
+        // }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }

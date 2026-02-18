@@ -29,7 +29,8 @@ import java.util.concurrent.atomic.AtomicLong
  * @param port TCP port to listen on (default 50100)
  */
 class TcpVideoSender(
-    private val port: Int = 50100
+    private val port: Int = 50100,
+    private val onClientConnected: (() -> Unit)? = null
 ) : VideoSender {
 
     companion object {
@@ -60,7 +61,8 @@ class TcpVideoSender(
     private var clientOutput: OutputStream? = null
 
     init {
-        serverSocket = ServerSocket(port, 1, InetAddress.getByName("127.0.0.1"))
+        serverSocket = // Bind without forcing IPv4 loopback to allow IPv4/IPv6 (dual-stack) ADB forward connections
+            ServerSocket(port)
         Log.i(TAG, "TCP server listening on localhost:$port")
 
         acceptThread = Thread({
@@ -133,6 +135,16 @@ class TcpVideoSender(
                 }
 
                 Log.i(TAG, "Client connected: ${socket.remoteSocketAddress}")
+
+                // Flush any stale packets so the new client starts from a clean point
+                sendQueue.clear()
+
+                // Ask encoder for an immediate keyframe (IDR) to avoid showing stale/garbled frames
+                try {
+                    onClientConnected?.invoke()
+                } catch (e: Exception) {
+                    Log.w(TAG, "onClientConnected callback failed", e)
+                }
 
                 // Wait until the client disconnects (detected by writer thread)
                 // or we're shut down

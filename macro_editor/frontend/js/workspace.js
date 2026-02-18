@@ -1,7 +1,10 @@
-// Workspace initialization, bridge, and recording
+// Workspace initialization, bridge, recording, live test, device monitor
 var workspace;
 var isRecording = false;
 var recordedActions = [];
+var isMacroRunning = false;
+var deviceMonitorTimer = null;
+var mirageConnected = false;
 
 document.addEventListener('DOMContentLoaded', function() {
   workspace = Blockly.inject('blocklyDiv', {
@@ -35,31 +38,35 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   addRecordButton();
+  registerContextMenu();
   waitForPywebview();
 });
 
 // Wait for pywebview JS bridge to be ready
 function waitForPywebview() {
   if (window.pywebview && window.pywebview.api) {
-    refreshDevices();
+    onBridgeReady();
   } else {
-    // pywebview fires 'pywebviewready' event when bridge is injected
     window.addEventListener('pywebviewready', function() {
-      refreshDevices();
+      onBridgeReady();
     });
-    // Fallback: poll every 500ms for up to 10 seconds
     var attempts = 0;
     var timer = setInterval(function() {
       attempts++;
       if (window.pywebview && window.pywebview.api) {
         clearInterval(timer);
-        refreshDevices();
+        onBridgeReady();
       } else if (attempts > 20) {
         clearInterval(timer);
         console.log('pywebview bridge not available');
       }
     }, 500);
   }
+}
+
+function onBridgeReady() {
+  refreshDevices();
+  startDeviceMonitor();
 }
 
 function updateCodePreview() {
@@ -76,16 +83,289 @@ async function refreshDevices() {
   try {
     var devices = await window.pywebview.api.get_devices();
     var sel = document.getElementById('device-select');
+    var currentVal = sel.value;
     sel.innerHTML = '<option value="">デバイス未選択</option>';
     if (Array.isArray(devices)) {
       devices.forEach(function(d) {
         var opt = document.createElement('option');
         opt.value = d.serial;
         opt.textContent = d.model + ' (' + d.serial + ')';
+        if (d.source === 'mirage') opt.textContent += ' 🔗';
         sel.appendChild(opt);
       });
+      // Restore previous selection if still present
+      if (currentVal) {
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === currentVal) { sel.value = currentVal; break; }
+        }
+      }
     }
   } catch(e) { console.log('Device refresh:', e); }
+}
+
+// ==================== Device Monitor (polling) ====================
+function startDeviceMonitor() {
+  if (deviceMonitorTimer) clearInterval(deviceMonitorTimer);
+  updateConnectionStatus();
+  deviceMonitorTimer = setInterval(function() {
+    refreshDevices();
+    updateConnectionStatus();
+  }, 5000);
+}
+
+async function updateConnectionStatus() {
+  var indicator = document.getElementById('mirage-status');
+  if (!indicator) {
+    indicator = document.createElement('span');
+    indicator.id = 'mirage-status';
+    indicator.style.cssText = 'font-size:12px;padding:4px 8px;border-radius:4px;cursor:pointer;user-select:none;';
+    indicator.title = 'MirageGUI接続状態（クリックでリフレッシュ）';
+    indicator.onclick = function() { refreshDevices(); updateConnectionStatus(); };
+    var toolbar = document.getElementById('toolbar-buttons');
+    toolbar.insertBefore(indicator, toolbar.firstChild);
+  }
+
+  try {
+    var result = await window.pywebview.api.ping();
+    mirageConnected = result && result.mirage_connected;
+    if (mirageConnected) {
+      indicator.textContent = '🟢 MirageGUI';
+      indicator.style.background = 'rgba(166,227,161,0.15)';
+      indicator.style.color = '#a6e3a1';
+    } else {
+      indicator.textContent = '🟡 ADB直接';
+      indicator.style.background = 'rgba(249,226,175,0.15)';
+      indicator.style.color = '#f9e2af';
+    }
+  } catch(e) {
+    mirageConnected = false;
+    indicator.textContent = '🔴 未接続';
+    indicator.style.background = 'rgba(243,139,168,0.15)';
+    indicator.style.color = '#f38ba8';
+  }
+}
+
+// ==================== Right-Click Context Menu (Live Test) ====================
+function registerContextMenu() {
+  // "⚡ このブロックを実行" menu item
+  Blockly.ContextMenuRegistry.registry.register({
+    displayText: '⚡ このブロックを実行',
+    preconditionFn: function(scope) {
+      if (!scope.block) return 'hidden';
+      // Only show on action blocks (not containers, not variables)
+      var type = scope.block.type;
+      if (type.startsWith('adb_') || type.startsWith('mirage_')) return 'enabled';
+      return 'hidden';
+    },
+    callback: function(scope) {
+      executeBlockLive(scope.block);
+    },
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    id: 'execute_block_live',
+    weight: 0
+  });
+
+  // "⚡ ここから実行" - execute from this block downward
+  Blockly.ContextMenuRegistry.registry.register({
+    displayText: '⚡ ここから下を実行',
+    preconditionFn: function(scope) {
+      if (!scope.block) return 'hidden';
+      if (scope.block.type.startsWith('adb_') && scope.block.nextConnection) return 'enabled';
+      return 'hidden';
+    },
+    callback: function(scope) {
+      executeFromBlockLive(scope.block);
+    },
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    id: 'execute_from_block',
+    weight: 1
+  });
+}
+
+async function executeBlockLive(block) {
+  var serial = document.getElementById('device-select').value;
+  if (!serial) { alert('先にデバイスを選択してください'); return; }
+
+  var code = generateCodeForBlock(block);
+  if (!code || !code.trim()) { alert('このブロックからコードを生成できません'); return; }
+
+  // Visual feedback - highlight block
+  block.setHighlighted(true);
+  showRunLog(['⚡ 即時実行: ' + block.type], 'running');
+
+  try {
+    var result = await window.pywebview.api.run_macro(serial, code);
+    block.setHighlighted(false);
+
+    if (result.status === 'ok') {
+      flashBlock(block, '#a6e3a1');  // Green flash
+      var logLines = result.log || [];
+      logLines.push('✅ 完了');
+      showRunLog(logLines, 'success');
+    } else {
+      flashBlock(block, '#f38ba8');  // Red flash
+      showRunLog(result.log || ['❌ ' + (result.error || 'エラー')], 'error');
+    }
+  } catch(e) {
+    block.setHighlighted(false);
+    flashBlock(block, '#f38ba8');
+    showRunLog(['❌ ' + e], 'error');
+  }
+}
+
+async function executeFromBlockLive(startBlock) {
+  var serial = document.getElementById('device-select').value;
+  if (!serial) { alert('先にデバイスを選択してください'); return; }
+
+  // Collect code from this block and all following
+  var code = '';
+  var block = startBlock;
+  var blocks = [];
+  while (block) {
+    blocks.push(block);
+    code += generateCodeForBlock(block);
+    block = block.getNextBlock();
+  }
+
+  if (!code.trim()) { alert('実行するコードがありません'); return; }
+
+  // Highlight all blocks in chain
+  blocks.forEach(function(b) { b.setHighlighted(true); });
+  showRunLog(['⚡ ' + blocks.length + 'ブロック実行中...'], 'running');
+
+  try {
+    var result = await window.pywebview.api.run_macro(serial, code);
+    blocks.forEach(function(b) { b.setHighlighted(false); });
+
+    if (result.status === 'ok') {
+      blocks.forEach(function(b) { flashBlock(b, '#a6e3a1'); });
+      var logLines = result.log || [];
+      logLines.push('✅ ' + blocks.length + 'ブロック完了');
+      showRunLog(logLines, 'success');
+    } else {
+      showRunLog(result.log || ['❌ ' + (result.error || 'エラー')], 'error');
+    }
+  } catch(e) {
+    blocks.forEach(function(b) { b.setHighlighted(false); });
+    showRunLog(['❌ ' + e], 'error');
+  }
+}
+
+function generateCodeForBlock(block) {
+  // Generate Python code for a single block using Blockly.Python
+  try {
+    var generator = Blockly.Python;
+    if (generator.forBlock && generator.forBlock[block.type]) {
+      var result = generator.forBlock[block.type](block, generator);
+      if (Array.isArray(result)) return result[0]; // [code, order]
+      return result || '';
+    }
+    // Fallback: generate for whole workspace and extract (less precise)
+    return '';
+  } catch(e) {
+    console.log('Code gen error for ' + block.type + ':', e);
+    return '';
+  }
+}
+
+function flashBlock(block, color) {
+  // Brief color flash on block SVG
+  var svg = block.getSvgRoot();
+  if (!svg) return;
+  var origFilter = svg.style.filter;
+  svg.style.filter = 'drop-shadow(0 0 8px ' + color + ')';
+  setTimeout(function() { svg.style.filter = origFilter; }, 800);
+}
+
+// ==================== Macro Execution ====================
+async function runMacro() {
+  var serial = document.getElementById('device-select').value;
+  if (!serial) {
+    alert('先にデバイスを選択してください');
+    return;
+  }
+  var code = Blockly.Python.workspaceToCode(workspace);
+  if (!code || !code.trim()) {
+    alert('実行するブロックがありません');
+    return;
+  }
+
+  isMacroRunning = true;
+  var runBtn = document.getElementById('btn-run');
+  var stopBtn = document.getElementById('btn-stop');
+  runBtn.style.display = 'none';
+  stopBtn.style.display = 'inline-block';
+  showRunLog(['⏳ 実行開始...'], 'running');
+
+  try {
+    var result = await window.pywebview.api.run_macro(serial, code);
+    isMacroRunning = false;
+    runBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+
+    var logLines = result.log || [];
+    var status = result.status || 'unknown';
+    var steps = result.steps || 0;
+    var mode = result.mode || 'mirage';
+
+    if (status === 'ok') {
+      logLines.push('');
+      logLines.push('✅ 完了 (' + steps + 'ステップ' + (mode === 'adb_fallback' ? ', ADB直接' : '') + ')');
+      showRunLog(logLines, 'success');
+    } else if (status === 'cancelled') {
+      logLines.push('');
+      logLines.push('⏹ キャンセル (' + steps + 'ステップ実行済み)');
+      showRunLog(logLines, 'cancelled');
+    } else {
+      logLines.push('');
+      logLines.push('❌ エラー: ' + (result.error || 'unknown'));
+      showRunLog(logLines, 'error');
+    }
+  } catch(e) {
+    isMacroRunning = false;
+    runBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+    showRunLog(['❌ 実行失敗: ' + e], 'error');
+  }
+}
+
+async function stopMacro() {
+  if (!isMacroRunning) return;
+  try {
+    await window.pywebview.api.cancel_macro();
+  } catch(e) {
+    console.log('Cancel error:', e);
+  }
+}
+
+function showRunLog(lines, status) {
+  var codePreview = document.getElementById('code-output');
+  var statusColor = {
+    running: '#89b4fa',
+    success: '#a6e3a1',
+    cancelled: '#fab387',
+    error: '#f38ba8'
+  }[status] || '#cdd6f4';
+
+  var header = document.getElementById('code-preview').querySelector('h3');
+  if (status === 'running') {
+    header.textContent = '⏳ 実行中...';
+  } else {
+    header.textContent = '実行ログ';
+  }
+  header.style.color = statusColor;
+
+  codePreview.textContent = lines.join('\n');
+  codePreview.style.color = statusColor;
+
+  if (status !== 'running') {
+    setTimeout(function() {
+      header.textContent = '生成コード';
+      header.style.color = '#89b4fa';
+      codePreview.style.color = '#a6e3a1';
+      updateCodePreview();
+    }, 5000);
+  }
 }
 
 // ==================== Recording (Coordinate Picker) ====================
@@ -97,6 +377,16 @@ function addRecordButton() {
   btn.style.cssText = 'background:#f38ba8;color:#1e1e2e;font-weight:bold;';
   document.getElementById('toolbar-buttons').insertBefore(
     btn, document.getElementById('btn-run')
+  );
+
+  // Add stop button (hidden by default)
+  var stopBtn = document.createElement('button');
+  stopBtn.id = 'btn-stop';
+  stopBtn.textContent = '⏹ 停止';
+  stopBtn.onclick = stopMacro;
+  stopBtn.style.cssText = 'background:#fab387;color:#1e1e2e;font-weight:bold;display:none;';
+  document.getElementById('toolbar-buttons').insertBefore(
+    stopBtn, document.getElementById('btn-save')
   );
 }
 
@@ -140,7 +430,6 @@ function stopRecording() {
   var picker = document.getElementById('screen-picker-overlay');
   if (picker) picker.remove();
 
-  // Remove click markers
   document.querySelectorAll('.click-marker').forEach(function(m) { m.remove(); });
 
   if (recordedActions.length > 0) {
@@ -341,8 +630,6 @@ async function loadMacro() {
   var ws = await window.pywebview.api.load_macro(name);
   if (ws) Blockly.serialization.workspaces.load(ws, workspace);
 }
-
-function runMacro() { alert('実行機能はPhase4で実装予定'); }
 
 function exportCode() {
   var code = Blockly.Python.workspaceToCode(workspace);

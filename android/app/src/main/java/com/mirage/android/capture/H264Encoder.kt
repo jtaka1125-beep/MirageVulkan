@@ -14,6 +14,7 @@ import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Surface
+import android.view.WindowManager
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -69,9 +70,15 @@ class H264Encoder(
     }
 
     fun start() {
-        val metrics: DisplayMetrics = ctx.resources.displayMetrics
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
+        // Use real display metrics (includes system bars) for native-resolution capture.
+        val realMetrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+            .defaultDisplay.getRealMetrics(realMetrics)
+
+        val width = realMetrics.widthPixels
+        val height = realMetrics.heightPixels
+        val dpi = realMetrics.densityDpi
         val fps = 30
         val bitrate = 6_000_000  // 6 Mbps for full 30fps
 
@@ -113,14 +120,14 @@ class H264Encoder(
             Log.e(TAG, "SurfaceRepeater failed to create input surface, falling back to direct")
             // Fallback: VirtualDisplay → encoder directly (old behavior, 2fps on static)
             virtualDisplay = projection.createVirtualDisplay(
-                "mirage_capture", width, height, metrics.densityDpi,
+                "mirage_capture", width, height, dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
                 encoderInputSurface, null, null
             )
         } else {
             // Normal: VirtualDisplay → SurfaceRepeater → encoder
             virtualDisplay = projection.createVirtualDisplay(
-                "mirage_capture", width, height, metrics.densityDpi,
+                "mirage_capture", width, height, dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
                 repeaterInput, null, null
             )

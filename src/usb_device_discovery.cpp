@@ -87,14 +87,28 @@ bool MultiUsbCommandSender::find_and_open_all_devices() {
 
         if (switched) {
             libusb_free_device_list(devs, 1);
+            devs = nullptr;
 
-            // Wait for devices to re-enumerate
+            // WinUSBバインド完了待ち + リトライ（最大5回、各1秒間隔）
+            constexpr int AOA_OPEN_MAX_RETRIES = 5;
+            constexpr int AOA_OPEN_RETRY_INTERVAL_MS = 1000;
+
             MLOG_INFO("multicmd", "Waiting for devices to re-enumerate...");
-            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
-            // Try again
-            cnt = libusb_get_device_list(ctx_, &devs);
-            if (cnt >= 0) {
+            for (int retry = 0; retry < AOA_OPEN_MAX_RETRIES; retry++) {
+                cnt = libusb_get_device_list(ctx_, &devs);
+                if (cnt < 0) {
+                    MLOG_WARN("multicmd", "libusb_get_device_list failed on retry %d/%d",
+                              retry + 1, AOA_OPEN_MAX_RETRIES);
+                    devs = nullptr;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(AOA_OPEN_RETRY_INTERVAL_MS));
+                    continue;
+                }
+
+                bool all_opened = true;
+                bool found_aoa = false;
+
                 for (ssize_t i = 0; i < cnt; i++) {
                     libusb_device* dev = devs[i];
                     struct libusb_device_descriptor desc;
@@ -103,19 +117,42 @@ bool MultiUsbCommandSender::find_and_open_all_devices() {
                     if (desc.idVendor == AOA_VID) {
                         for (uint16_t pid : aoa_pids) {
                             if (desc.idProduct == pid) {
+                                found_aoa = true;
                                 if (open_aoa_device(dev, pid)) {
                                     found_any = true;
+                                } else {
+                                    // openに失敗 — まだWinUSBバインド未完了の可能性
+                                    all_opened = false;
                                 }
                                 break;
                             }
                         }
                     }
                 }
+
+                libusb_free_device_list(devs, 1);
+                devs = nullptr;
+
+                if (found_aoa && all_opened) {
+                    // 全AOAデバイスのopen成功
+                    break;
+                }
+
+                if (retry < AOA_OPEN_MAX_RETRIES - 1) {
+                    MLOG_INFO("multicmd", "AOA device open failed, retrying (%d/%d)...",
+                              retry + 1, AOA_OPEN_MAX_RETRIES);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(AOA_OPEN_RETRY_INTERVAL_MS));
+                } else {
+                    MLOG_WARN("multicmd", "AOA device open failed after %d retries (WinUSBバインド未完了の可能性)",
+                              AOA_OPEN_MAX_RETRIES);
+                }
             }
         }
     }
 
-    libusb_free_device_list(devs, 1);
+    if (devs) {
+        libusb_free_device_list(devs, 1);
+    }
     return found_any;
 }
 

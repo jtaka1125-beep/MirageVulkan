@@ -97,7 +97,7 @@ public:
     std::string adbCommand(const std::string& adb_id, const std::string& command);
 
     // Start screen capture on device with auto permission approval
-    bool startScreenCapture(const std::string& adb_id, const std::string& host, int port);
+    bool startScreenCapture(const std::string& adb_id, const std::string& host, int port, bool is_main = true);
 
     // Start screen capture on all unique devices (each gets base_port + index)
     int startScreenCaptureOnAll(const std::string& host, int base_port);

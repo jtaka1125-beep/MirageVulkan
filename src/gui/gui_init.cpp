@@ -121,6 +121,7 @@ bool initializeMultiReceiver() {
         if (success > 0 && g_multi_receiver) {
             auto devices = g_adb_manager->getUniqueDevices();
             for (const auto& dev : devices) {
+                MLOG_INFO("gui", "TCP switch check: %s tcp_port=%d", dev.hardware_id.c_str(), dev.assigned_tcp_port);
                 if (dev.assigned_tcp_port > 0) {
                     g_multi_receiver->restart_as_tcp(dev.hardware_id, dev.assigned_tcp_port);
                 }
@@ -133,25 +134,26 @@ bool initializeMultiReceiver() {
     return false;
 }
 
-bool initializeTcpReceiver() {
-    g_tcp_video_receiver = std::make_unique<::gui::TcpVideoReceiver>();
-    if (!g_adb_manager) {
-        g_tcp_video_receiver.reset();
-        return false;
-    }
-
-    g_tcp_video_receiver->setDeviceManager(g_adb_manager.get());
-
-    if (g_tcp_video_receiver->start()) {
-        auto device_ids = g_tcp_video_receiver->getDeviceIds();
-        MLOG_INFO("gui", "TCP video receiver: %zu device(s) started", device_ids.size());
-        return true;
-    }
-
-    MLOG_WARN("gui", "TCP video receiver: failed to start (no USB devices or app not running)");
-    g_tcp_video_receiver.reset();
-    return false;
-}
+// DISABLED: Using TCP direct mode via restart_as_tcp instead
+// bool initializeTcpReceiver() {
+//     g_tcp_video_receiver = std::make_unique<::gui::TcpVideoReceiver>();
+//     if (!g_adb_manager) {
+//         g_tcp_video_receiver.reset();
+//         return false;
+//     }
+//
+//     g_tcp_video_receiver->setDeviceManager(g_adb_manager.get());
+//
+//     if (g_tcp_video_receiver->start()) {
+//         auto device_ids = g_tcp_video_receiver->getDeviceIds();
+//         MLOG_INFO("gui", "TCP video receiver: %zu device(s) started", device_ids.size());
+//         return true;
+//     }
+//
+//     MLOG_WARN("gui", "TCP video receiver: failed to start (no USB devices or app not running)");
+//     g_tcp_video_receiver.reset();
+//     return false;
+// }
 
 void initializeHybridCommand() {
     g_hybrid_cmd = std::make_unique<::gui::HybridCommandSender>();

@@ -1,0 +1,11 @@
+// Patch: fix scrcpy raw_stream=true header handling in bridge_loop
+// raw_stream=true sends NO header - pure H.264 Annex B stream
+// The bridge was incorrectly consuming the first 12 bytes as a codec header,
+// which were actually the SPS NAL unit, causing "non-existing PPS" errors.
+//
+// This patch file documents the change needed in auto_setup.hpp bridge_loop()
+// 
+// BEFORE (lines 228-291): Complex peek+detect logic consuming 12 or 76 bytes
+// AFTER: Since we always use raw_stream=true, skip header detection entirely
+//        and just log that we're in raw mode
+

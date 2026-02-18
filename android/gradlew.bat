@@ -8,6 +8,14 @@
 @rem Set local scope for the variables with windows NT shell
 if "%OS%"=="Windows_NT" setlocal
 
+@rem Prefer org.gradle.java.home from gradle.properties to avoid broken system JAVA_HOME
+@rem Also normalize JAVA_HOME if it mistakenly points to a \bin directory.
+for /f "usebackq tokens=1,* delims==" %%A in (`findstr /b /c:org.gradle.java.home= "%~dp0gradle.properties" 2^>NUL`) do set "JAVA_HOME=%%B"
+if defined JAVA_HOME (
+  set "JAVA_HOME=%JAVA_HOME:"=%"
+  if /i "%JAVA_HOME:~-4%"=="\bin" set "JAVA_HOME=%JAVA_HOME:~0,-4%"
+)
+
 set DIRNAME=%~dp0
 if "%DIRNAME%"=="" set DIRNAME=.
 @rem This is normally unused

@@ -14,6 +14,7 @@
                 <select id="device-select">
                     <option value="">デバイス未選択</option>
                 </select>
+                <button id="btn-refresh-devices" onclick="refreshDevices()" title="デバイス一覧更新" style="padding:6px 8px;font-size:13px;">🔄</button>
                 <button id="btn-run" onclick="runMacro()">▶ 実行</button>
                 <button id="btn-save" onclick="saveMacro()">💾 保存</button>
                 <button id="btn-load" onclick="loadMacro()">📂 読込</button>
@@ -32,7 +33,9 @@
     </div>
 
     <script src="js/blocks/adb_touch.js"></script>
+    <script src="js/blocks/ocr_blocks.js"></script>
     <script src="js/generators/python_adb.js"></script>
+    <script src="js/generators/python_ocr.js"></script>
     <script src="js/toolbox.js"></script>
     <script src="js/workspace.js"></script>
 </body>

@@ -37,12 +37,15 @@ private:
         std::unique_ptr<MirrorReceiver> decoder;
         std::thread thread;
         uint64_t pkt_count = 0;  // per-device packet counter
+        bool header_skipped = false;  // scrcpy raw_stream codec header (12 bytes) skipped
     };
 
     void receiverThread(const std::string& hardware_id, const std::string& serial, int local_port);
     void parseVid0Stream(const std::string& hardware_id, std::vector<uint8_t>& buffer);
+    void parseRawH264Stream(const std::string& hardware_id, std::vector<uint8_t>& buffer);
     bool setupAdbForward(const std::string& serial, int local_port);
     void removeAdbForward(const std::string& serial, int local_port);
+    bool launchScrcpyServer(const std::string& serial, int local_port);
 
     AdbDeviceManager* adb_mgr_ = nullptr;
     mutable std::mutex devices_mutex_;

@@ -20,9 +20,23 @@ void MirageContext::initialize() {
     slot_active.fill(false);
     registered_usb_devices.clear();
     multi_devices_added.clear();
+
+    // Macro API サーバー起動
+    macro_api_server = std::make_unique<MacroApiServer>();
+    if (macro_api_server->start()) {
+        MLOG_INFO("macro", "MacroApiServer started on port %d", macro_api_server->port());
+    } else {
+        MLOG_WARN("macro", "MacroApiServer failed to start");
+    }
 }
 
 void MirageContext::shutdown() {
+    // Macro API サーバー停止 (コマンド送信先より先に停止)
+    if (macro_api_server) {
+        macro_api_server->stop();
+        macro_api_server.reset();
+    }
+
     // Stop all receivers
     for (int i = 0; i < MAX_SLOTS; i++) {
         if (receivers[i]) {

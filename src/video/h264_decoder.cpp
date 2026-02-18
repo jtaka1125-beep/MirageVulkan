@@ -50,8 +50,11 @@ H264Decoder::~H264Decoder() {
   }
 }
 
-bool H264Decoder::init() {
-  const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+bool H264Decoder::init(bool use_hevc) {
+  is_hevc_ = use_hevc;
+
+  const AVCodec* codec = avcodec_find_decoder(use_hevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264);
+  MLOG_INFO("h264", "Using %s decoder", use_hevc ? "H.265/HEVC" : "H.264");
   if (!codec) {
     return false;
   }
@@ -278,15 +281,9 @@ void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
       sws_ctx_ = nullptr;
     }
 
-    // Scale down large frames for faster conversion
-    // Display doesn't need full resolution - halve if > 720p
+    // Keep native resolution for AI/macro accuracy (no scaling)
     out_width_ = width;
     out_height_ = height;
-    if (width > 1280 || height > 1280) {
-      out_width_ = width / 2;
-      out_height_ = height / 2;
-      MLOG_INFO("h264", "Scaling output: %dx%d -> %dx%d", width, height, out_width_, out_height_);
-    }
 
     sws_ctx_ = sws_getContext(
       width, height, (AVPixelFormat)frame->format,

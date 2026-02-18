@@ -114,7 +114,7 @@ class ScreenCaptureService : Service() {
             }
             MIRROR_MODE_TCP -> {
                 Log.i(TAG, "Starting TCP capture on localhost:$tcpPort")
-                TcpVideoSender(tcpPort)
+                TcpVideoSender(tcpPort) { requestIdr() }
             }
             else -> {
                 Log.i(TAG, "Starting UDP capture to $lastHost:$lastPort")
@@ -230,7 +230,7 @@ class ScreenCaptureService : Service() {
             }
             MIRROR_MODE_TCP -> {
                 val p = if (port > 0) port else DEFAULT_TCP_PORT
-                TcpVideoSender(p)
+                TcpVideoSender(p) { requestIdr() }
             }
             else -> {
                 Log.w(TAG, "Unknown mirror mode: $mode")

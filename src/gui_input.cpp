@@ -471,6 +471,11 @@ void GuiApplication::onKeyDown(int vkey) {
             }
             break;
 
+        case VK_F12:
+            // F12: Dump freeze diagnostics
+            dumpFreezeStats();
+            break;
+
         case VK_F5:
             // Refresh
             logInfo("Refresh (F5)");

@@ -148,7 +148,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     // Initialize components
     (void)initializeMultiReceiver();
     initializeHybridCommand();
-    (void)initializeTcpReceiver();
+    // DISABLED: Using TCP direct mode via restart_as_tcp instead
+    // (void)initializeTcpReceiver();
     MLOG_INFO("gui", "Receivers initialized");
     initializeRouting();
 

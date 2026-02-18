@@ -5,8 +5,14 @@
 #include "mirage_log.hpp"
 #include <imgui_impl_vulkan.h>
 #include <cstring>
+#include <chrono>
 
 namespace mirage::vk {
+
+static inline uint64_t now_ms() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 bool VulkanTexture::create(VulkanContext& ctx, VkDescriptorPool /*pool*/, int w, int h) {
     ctx_ = &ctx;
@@ -78,7 +84,23 @@ bool VulkanTexture::create(VulkanContext& ctx, VkDescriptorPool /*pool*/, int w,
         MLOG_ERROR("VkTex", "vkBindBufferMemory failed"); return false;
     }
 
+    // Persistent map (HOST_COHERENT)
+    if (vkMapMemory(dev, staging_mem_, 0, staging_size_, 0, &staging_mapped_) != VK_SUCCESS || !staging_mapped_) {
+        MLOG_ERROR("VkTex", "vkMapMemory staging failed");
+        return false;
+    }
+
+    // Fence for async uploads
+    VkFenceCreateInfo fci{}; fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fci.flags = VK_FENCE_CREATE_SIGNALED_BIT; // first update won't block
+    if (vkCreateFence(dev, &fci, nullptr, &upload_fence_) != VK_SUCCESS) {
+        MLOG_ERROR("VkTex", "vkCreateFence failed");
+        return false;
+    }
+
     layout_initialized_ = false;
+    last_submit_ms_ = 0;
+    skipped_updates_ = 0;
     MLOG_INFO("VkTex", "Created %dx%d", w, h);
     return true;
 }
@@ -89,22 +111,35 @@ void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
     if (!ctx_ || !image_ || w != width_ || h != height_) return;
     VkDevice dev = ctx_->device();
 
-    // Copy to staging
-    void* mapped = nullptr;
-    vkMapMemory(dev, staging_mem_, 0, staging_size_, 0, &mapped);
-    memcpy(mapped, rgba, (size_t)w * h * 4);
-    vkUnmapMemory(dev, staging_mem_);
+    // If previous upload is still in-flight, skip this update (keep UI responsive).
+    // This mimics D3D11's WRITE_DISCARD behavior (drop intermediate frames under load).
+    if (upload_fence_ != VK_NULL_HANDLE) {
+        VkResult st = vkGetFenceStatus(dev, upload_fence_);
+        if (st == VK_NOT_READY) {
+            return;
+        }
+        vkResetFences(dev, 1, &upload_fence_);
+    }
+
+    // Copy to staging (persistently mapped)
+    memcpy(staging_mapped_, rgba, (size_t)w * h * 4);
 
     // Allocate command buffer once, then reuse via reset
-    if (cached_cmd_ == VK_NULL_HANDLE) {
+    if (cached_cmd_ == VK_NULL_HANDLE || cached_cmd_pool_ != cmd_pool) {
+        if (cached_cmd_ != VK_NULL_HANDLE && cached_cmd_pool_ != VK_NULL_HANDLE) {
+            vkFreeCommandBuffers(dev, cached_cmd_pool_, 1, &cached_cmd_);
+        }
         VkCommandBufferAllocateInfo cai{}; cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         cai.commandPool = cmd_pool; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; cai.commandBufferCount = 1;
         if (vkAllocateCommandBuffers(dev, &cai, &cached_cmd_) != VK_SUCCESS) {
             MLOG_ERROR("VkTex", "vkAllocateCommandBuffers failed");
+            cached_cmd_ = VK_NULL_HANDLE;
+            cached_cmd_pool_ = VK_NULL_HANDLE;
             return;
         }
         cached_cmd_pool_ = cmd_pool;
     }
+
     VkCommandBuffer cmd = cached_cmd_;
     vkResetCommandBuffer(cmd, 0);
 
@@ -143,11 +178,16 @@ void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
 
     VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
-    if (vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
+    last_submit_ms_ = now_ms();
+    skipped_updates_ = 0;
+
+    if (vkQueueSubmit(queue, 1, &si, upload_fence_) != VK_SUCCESS) {
         MLOG_ERROR("VkTex", "vkQueueSubmit failed");
+        // Fence is in reset state now; mark as signaled-ish by setting it signaled via wait(0) reset not possible.
+        // Next call will see NOT_READY maybe; best effort: wait idle once on failure.
+        vkQueueWaitIdle(queue);
         return;
     }
-    vkQueueWaitIdle(queue);  // Simple sync for now
 
     layout_initialized_ = true;
 }
@@ -162,13 +202,25 @@ void VulkanTexture::destroy() {
     if (view_) { vkDestroyImageView(dev, view_, nullptr); view_ = VK_NULL_HANDLE; }
     if (image_) { vkDestroyImage(dev, image_, nullptr); image_ = VK_NULL_HANDLE; }
     if (memory_) { vkFreeMemory(dev, memory_, nullptr); memory_ = VK_NULL_HANDLE; }
-    if (staging_) { vkDestroyBuffer(dev, staging_, nullptr); staging_ = VK_NULL_HANDLE; }
-    if (staging_mem_) { vkFreeMemory(dev, staging_mem_, nullptr); staging_mem_ = VK_NULL_HANDLE; }
+
     if (cached_cmd_ && cached_cmd_pool_) {
         vkFreeCommandBuffers(dev, cached_cmd_pool_, 1, &cached_cmd_);
         cached_cmd_ = VK_NULL_HANDLE;
         cached_cmd_pool_ = VK_NULL_HANDLE;
     }
+
+    if (upload_fence_) {
+        vkDestroyFence(dev, upload_fence_, nullptr);
+        upload_fence_ = VK_NULL_HANDLE;
+    }
+
+    if (staging_mapped_) {
+        vkUnmapMemory(dev, staging_mem_);
+        staging_mapped_ = nullptr;
+    }
+    if (staging_) { vkDestroyBuffer(dev, staging_, nullptr); staging_ = VK_NULL_HANDLE; }
+    if (staging_mem_) { vkFreeMemory(dev, staging_mem_, nullptr); staging_mem_ = VK_NULL_HANDLE; }
+
     ctx_ = nullptr;
 }
 

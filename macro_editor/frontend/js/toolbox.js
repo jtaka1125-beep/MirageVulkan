@@ -32,13 +32,25 @@ var TOOLBOX = {
         {"kind": "block", "type": "adb_force_stop"}
       ]
     },
+    {"kind": "sep"},
+    {
+      "kind": "category", "name": "🔍 画面分析", "colour": "210",
+      "contents": [
+        {"kind": "block", "type": "adb_find_and_tap"},
+        {"kind": "block", "type": "adb_wait_for_text"},
+        {"kind": "block", "type": "adb_tap_element"},
+        {"kind": "block", "type": "adb_if_text"},
+        {"kind": "block", "type": "adb_if_text_else"},
+        {"kind": "block", "type": "adb_assert_text"}
+      ]
+    },
     {
       "kind": "category", "name": "🖥️ 画面", "colour": "200",
       "contents": [
-        {"kind": "block", "type": "adb_screenshot"},
-        {"kind": "block", "type": "adb_if_text"}
+        {"kind": "block", "type": "adb_screenshot"}
       ]
     },
+    {"kind": "sep"},
     {
       "kind": "category", "name": "🔄 制御", "colour": "120",
       "contents": [

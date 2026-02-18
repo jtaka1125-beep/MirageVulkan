@@ -30,6 +30,7 @@
 #include "multi_device_receiver.hpp"
 #include "bandwidth_monitor.hpp"
 #include "route_controller.hpp"
+#include "macro_api_server.hpp"
 
 #ifdef USE_AI
 #include "ai_engine.hpp"
@@ -129,6 +130,9 @@ public:
 
     std::string fallback_device_id = "usb_hybrid";
     bool fallback_device_added = false;
+
+    // === Macro API Server ===
+    std::unique_ptr<mirage::MacroApiServer> macro_api_server;
 
     // === Routing & Bandwidth ===
     std::unique_ptr<::gui::BandwidthMonitor> bandwidth_monitor;

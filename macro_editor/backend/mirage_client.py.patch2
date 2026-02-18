@@ -1,0 +1,4 @@
+--- PATCH: Add OCR methods to MirageClient and _DeviceProxy ---
+
+1. MirageClient class: add after screenshot() method
+2. _DeviceProxy class: add OCR proxy methods

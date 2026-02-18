@@ -69,6 +69,13 @@ struct DeviceInfo {
     std::shared_ptr<mirage::vk::VulkanTexture> vk_texture;
     int texture_width = 0;
     int texture_height = 0;
+
+    // Dual-stream mismatch tracking (log once per state change)
+    bool size_mismatch_logged = false;  // true if mismatch already logged for current texture
+
+    // Expected native resolution (from devices.json)
+    int expected_width = 0;   // 0 = unknown, accept any
+    int expected_height = 0;
     
     // Matching results overlay
     struct MatchOverlay {
@@ -79,10 +86,45 @@ struct DeviceInfo {
         uint32_t color;  // ABGR
     };
     std::vector<MatchOverlay> overlays;
+    // Freeze diagnostics (thread-safe counters)
+    std::atomic<uint64_t> queued_count{0};      // queueFrame() calls
+    std::atomic<uint64_t> processed_count{0};   // processPendingFrames() applied
+    std::atomic<uint64_t> last_texture_update_ms{0}; // updateDeviceFrame() texture update time
+
+
     
     // Timing
-    uint64_t last_frame_time = 0;
-    uint64_t status_changed_at = 0;
+    uint64_t last_frame_time = 0;    uint64_t status_changed_at = 0;
+
+    // --- copy support (std::atomic is non-copyable by default) ---
+    DeviceInfo() = default;
+    DeviceInfo(const DeviceInfo& o) { *this = o; }
+    DeviceInfo& operator=(const DeviceInfo& o) {
+        if (this == &o) return *this;
+        id = o.id;
+        name = o.name;
+        status = o.status;
+        aoa_version = o.aoa_version;
+        fps = o.fps;
+        latency_ms = o.latency_ms;
+        bandwidth_mbps = o.bandwidth_mbps;
+        frame_count = o.frame_count;
+        vk_texture_ds = o.vk_texture_ds;
+        vk_texture = o.vk_texture;
+        texture_width = o.texture_width;
+        texture_height = o.texture_height;
+        size_mismatch_logged = o.size_mismatch_logged;
+        expected_width = o.expected_width;
+        expected_height = o.expected_height;
+        overlays = o.overlays;
+        last_frame_time = o.last_frame_time;
+        status_changed_at = o.status_changed_at;
+        queued_count.store(o.queued_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        processed_count.store(o.processed_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        last_texture_update_ms.store(o.last_texture_update_ms.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        return *this;
+    }
+
 };
 
 // =============================================================================
@@ -234,6 +276,9 @@ public:
     
     // Process pending frames - MUST be called from main thread only
     void processPendingFrames();
+
+    // Freeze diagnostics (F12)
+    void dumpFreezeStats();
     
     // Logging
     void log(LogEntry::Level level, const std::string& message, 
@@ -417,6 +462,11 @@ private:
     int window_height_ = 1080;
     std::atomic<bool> resizing_{false};  // Prevent render during resize
     bool frame_valid_{false};  // Set by vulkanBeginFrame, guards frame ops
+
+
+    // Freeze diagnostics (main thread)
+    std::atomic<uint64_t> present_count_{0};
+    std::atomic<uint64_t> last_present_ms_{0};
 
     // Font scaling
     float base_font_size_ = 24.0f;   // Base font size at 1080p

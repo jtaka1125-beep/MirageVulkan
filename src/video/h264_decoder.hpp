@@ -53,7 +53,7 @@ public:
   H264Decoder& operator=(H264Decoder&&) = delete;
 
   // Initialize decoder
-  bool init();
+  bool init(bool use_hevc = false);
 
   // Set callback for decoded frames
   void set_frame_callback(FrameCallback cb) { frame_callback_ = cb; }
@@ -103,6 +103,7 @@ private:
   int hw_pix_fmt_ = -1;  // AV_PIX_FMT_D3D11 or AV_PIX_FMT_VULKAN (or -1 if CPU)
   AVBufferRef* hw_device_ctx_ = nullptr;
   AVFrame* sw_frame_ = nullptr;  // Pre-allocated frame for HW->CPU transfer
+  bool is_hevc_ = false;
   uint64_t send_packet_errors_ = 0;
   uint64_t receive_frame_errors_ = 0;
 };

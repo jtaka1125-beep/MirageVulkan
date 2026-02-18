@@ -15,9 +15,11 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 #include <windows.h>
 #include "mirage_log.hpp"
 #include "mirage_config.hpp"
+#include "config_loader.hpp"
 
 // ImGui Win32 message handler
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -58,6 +60,9 @@ bool GuiApplication::initialize(HWND hwnd, const GuiConfig& config) {
     vulkan_initialized_ = true;
     imgui_initialized_ = true;
     MLOG_INFO("app", "Vulkan backend initialized");
+
+    // Load device registry (expected resolutions)
+    mirage::config::ExpectedSizeRegistry::instance().loadDevices();
 
     logInfo("GUI initialized: " + std::to_string(window_width_) + "x" +
             std::to_string(window_height_));
@@ -122,6 +127,17 @@ void GuiApplication::addDevice(const std::string& id, const std::string& name) {
         info.id = id;
         info.name = name;
         info.status = DeviceStatus::Idle;
+
+        // Set expected resolution from registry
+        int exp_w = 0, exp_h = 0;
+        if (mirage::config::ExpectedSizeRegistry::instance().getExpectedSize(id, exp_w, exp_h)) {
+            info.expected_width = exp_w;
+            info.expected_height = exp_h;
+            MLOG_INFO("app", "Device %s expected resolution: %dx%d", id.c_str(), exp_w, exp_h);
+        } else {
+            MLOG_WARN("app", "Device %s not in registry, accepting any resolution", id.c_str());
+        }
+
         devices_[id] = std::move(info);
         device_order_.push_back(id);
         
@@ -204,10 +220,83 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
 
     DeviceInfo& device = it->second;
 
+    // Expected resolution check: accept native or nav-bar-cropped frames
+    // Nav bar tolerance: allow frames where width matches and height is slightly smaller (up to 200px)
+    constexpr int NAV_BAR_TOLERANCE = 200;  // Max nav bar height (typical: 48-144px, safety margin: 200)
+
+    if (device.expected_width > 0 && device.expected_height > 0) {
+        const int exp_w = device.expected_width;
+        const int exp_h = device.expected_height;
+
+        // Check exact match (both orientations)
+        bool match_normal = (width == exp_w && height == exp_h);
+        bool match_rotated = (width == exp_h && height == exp_w);
+
+        // Check nav-bar-cropped match (width exact, height within tolerance)
+        int h_diff_normal = exp_h - height;  // positive if frame is shorter
+        int h_diff_rotated = exp_w - height; // for rotated case (exp_w becomes expected height)
+        bool cropped_normal = (width == exp_w && h_diff_normal > 0 && h_diff_normal <= NAV_BAR_TOLERANCE);
+        bool cropped_rotated = (width == exp_h && h_diff_rotated > 0 && h_diff_rotated <= NAV_BAR_TOLERANCE);
+
+        if (!match_normal && !match_rotated && !cropped_normal && !cropped_rotated) {
+            // Aspect ratio fallback: accept if same aspect ratio within 10%
+            // (scrcpy may output downscaled resolution e.g. 1080x1920 vs 1200x2000)
+            float exp_ratio = static_cast<float>(exp_w) / static_cast<float>(exp_h);
+            float got_ratio = static_cast<float>(width) / static_cast<float>(height);
+            if (std::abs(exp_ratio - got_ratio) < 0.10f) {
+                // Accept and update expected size for this device
+                MLOG_INFO("VkTex", "Aspect ratio match, updating expected: device=%s %dx%d -> %dx%d",
+                          id.c_str(), exp_w, exp_h, width, height);
+                device.expected_width = width;
+                device.expected_height = height;
+            } else {
+                // Frame doesn't match expected resolution - skip silently (log once)
+                static std::map<std::string, bool> logged_mismatch;
+                if (!logged_mismatch[id]) {
+                    MLOG_WARN("VkTex", "Skipping non-native frame: device=%s expected=%dx%d got=%dx%d",
+                              id.c_str(), exp_w, exp_h, width, height);
+                    logged_mismatch[id] = true;
+                }
+                return;
+            }
+        }
+
+        // Log cropped frames (once per device) for visibility
+        if (cropped_normal || cropped_rotated) {
+            static std::map<std::string, bool> logged_cropped;
+            if (!logged_cropped[id]) {
+                int diff = cropped_normal ? h_diff_normal : h_diff_rotated;
+                MLOG_INFO("VkTex", "Accepting cropped frame: device=%s expected=%dx%d got=%dx%d (nav_bar=%dpx)",
+                          id.c_str(), exp_w, exp_h, width, height, diff);
+                logged_cropped[id] = true;
+            }
+        }
+    }
+
     // Create or resize Vulkan texture if needed
     if (!device.vk_texture ||
         device.texture_width != width ||
         device.texture_height != height) {
+        if (!device.vk_texture) {
+                // Initial create below
+            } else if (device.texture_width != width || device.texture_height != height) {
+                // Dual-stream guard: avoid per-frame recreate when different pipelines feed the same device id.
+                // Allow one-time upgrade to larger resolution; otherwise skip mismatched frames.
+                const int old_w = device.texture_width;
+                const int old_h = device.texture_height;
+                const int old_px = old_w * old_h;
+                const int new_px = width * height;
+                if (new_px <= old_px) {
+                    // Log only on state transition (first mismatch for current texture)
+                    if (!device.size_mismatch_logged) {
+                        MLOG_WARN("VkTex", "Size mismatch skip device=%s tex=%dx%d frame=%dx%d (suppressing further)", id.c_str(), old_w, old_h, width, height);
+                        device.size_mismatch_logged = true;
+                    }
+                    return;
+                }
+                MLOG_WARN("VkTex", "Size upgrade recreate device=%s %dx%d -> %dx%d", id.c_str(), old_w, old_h, width, height);
+            }
+        
         device.vk_texture = std::make_shared<mirage::vk::VulkanTexture>();
         if (!device.vk_texture->create(*vk_context_, vk_descriptor_pool_, width, height)) {
             MLOG_ERROR("app", "Failed to create Vulkan texture for %s", device.id.c_str());
@@ -218,6 +307,7 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
         device.texture_width = width;
         device.texture_height = height;
         device.vk_texture_ds = device.vk_texture->imguiDescriptorSet();
+        device.size_mismatch_logged = false;  // Reset on new texture
 
     }
 
@@ -227,12 +317,22 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
     // Update stats
     device.frame_count++;
     device.last_frame_time = getCurrentTimeMs();
+    device.last_texture_update_ms.store(device.last_frame_time, std::memory_order_relaxed);
 }
 
 // Thread-safe frame queue - can be called from any thread
 void GuiApplication::queueFrame(const std::string& id,
                                  const uint8_t* rgba_data,
                                  int width, int height) {
+    // Freeze diagnostics: count queued frames
+    {
+        std::lock_guard<std::mutex> dlock(devices_mutex_);
+        auto dit = devices_.find(id);
+        if (dit != devices_.end()) {
+            dit->second.queued_count.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     if (!rgba_data || width <= 0 || height <= 0) return;
 
     size_t data_size = static_cast<size_t>(width) * height * 4;
@@ -270,6 +370,15 @@ void GuiApplication::processPendingFrames() {
     }
 
     for (auto& [device_id, frame] : frames_to_process) {
+        // Freeze diagnostics: count processed frames (main thread)
+        {
+            std::lock_guard<std::mutex> dlock(devices_mutex_);
+            auto dit = devices_.find(device_id);
+            if (dit != devices_.end()) {
+                dit->second.processed_count.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
         if (dbg_count.fetch_add(1) < 10) {
             MLOG_INFO("app", "[processPendingFrames] -> updateDeviceFrame device=%s w=%d h=%d",
                       device_id.c_str(), frame.width, frame.height);
@@ -613,18 +722,43 @@ bool GuiApplication::setupImGuiVulkan(HWND hwnd) {
 void GuiApplication::vulkanBeginFrame() {
     frame_valid_ = false;
 
+    // Skip frames during window resize to prevent Vulkan errors
+    if (resizing_.load()) return;
+
     VkDevice dev = vk_context_->device();
     uint32_t fi = vk_current_frame_;
 
-    vkWaitForFences(dev, 1, &vk_in_flight_[fi], VK_TRUE, UINT64_MAX);
+    // Use 3-second timeout instead of UINT64_MAX to prevent permanent freeze
+    VkResult fence_r = vkWaitForFences(dev, 1, &vk_in_flight_[fi], VK_TRUE, 3000000000ULL);
+    if (fence_r == VK_TIMEOUT) {
+        MLOG_WARN("vkframe", "Fence timeout (3s), recovering...");
+        vkDeviceWaitIdle(dev);
+        // Recreate ALL fences in signaled state to break deadlock
+        for (uint32_t i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++) {
+            vkDestroyFence(dev, vk_in_flight_[i], nullptr);
+            VkFenceCreateInfo fci{}; fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+            vkCreateFence(dev, &fci, nullptr, &vk_in_flight_[i]);
+        }
+        return;  // Skip this frame, next iteration will succeed
+    }
+    if (fence_r != VK_SUCCESS) {
+        MLOG_ERROR("vkframe", "Fence wait error: %d", (int)fence_r);
+        return;
+    }
     vkResetFences(dev, 1, &vk_in_flight_[fi]);
 
     uint32_t imageIndex;
     VkResult r = vkAcquireNextImageKHR(dev, vk_swapchain_->swapchain(),
-        UINT64_MAX, vk_image_available_[fi], VK_NULL_HANDLE, &imageIndex);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR) {
-        MLOG_INFO("vkframe", "acquire OUT_OF_DATE, recreating");
+        1000000000ULL, vk_image_available_[fi], VK_NULL_HANDLE, &imageIndex);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
+        MLOG_INFO("vkframe", "acquire OUT_OF_DATE/SUBOPTIMAL (%d), recreating", (int)r);
+        vkDeviceWaitIdle(dev);
         vk_swapchain_->recreate(window_width_, window_height_);
+        return;
+    }
+    if (r != VK_SUCCESS) {
+        MLOG_ERROR("vkframe", "acquire failed: %d", (int)r);
         return;
     }
 
@@ -663,6 +797,13 @@ void GuiApplication::vulkanEndFrame() {
     static std::atomic<int> end_frame_count{0};
     int efc = end_frame_count.fetch_add(1);
 
+    // Guard: if beginFrame failed (frame_valid_ is false), skip rendering
+    if (!frame_valid_) {
+        vk_current_frame_ = (vk_current_frame_ + 1) % VK_MAX_FRAMES_IN_FLIGHT;
+        return;
+    }
+
+    VkDevice dev = vk_context_->device();
     uint32_t fi = vk_current_frame_;
     VkCommandBuffer cmd = vk_command_buffers_[fi];
 
@@ -682,6 +823,14 @@ void GuiApplication::vulkanEndFrame() {
     si.pSignalSemaphores = &vk_render_finished_[fi];
     VkResult sr = vkQueueSubmit(vk_context_->graphicsQueue(), 1, &si, vk_in_flight_[fi]);
 
+    // If submit failed, don't try to present - it would use invalid semaphores
+    if (sr != VK_SUCCESS) {
+        MLOG_ERROR("vkframe", "submit FAILED: %d, skipping present", (int)sr);
+        vkDeviceWaitIdle(dev);
+        vk_current_frame_ = (vk_current_frame_ + 1) % VK_MAX_FRAMES_IN_FLIGHT;
+        return;
+    }
+
     VkSwapchainKHR sc = vk_swapchain_->swapchain();
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -690,6 +839,10 @@ void GuiApplication::vulkanEndFrame() {
     pi.swapchainCount = 1;
     pi.pSwapchains = &sc;
     pi.pImageIndices = &vk_current_image_index_;
+    // Freeze diagnostics: present counters
+    present_count_.fetch_add(1, std::memory_order_relaxed);
+    last_present_ms_.store(getCurrentTimeMs(), std::memory_order_relaxed);
+
     VkResult r = vkQueuePresentKHR(vk_context_->graphicsQueue(), &pi);
 
     if (efc < 20 || (efc % 300 == 0)) {
@@ -698,12 +851,72 @@ void GuiApplication::vulkanEndFrame() {
                   vk_swapchain_->extent().width, vk_swapchain_->extent().height);
     }
 
-    if (r == VK_ERROR_OUT_OF_DATE_KHR) {
-        MLOG_INFO("vkframe", "present OUT_OF_DATE, recreating");
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
+        MLOG_INFO("vkframe", "present OUT_OF_DATE/SUBOPTIMAL (%d), recreating", (int)r);
+        vkDeviceWaitIdle(dev);
         vk_swapchain_->recreate(window_width_, window_height_);
     }
 
     vk_current_frame_ = (vk_current_frame_ + 1) % VK_MAX_FRAMES_IN_FLIGHT;
+}
+
+
+// =============================================================================
+// Freeze diagnostics
+// =============================================================================
+
+void GuiApplication::dumpFreezeStats() {
+    const uint64_t now = getCurrentTimeMs();
+    const uint64_t present_cnt = present_count_.load(std::memory_order_relaxed);
+    const uint64_t last_present = last_present_ms_.load(std::memory_order_relaxed);
+
+    std::ostringstream oss;
+    oss << "[freeze] now=" << now
+        << " present_cnt=" << present_cnt
+        << " last_present_ms=" << last_present
+        << " dt_present_ms=" << (last_present ? (now - last_present) : 0)
+        << " resizing=" << (resizing_.load() ? 1 : 0)
+        << " frame_valid=" << (frame_valid_ ? 1 : 0)
+        << " main=" << (main_device_id_.empty() ? "(none)" : main_device_id_) << "\n";
+
+    // Pending frame queue snapshot
+    {
+        std::lock_guard<std::mutex> qlock(pending_frames_mutex_);
+        oss << "  pending_frames=" << pending_frames_.size() << "\n";
+        for (const auto& [id, pf] : pending_frames_) {
+            oss << "    [pending] " << id << " " << pf.width << "x" << pf.height
+                << " bytes=" << pf.rgba_data.size() << "\n";
+        }
+    }
+
+    // Device snapshot
+    {
+        std::lock_guard<std::mutex> dlock(devices_mutex_);
+        oss << "  devices=" << devices_.size() << "\n";
+        for (const auto& [id, dev] : devices_) {
+            const uint64_t q = dev.queued_count.load(std::memory_order_relaxed);
+            const uint64_t p = dev.processed_count.load(std::memory_order_relaxed);
+            const uint64_t last_tex = dev.last_texture_update_ms.load(std::memory_order_relaxed);
+            const uint64_t last_frame = dev.last_frame_time;
+
+            oss << "    [dev] " << id
+                << " name='" << dev.name << "'"
+                << " status=" << static_cast<int>(dev.status)
+                << " tex=" << dev.texture_width << "x" << dev.texture_height
+                << " frame_count=" << dev.frame_count
+                << " queued=" << q
+                << " processed=" << p
+                << " last_frame_ms=" << last_frame
+                << " dt_frame_ms=" << (last_frame ? (now - last_frame) : 0)
+                << " last_tex_ms=" << last_tex
+                << " dt_tex_ms=" << (last_tex ? (now - last_tex) : 0)
+                << "\n";
+        }
+    }
+
+    // Log both to file logger and GUI log
+    MLOG_WARN("freeze", "%s", oss.str().c_str());
+    logInfo(oss.str());
 }
 
 } // namespace mirage::gui
