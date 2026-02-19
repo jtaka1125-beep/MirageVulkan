@@ -14,6 +14,60 @@ namespace mirage::gui::command {
 using namespace mirage::gui::state;
 
 // =============================================================================
+// EventBus購読ハンドル（RAII）
+// =============================================================================
+
+static mirage::SubscriptionHandle s_tap_sub;
+static mirage::SubscriptionHandle s_swipe_sub;
+static mirage::SubscriptionHandle s_key_sub;
+
+static const char* sourceStr(CommandSource src) {
+    switch (src) {
+        case CommandSource::AI:    return "AI";
+        case CommandSource::USER:  return "USER";
+        case CommandSource::MACRO: return "MACRO";
+        default:                   return "?";
+    }
+}
+
+void init() {
+    // TapCommandEvent購読 → sendTapCommand()
+    s_tap_sub = mirage::bus().subscribe<TapCommandEvent>(
+        [](const TapCommandEvent& evt) {
+            MLOG_INFO("cmd", "EventBus TapCommand: device=%s (%d,%d) source=%s",
+                      evt.device_id.c_str(), evt.x, evt.y, sourceStr(evt.source));
+            sendTapCommand(evt.device_id, evt.x, evt.y);
+        });
+
+    // SwipeCommandEvent購読 → sendSwipeCommand()
+    s_swipe_sub = mirage::bus().subscribe<SwipeCommandEvent>(
+        [](const SwipeCommandEvent& evt) {
+            MLOG_INFO("cmd", "EventBus SwipeCommand: device=%s (%d,%d)->(%d,%d) dur=%dms source=%s",
+                      evt.device_id.c_str(), evt.x1, evt.y1, evt.x2, evt.y2,
+                      evt.duration_ms, sourceStr(evt.source));
+            sendSwipeCommand(evt.device_id, evt.x1, evt.y1, evt.x2, evt.y2, evt.duration_ms);
+        });
+
+    // KeyCommandEvent購読 → sendKeyCommand()
+    s_key_sub = mirage::bus().subscribe<KeyCommandEvent>(
+        [](const KeyCommandEvent& evt) {
+            MLOG_INFO("cmd", "EventBus KeyCommand: device=%s key=%d source=%s",
+                      evt.device_id.c_str(), evt.keycode, sourceStr(evt.source));
+            sendKeyCommand(evt.device_id, evt.keycode);
+        });
+
+    MLOG_INFO("cmd", "EventBus コマンド購読開始 (Tap/Swipe/Key)");
+}
+
+void shutdown() {
+    // SubscriptionHandle代入でRAII解除
+    s_tap_sub = mirage::SubscriptionHandle();
+    s_swipe_sub = mirage::SubscriptionHandle();
+    s_key_sub = mirage::SubscriptionHandle();
+    MLOG_INFO("cmd", "EventBus コマンド購読解除");
+}
+
+// =============================================================================
 // ID Resolution: hardware_id -> USB serial for AOA commands
 // =============================================================================
 // GUI uses hardware_id (android_id hash) but HybridCommandSender uses USB serial.

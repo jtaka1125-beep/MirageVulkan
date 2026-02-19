@@ -174,6 +174,24 @@ std::string getTempDirectory() {
 #endif
 }
 
+// Extract clean USB serial from ADB ID
+// "adb-A9250700956-ieJaCE._adb-tls-connect._tcp" → "A9250700956"
+// "A9250700956" → "A9250700956" (already clean)
+// "192.168.0.6:5555" → "" (WiFi, no USB serial)
+static std::string extractUsbSerial(const std::string& adb_id) {
+    if (adb_id.size() > 4 && adb_id.substr(0, 4) == "adb-") {
+        auto second_dash = adb_id.find('-', 4);
+        if (second_dash != std::string::npos) {
+            return adb_id.substr(4, second_dash - 4);
+        }
+    }
+    // Already clean serial (no colons or dots = not an IP address)
+    if (adb_id.find(':') == std::string::npos && adb_id.find('.') == std::string::npos) {
+        return adb_id;
+    }
+    return "";  // WiFi connection, no USB serial
+}
+
 } // anonymous namespace
 
 // =============================================================================
@@ -853,6 +871,65 @@ void AdbDeviceManager::sendSwipe(const std::string& adb_id, int x1, int y1, int 
 void AdbDeviceManager::sendKey(const std::string& adb_id, int keycode) {
     std::string cmd = "shell input keyevent " + std::to_string(keycode);
     adbCommand(adb_id, cmd);
+}
+
+std::string AdbDeviceManager::resolveUsbSerial(const std::string& usb_serial) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. Try cached usb_serial match
+    for (const auto& [hw_id, dev] : unique_devices_) {
+        if (!dev.usb_serial.empty() && dev.usb_serial == usb_serial) {
+            return hw_id;
+        }
+        // Also check if usb_serial is contained in any usb_connections
+        for (const auto& conn : dev.usb_connections) {
+            if (conn.find(usb_serial) != std::string::npos) {
+                return hw_id;
+            }
+        }
+    }
+
+    // 2. Fallback: query ro.serialno for devices with empty usb_serial
+    for (auto& [hw_id, dev] : unique_devices_) {
+        if (!dev.usb_serial.empty()) continue;
+
+        // Find an ADB ID we can query
+        std::string adb_id = dev.preferred_adb_id;
+        if (adb_id.empty() && !dev.wifi_connections.empty()) {
+            adb_id = dev.wifi_connections[0];
+        }
+        if (adb_id.empty() && !dev.usb_connections.empty()) {
+            adb_id = dev.usb_connections[0];
+        }
+        if (adb_id.empty()) continue;
+
+        // Copy adb_id locally, unlock mutex for the ADB call, then re-lock
+        std::string adb_id_copy = adb_id;
+        std::string hw_id_copy = hw_id;
+        mutex_.unlock();
+        std::string serialno = getDeviceProp(adb_id_copy, "ro.serialno");
+        mutex_.lock();
+
+        // Validate the result
+        if (!serialno.empty() &&
+            serialno.find("error") == std::string::npos &&
+            serialno.find("unknown") == std::string::npos &&
+            serialno.find("offline") == std::string::npos) {
+            // Re-find the device after re-lock (map may have changed)
+            auto it = unique_devices_.find(hw_id_copy);
+            if (it != unique_devices_.end()) {
+                it->second.usb_serial = serialno;
+                MLOG_INFO("adb", "Resolved usb_serial for %s: %s (via ro.serialno)",
+                          hw_id_copy.c_str(), serialno.c_str());
+
+                if (serialno == usb_serial) {
+                    return hw_id_copy;
+                }
+            }
+        }
+    }
+
+    return "";
 }
 
 } // namespace gui

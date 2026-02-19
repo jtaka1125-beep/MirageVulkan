@@ -64,6 +64,8 @@ public:
         std::string android_version;
         int sdk_level = 0;
 
+        std::string usb_serial;         // USB physical serial (e.g. "A9250700479")
+
         // Assigned port for screen capture (each device gets unique port)
         int assigned_port = 0;
         int assigned_tcp_port = 0;  // scrcpy TCP port (from AutoSetup)
@@ -111,6 +113,9 @@ public:
 
     // Get device by assigned port
     bool getDeviceByPort(int port, UniqueDevice& out) const;
+
+    // Resolve USB serial to hardware_id (for USB AOA → ADB device matching)
+    std::string resolveUsbSerial(const std::string& usb_serial);
 
     // Send tap command to device
     void sendTap(const std::string& adb_id, int x, int y);

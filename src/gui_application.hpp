@@ -260,7 +260,10 @@ public:
     void addDevice(const std::string& id, const std::string& name);
     void removeDevice(const std::string& id);
     void setMainDevice(const std::string& id);
-    std::string getMainDevice() const { return main_device_id_; }
+    std::string getMainDevice() const {
+        std::lock_guard<std::mutex> lock(devices_mutex_);
+        return main_device_id_;
+    }
     
     // Device updates
     void updateDeviceStatus(const std::string& id, DeviceStatus status);
@@ -419,6 +422,14 @@ private:
     // Per-device latest frame only (older frames auto-discarded on overwrite)
     std::map<std::string, PendingFrame> pending_frames_;
     mutable std::mutex pending_frames_mutex_;
+
+    // === Per-device FPS measurement (actual receive rate) ===
+    struct FpsTracker {
+        int frame_count = 0;
+        float measured_fps = 0.0f;
+        std::chrono::steady_clock::time_point last_reset = std::chrono::steady_clock::now();
+    };
+    std::map<std::string, FpsTracker> frame_fps_trackers_;  // protected by pending_frames_mutex_
     
     // Logs
     std::deque<LogEntry> logs_;

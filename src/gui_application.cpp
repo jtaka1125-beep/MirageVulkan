@@ -346,6 +346,35 @@ void GuiApplication::queueFrame(const std::string& id,
         frame.height = height;
         frame.rgba_data.resize(data_size);
         std::memcpy(frame.rgba_data.data(), rgba_data, data_size);
+
+        // 実際の受信FPSを計測
+        auto now = std::chrono::steady_clock::now();
+        auto& tracker = frame_fps_trackers_[id];
+        tracker.frame_count++;
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - tracker.last_reset).count();
+        if (elapsed >= 1000) {
+            tracker.measured_fps = tracker.frame_count * 1000.0f / static_cast<float>(elapsed);
+            tracker.frame_count = 0;
+            tracker.last_reset = now;
+        }
+    }
+
+    // 計測FPSでdevice statsを更新 (pending_frames_mutex_外で取得)
+    float measured = 0.0f;
+    {
+        std::lock_guard<std::mutex> lock(pending_frames_mutex_);
+        auto tit = frame_fps_trackers_.find(id);
+        if (tit != frame_fps_trackers_.end()) {
+            measured = tit->second.measured_fps;
+        }
+    }
+    if (measured > 0.0f) {
+        std::lock_guard<std::mutex> dlock(devices_mutex_);
+        auto dit = devices_.find(id);
+        if (dit != devices_.end()) {
+            dit->second.fps = measured;
+        }
     }
 
     static std::atomic<int> dbg_count{0};

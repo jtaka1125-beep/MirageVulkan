@@ -18,7 +18,9 @@
 #include "gui_window.hpp"
 #include "gui_threads.hpp"
 #include "gui_device_control.hpp"
+#include "gui_ai_panel.hpp"
 #include "gui_init.hpp"
+#include "gui_command.hpp"
 #include "config_loader.hpp"
 #include "winusb_checker.hpp"
 
@@ -28,7 +30,9 @@ using namespace mirage::gui::state;
 using namespace mirage::gui::window;
 using namespace mirage::gui::threads;
 using namespace mirage::gui::device_control;
+using namespace mirage::gui::ai_panel;
 using namespace mirage::gui::init;
+namespace cmd = mirage::gui::command;
 
 
 // =============================================================================
@@ -146,8 +150,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     }
 
     // Initialize components
-    (void)initializeMultiReceiver();
+    // IMPORTANT: AOA switch MUST happen BEFORE scrcpy startup.
+    // AOA switching causes USB re-enumeration which kills ADB transport,
+    // disconnecting any active scrcpy sessions. By doing AOA first,
+    // devices are already in AOA mode when scrcpy starts.
     initializeHybridCommand();
+    (void)initializeMultiReceiver();
     // DISABLED: Using TCP direct mode via restart_as_tcp instead
     // (void)initializeTcpReceiver();
     MLOG_INFO("gui", "Receivers initialized");
@@ -164,6 +172,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     // Initialize GUI
     initializeGUI(hwnd);
 
+    // EventBus→CommandSenderパイプライン開始
+    cmd::init();
+
     // Show deferred WinUSB warning in GUI (g_gui is now initialized)
     if (winusb_needs_count > 0 && g_gui) {
         g_gui->logWarning(u8"USB\u76f4\u63a5\u5236\u5fa1: WinUSB\u30c9\u30e9\u30a4\u30d0\u304c\u672a\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb ("
@@ -173,6 +184,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
 
 #ifdef USE_AI
     initializeAI();
+    mirage::gui::ai_panel::init();
 #endif
 
 #ifdef USE_OCR
@@ -201,7 +213,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
         
         // Render device control panel (NEW - AOA/ADB buttons)
         renderDeviceControlPanel();
-        
+
+#ifdef USE_AI
+        renderAIPanel();
+#endif
+
         g_gui->render();
         g_gui->endFrame();
     }
@@ -224,6 +240,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
         g_route_eval_thread.join();
         MLOG_INFO("gui", "Route eval thread joined");
     }
+
+#ifdef USE_AI
+    mirage::gui::ai_panel::shutdown();
+#endif
+
+    // EventBusコマンド購読解除
+    cmd::shutdown();
 
     cleanupState();
 

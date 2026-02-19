@@ -143,37 +143,14 @@ void GuiApplication::renderLeftPanel() {
     ImGui::Spacing();
     ImGui::Separator();
 
-    // === Learning Mode ===
-    ImGui::Text(u8"学習モード");
-    ImGui::Separator();
-
-    bool learning = learning_session_.active;
-    if (ImGui::Checkbox(u8"学習を有効化", &learning)) {
-        if (learning) {
-            startLearningSession("Session_" + std::to_string(getCurrentTimeMs()));
-        } else {
-            stopLearningSession();
-        }
-    }
-
-    if (learning_session_.active) {
-        ImGui::TextColored(ImVec4(0, 1, 0, 1), u8"クリック記録中...");
-        ImGui::Text(u8"収集数: %zu", learning_session_.collected_clicks.size());
-
-        if (ImGui::Button(u8"データ出力")) {
-            exportLearningData();
-
-        }
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-
-    // === Actions ===
+    // === Actions (操作・ドライバ・学習) ===
     ImGui::Text(u8"\u64cd\u4f5c");
     ImGui::Separator();
 
-    if (ImGui::Button(u8"\u30b9\u30af\u30ea\u30fc\u30f3\u30b7\u30e7\u30c3\u30c8", ImVec2(-1, 0))) {
+    float half_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+
+    // Row 1: Screenshot + Auto Setup
+    if (ImGui::Button(u8"\u30b9\u30af\u30ea\u30fc\u30f3\u30b7\u30e7\u30c3\u30c8", ImVec2(half_w, 0))) {
         // Capture from main device, fallback to first available
         if (adb_manager_) {
             std::string target;
@@ -195,12 +172,14 @@ void GuiApplication::renderLeftPanel() {
         }
     }
 
+    ImGui::SameLine();
+
     // Auto Setup button (disabled while running)
     if (s_auto_setup_running) {
         ImGui::BeginDisabled();
-        ImGui::Button(u8"自動セットアップ実行中...", ImVec2(-1, 0));
+        ImGui::Button(u8"Auto Setup...", ImVec2(half_w, 0));
         ImGui::EndDisabled();
-    } else if (ImGui::Button(u8"Auto Setup (Accessibility)", ImVec2(-1, 0))) {
+    } else if (ImGui::Button(u8"Auto Setup", ImVec2(half_w, 0))) {
         if (adb_manager_) {
             auto devices = adb_manager_->getUniqueDevices();
             if (!devices.empty()) {
@@ -243,13 +222,8 @@ void GuiApplication::renderLeftPanel() {
         }
     }
 
-    ImGui::Spacing();
-
-    // === Driver Setup ===
-    ImGui::Text(u8"ドライバ設定");
-    ImGui::Separator();
-
-    if (ImGui::Button(u8"WinUSB \u30c9\u30e9\u30a4\u30d0 \u30a4\u30f3\u30b9\u30c8\u30fc\u30eb", ImVec2(-1, 0))) {
+    // Row 2: WinUSB + Learning toggle
+    if (ImGui::Button(u8"WinUSB\u30c9\u30e9\u30a4\u30d0", ImVec2(half_w, 0))) {
         // Launch install_android_winusb.py with admin elevation via ShellExecute
         logInfo(u8"WinUSB \u30a4\u30f3\u30b9\u30c8\u30fc\u30e9\u30fc\u8d77\u52d5\u4e2d...");
 
@@ -308,6 +282,28 @@ void GuiApplication::renderLeftPanel() {
         ImGui::EndTooltip();
     }
 
+    ImGui::SameLine();
+
+    // Learning toggle button
+    {
+        bool learning = learning_session_.active;
+        if (ImGui::Button(learning ? u8"\u5b66\u7fd2\u505c\u6b62" : u8"\u5b66\u7fd2\u958b\u59cb", ImVec2(half_w, 0))) {
+            if (learning) {
+                stopLearningSession();
+            } else {
+                startLearningSession("Session_" + std::to_string(getCurrentTimeMs()));
+            }
+        }
+    }
+
+    // Learning status (only when active)
+    if (learning_session_.active) {
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), u8"\u8a18\u9332\u4e2d: %zu\u4ef6", learning_session_.collected_clicks.size());
+        if (ImGui::Button(u8"\u30c7\u30fc\u30bf\u51fa\u529b", ImVec2(half_w, 0))) {
+            exportLearningData();
+        }
+    }
+
     ImGui::Spacing();
     ImGui::Separator();
 
@@ -346,7 +342,8 @@ void GuiApplication::renderLeftPanel() {
     ImGui::Text(u8"テストコマンド");
     ImGui::Separator();
 
-    if (ImGui::Button(u8"全デバイスに画面中央タップ", ImVec2(-1, 0))) {
+    // Row 1: Tap + Home
+    if (ImGui::Button(u8"\u5168\u30bf\u30c3\u30d7", ImVec2(half_w, 0))) {
         if (g_hybrid_cmd) {
             int count = g_hybrid_cmd->send_tap_all(
                 static_cast<int>(layout_constants::TEST_TAP_X),
@@ -357,14 +354,17 @@ void GuiApplication::renderLeftPanel() {
         }
     }
 
-    if (ImGui::Button(u8"全デバイスにホームキー", ImVec2(-1, 0))) {
+    ImGui::SameLine();
+
+    if (ImGui::Button(u8"\u5168\u30db\u30fc\u30e0", ImVec2(half_w, 0))) {
         if (g_hybrid_cmd) {
             int count = g_hybrid_cmd->send_key_all(3);  // KEYCODE_HOME = 3
             logInfo(u8"ホームキー送信: " + std::to_string(count) + u8"台");
         }
     }
 
-    if (ImGui::Button(u8"全デバイスに長押し (中央)", ImVec2(-1, 0))) {
+    // Row 2: Long press + Pinch
+    if (ImGui::Button(u8"\u5168\u9577\u62bc\u3057", ImVec2(half_w, 0))) {
         if (g_hybrid_cmd) {
             auto ids = g_hybrid_cmd->get_device_ids();
             for (const auto& id : ids) {
@@ -378,7 +378,9 @@ void GuiApplication::renderLeftPanel() {
         }
     }
 
-    if (ImGui::Button(u8"全デバイスにピンチアウト", ImVec2(-1, 0))) {
+    ImGui::SameLine();
+
+    if (ImGui::Button(u8"\u5168\u30d4\u30f3\u30c1", ImVec2(half_w, 0))) {
         if (g_hybrid_cmd) {
             auto ids = g_hybrid_cmd->get_device_ids();
             for (const auto& id : ids) {

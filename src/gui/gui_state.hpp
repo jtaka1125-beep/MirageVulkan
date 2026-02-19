@@ -63,6 +63,7 @@ inline auto& g_macro_api_server       = mirage::ctx().macro_api_server;
 #ifdef USE_AI
 inline auto& g_ai_engine              = mirage::ctx().ai_engine;
 inline auto& g_ai_enabled             = mirage::ctx().ai_enabled;
+inline auto& g_learning_mode          = mirage::ctx().learning_mode;
 #endif
 
 #ifdef USE_OCR

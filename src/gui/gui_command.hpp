@@ -7,6 +7,10 @@
 
 namespace mirage::gui::command {
 
+// EventBus購読の初期化・解放
+void init();
+void shutdown();
+
 // Tap commands
 void sendTapCommandToAll(int x, int y);
 void sendTapCommand(const std::string& device_id, int x, int y);
