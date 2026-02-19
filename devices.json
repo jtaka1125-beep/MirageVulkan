@@ -1,0 +1,58 @@
+{
+  "devices": [
+    {
+      "hardware_id": "6810568f_37627893",
+      "display_name": "RebotAi A9",
+      "model": "A9",
+      "manufacturer": "RebotAi",
+      "usb_serial": "A9250700956",
+      "screen_width": 800,
+      "screen_height": 1340,
+      "screen_density": 240,
+      "android_sdk": 35,
+      "android_version": "15",
+      "ip_address": "192.168.0.6",
+      "apk_version": "2.1.0-audio",
+      "wifi_adb_port": 5555,
+      "target_fps": 60,
+      "preferred_route": "usb",
+      "video_bitrate_kbps": 2144
+    },
+    {
+      "hardware_id": "98875caa_83873610",
+      "display_name": "RebotAi A9",
+      "model": "A9",
+      "manufacturer": "RebotAi",
+      "usb_serial": "A9250700479",
+      "screen_width": 800,
+      "screen_height": 1340,
+      "screen_density": 240,
+      "android_sdk": 35,
+      "android_version": "15",
+      "ip_address": "192.168.0.8",
+      "apk_version": "2.1.0-audio",
+      "wifi_adb_port": 5555,
+      "target_fps": 60,
+      "preferred_route": "usb",
+      "video_bitrate_kbps": 2144
+    },
+    {
+      "hardware_id": "f1925da3_1235545",
+      "display_name": "N-one Npad X1",
+      "model": "Npad X1",
+      "manufacturer": "N-one",
+      "usb_serial": "93020523431940",
+      "screen_width": 1200,
+      "screen_height": 2000,
+      "screen_density": 213,
+      "android_sdk": 33,
+      "android_version": "13",
+      "ip_address": "192.168.0.3",
+      "apk_version": "2.1.0-audio",
+      "wifi_adb_port": 5555,
+      "target_fps": 60,
+      "preferred_route": "usb",
+      "video_bitrate_kbps": 4800
+    }
+  ]
+}
