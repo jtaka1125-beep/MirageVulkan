@@ -304,10 +304,14 @@ void initializeRouting() {
             auto devices = g_adb_manager->getUniqueDevices();
             for (const auto& dev : devices) {
                 if (dev.hardware_id == device_id) {
+                    // Async: ADB broadcast can take 1-2s over WiFi, must not block GUI/RouteCtrl thread
+                    std::string adb_id = dev.preferred_adb_id;
                     std::string cmd = "shell am broadcast -a com.mirage.capture.SET_FPS --ei fps " + std::to_string(fps);
-                    g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
-                    MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)",
-                              fps, device_id.c_str(), dev.preferred_adb_id.c_str());
+                    std::thread([adb_id, cmd, device_id, fps]() {
+                        if (g_adb_manager) g_adb_manager->adbCommand(adb_id, cmd);
+                        MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)",
+                                  fps, device_id.c_str(), adb_id.c_str());
+                    }).detach();
                     break;
                 }
             }
@@ -473,15 +477,19 @@ void initializeGUI(HWND hwnd) {
         // Update FPS: main=60fps, sub=30fps
         if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
             // TCP-onlyモード: ADB broadcast経由でFPS送信
+            // Async: ADB broadcasts must not block GUI thread
             auto devices = g_adb_manager->getUniqueDevices();
-            for (const auto& dev : devices) {
-                int target_fps = (dev.hardware_id == device_id) ? 60 : 30;
-                std::string cmd = "shell am broadcast -a com.mirage.capture.SET_FPS --ei fps " + std::to_string(target_fps);
-                g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
-                MLOG_INFO("gui", "FPS update (ADB): %s -> %d fps (%s)",
-                          dev.hardware_id.c_str(), target_fps,
-                          (dev.hardware_id == device_id) ? "MAIN" : "sub");
-            }
+            std::string sel_id = device_id;
+            std::thread([devices, sel_id]() {
+                for (const auto& dev : devices) {
+                    int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
+                    std::string cmd = "shell am broadcast -a com.mirage.capture.SET_FPS --ei fps " + std::to_string(target_fps);
+                    if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
+                    MLOG_INFO("gui", "FPS update (ADB): %s -> %d fps (%s)",
+                              dev.hardware_id.c_str(), target_fps,
+                              (dev.hardware_id == sel_id) ? "MAIN" : "sub");
+                }
+            }).detach();
         } else if (g_hybrid_cmd) {
             // USB AOA経由でFPS送信
             // Build USB serial -> hardware_id map from ADB manager
