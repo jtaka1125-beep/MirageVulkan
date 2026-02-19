@@ -531,9 +531,16 @@ void MultiUsbCommandSender::device_receive_thread(const std::string& device_id) 
             // Timeout is normal when no data available
             consecutive_timeouts++;
             if (consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS) {
-                // Device might be stuck - log periodically
-                if (consecutive_timeouts % MAX_CONSECUTIVE_TIMEOUTS == 0) {
-                    MLOG_WARN("multicmd", "[%s] Extended timeout period (%d timeouts)", device_id.c_str(), consecutive_timeouts);
+                // Exponential backoff: 100ms -> 200ms -> 500ms -> 1000ms (cap)
+                int backoff_level = consecutive_timeouts / MAX_CONSECUTIVE_TIMEOUTS;  // 1,2,3,...
+                int sleep_ms = (backoff_level <= 1) ? 100 :
+                               (backoff_level <= 3) ? 200 :
+                               (backoff_level <= 10) ? 500 : 1000;
+                std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+                // Log at decreasing frequency: every 10s, 20s, 50s, 100s
+                int log_interval = MAX_CONSECUTIVE_TIMEOUTS * (backoff_level <= 3 ? 1 : backoff_level <= 10 ? 5 : 10);
+                if (consecutive_timeouts % log_interval == 0) {
+                    MLOG_WARN("multicmd", "[%s] Extended timeout (%d, backoff=%dms)", device_id.c_str(), consecutive_timeouts, sleep_ms);
                 }
             }
         } else if (ret == LIBUSB_ERROR_NO_DEVICE) {
