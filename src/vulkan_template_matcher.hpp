@@ -3,6 +3,7 @@
 #include "vulkan/vulkan_context.hpp"
 #include "vulkan/vulkan_image.hpp"
 #include "vulkan/vulkan_compute.hpp"
+#include "result.hpp"
 
 #include <vector>
 #include <string>
@@ -17,6 +18,12 @@ struct VkMatchResult {
     int y = 0;
     float score = 0.0f;
     int template_id = 0;
+    // テンプレートサイズ情報（addTemplate時に設定）
+    int template_width = 0;
+    int template_height = 0;
+    // マッチ中心座標（左上 + サイズ/2）
+    int center_x = 0;
+    int center_y = 0;
 };
 
 struct VkMatcherConfig {
@@ -52,18 +59,17 @@ public:
     VulkanTemplateMatcher() = default;
     ~VulkanTemplateMatcher();
 
-    bool initialize(VulkanContext& ctx, const VkMatcherConfig& config,
-                    const std::string& shader_dir, std::string& error);
+    mirage::Result<void> initialize(VulkanContext& ctx, const VkMatcherConfig& config,
+                                    const std::string& shader_dir);
 
-    int addTemplate(const std::string& name, const uint8_t* gray_data,
-                    int width, int height, const std::string& group,
-                    std::string* error = nullptr);
+    mirage::Result<int> addTemplate(const std::string& name, const uint8_t* gray_data,
+                                    int width, int height, const std::string& group);
 
-    bool matchGpu(VulkanImage* gray_image, int width, int height,
-                  std::vector<VkMatchResult>& results, std::string& error);
+    mirage::Result<std::vector<VkMatchResult>> matchGpu(VulkanImage* gray_image,
+                                                         int width, int height);
 
-    bool match(const uint8_t* gray_data, int width, int height,
-               std::vector<VkMatchResult>& results, std::string& error);
+    mirage::Result<std::vector<VkMatchResult>> match(const uint8_t* gray_data,
+                                                      int width, int height);
 
     int getTemplateCount() const { return static_cast<int>(templates_.size()); }
     void clearAll();
@@ -77,7 +83,7 @@ public:
     Stats getStats() const { return stats_; }
 
 private:
-    bool buildPyramid(GpuTemplate& tpl, std::string& error);
+    mirage::Result<void> buildPyramid(GpuTemplate& tpl);
     bool buildSourcePyramid(VulkanImage* src, int width, int height);
     bool buildSAT(VulkanImage* gray_image, int width, int height);
     bool dispatchNcc(VkDescriptorSet desc_set, VulkanImage* src, VulkanImage* tpl,

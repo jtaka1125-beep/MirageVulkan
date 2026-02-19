@@ -86,64 +86,55 @@ public:
             return result;
         }
 
-        // Generate unique SCID and TCP port
-        scid_ = 0x20000000 + (rand() & 0x1FFFFFFF);
-        char scid_str[16];
-        snprintf(scid_str, sizeof(scid_str), "%08x", scid_);
-        tcp_port_ = 27183 + (port % 100); // Unique per device
-        udp_port_ = port;
+        // =====================================================================
+        // [無効化] scrcpy関連処理は無効化済み (streamerアンインスト済み)
+        // stop_competing_capture_async();
+        // scrcpy push / forward / launch はすべてnoop
+        // =====================================================================
 
-        MLOG_INFO("adb", "scrcpy: scid=%s tcp=%d udp=%d", scid_str, tcp_port_, udp_port_);
+        // // Generate unique SCID and TCP port
+        // scid_ = 0x20000000 + (rand() & 0x1FFFFFFF);
+        // char scid_str[16];
+        // snprintf(scid_str, sizeof(scid_str), "%08x", scid_);
+        // tcp_port_ = 27183 + (port % 100);
+        // udp_port_ = port;
+        // MLOG_INFO("adb", "scrcpy: scid=%s tcp=%d udp=%d", scid_str, tcp_port_, udp_port_);
 
-        // 1. Push scrcpy-server (idempotent, fast if already there)
-        adb_executor_("push tools/scrcpy-server-v3.3.4 /data/local/tmp/scrcpy-server.jar");
+        // // 1. Push scrcpy-server
+        // adb_executor_("push tools/scrcpy-server-v3.3.4 /data/local/tmp/scrcpy-server.jar");
 
-        // 2. Kill ONLY our own scrcpy (by scid), NOT all scrcpy processes!
-        // Using pkill -f scrcpy would kill other devices' scrcpy too.
-        // On first launch there's nothing to kill, and on restart the old
-        // process with the same scid doesn't exist. So we skip the global kill.
-        // If needed, use: shell "pkill -f scid=<our_scid>" (but scid is new each time)
+        // // 3. ADB forward
+        // std::string fwd = "forward tcp:" + std::to_string(tcp_port_) +
+        //                   " localabstract:scrcpy_" + scid_str;
+        // adb_executor_(fwd);
 
-        // 3. ADB forward
-        std::string fwd = "forward tcp:" + std::to_string(tcp_port_) +
-                          " localabstract:scrcpy_" + scid_str;
-        adb_executor_(fwd);
+        // // 4. Start scrcpy-server in background
+        // int bit_rate = 2000000;
+        // int max_fps_val = 30;
+        // std::string shell_cmd = "shell CLASSPATH=/data/local/tmp/scrcpy-server.jar"
+        //     " app_process / com.genymobile.scrcpy.Server 3.3.4"
+        //     " tunnel_forward=true audio=false control=false"
+        //     " raw_stream=true video_bit_rate=" + std::to_string(bit_rate) +
+        //     " max_fps=" + std::to_string(max_fps_val) +
+        //     " i_frame_interval=3" +
+        //     " cleanup=false scid=" + std::string(scid_str);
+        // server_running_ = true;
+        // server_thread_ = std::thread([this, shell_cmd]() {
+        //     if (adb_executor_) {
+        //         std::string out = adb_executor_(shell_cmd);
+        //         MLOG_INFO("adb", "scrcpy server exited: %s", out.c_str());
+        //     }
+        //     server_running_ = false;
+        // });
+        // server_thread_.detach();
 
-        // 4. Start scrcpy-server in background
-        // Bandwidth optimization: Main 4Mbps/30fps, Sub 1Mbps/15fps
-        int bit_rate = 2000000;  // 2Mbps uniform for all devices
-        int max_fps_val = 30;     // 30fps uniform for all devices
-        MLOG_INFO("adb", "scrcpy params: bit_rate=%d max_fps=%d", bit_rate, max_fps_val);
+        // // 5. Wait for server to start
+        // std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
-        std::string shell_cmd = "shell CLASSPATH=/data/local/tmp/scrcpy-server.jar"
-            " app_process / com.genymobile.scrcpy.Server 3.3.4"
-            " tunnel_forward=true audio=false control=false"
-            " raw_stream=true video_bit_rate=" + std::to_string(bit_rate) +
-            " max_fps=" + std::to_string(max_fps_val) +
-            "" +
-            " i_frame_interval=3" +
-            " cleanup=false scid=" + std::string(scid_str);
-
-        // Start in background thread (blocking ADB shell)
-        server_running_ = true;
-        server_thread_ = std::thread([this, shell_cmd]() {
-            if (adb_executor_) {
-                std::string out = adb_executor_(shell_cmd);
-                MLOG_INFO("adb", "scrcpy server exited: %s", out.c_str());
-            }
-            server_running_ = false;
-        });
-        server_thread_.detach();
-
-        // 5. Wait for server to start (WiFi ADB is slower than USB)
-        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-
-        if (progress_callback_)
-            progress_callback_("Connecting to scrcpy stream...", 50);
+        // if (progress_callback_)
+        //     progress_callback_("Connecting to scrcpy stream...", 50);
 
         // Bridge disabled - MirrorReceiver reads TCP directly via restart_as_tcp()
-        // bridge_running_ = true;
-        // bridge_thread_ = std::thread(&AutoSetup::bridge_loop, this);
         bridge_connected_ = true;  // Mark as "connected" so complete_and_verify() succeeds
 
         result.status = SetupStatus::COMPLETED;
@@ -191,6 +182,21 @@ private:
     std::atomic<bool> bridge_connected_{false};
     std::thread server_thread_;
     std::thread bridge_thread_;
+
+    // =========================================================================
+    // [無効化] streamerアンインスト済みにつき処理不要
+    // =========================================================================
+    void stop_competing_capture_async() {
+        // [無効化] streamerアンインスト済み、競合するMediaProjectionなし
+        // if (!adb_executor_) return;
+        // auto executor = adb_executor_;
+        // std::thread([executor]() {
+        //     MLOG_INFO("adb", "Stopping competing MediaProjection services (async)...");
+        //     executor("shell am force-stop com.mirage.streamer");
+        //     executor("shell am force-stop com.mirage.android");
+        //     MLOG_INFO("adb", "Competing services stopped");
+        // }).detach();
+    }
 
     void stop_bridge() {
         bridge_running_ = false;
@@ -262,8 +268,6 @@ private:
                 break;
             }
             // Forward raw H.264 to UDP (localhost - no MTU fragmentation needed)
-            // Send entire TCP recv chunk as single UDP datagram
-            // Localhost UDP supports up to 65535 bytes without fragmentation issues
             sendto(udp_sock, buf, n, 0,
                    (sockaddr*)&udp_dest, sizeof(udp_dest));
             total += n;

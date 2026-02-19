@@ -25,6 +25,10 @@ public:
     void stop();
     bool running() const { return running_.load(); }
     std::vector<std::string> getDeviceIds() const;
+
+    // ScreenCaptureServiceの状態確認・自動起動（他モジュールからも呼べるようstatic公開）
+    static bool isCaptureServiceRunning(const std::string& adb_serial);
+    static void launchCaptureTcpMirror(const std::string& adb_serial);
     
     // Get latest decoded frame for a specific device
     bool get_latest_frame(const std::string& hardware_id, MirrorFrame& out);
@@ -37,7 +41,6 @@ private:
         std::unique_ptr<MirrorReceiver> decoder;
         std::thread thread;
         uint64_t pkt_count = 0;  // per-device packet counter
-        bool header_skipped = false;  // scrcpy raw_stream codec header (12 bytes) skipped
     };
 
     void receiverThread(const std::string& hardware_id, const std::string& serial, int local_port);

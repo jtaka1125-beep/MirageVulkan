@@ -106,6 +106,19 @@ std::string execCommandHidden(const std::string& cmd) {
 }
 } // anonymous namespace
 
+// ScreenCaptureServiceが動いているかチェック
+bool TcpVideoReceiver::isCaptureServiceRunning(const std::string& adb_serial) {
+    std::string cmd = "adb -s " + adb_serial + " shell \"dumpsys activity services com.mirage.capture 2>/dev/null\"";
+    std::string result = execCommandHidden(cmd);
+    return result.find("ScreenCaptureService") != std::string::npos;
+}
+
+// MirageCapture TCPミラーモードをintentで起動
+void TcpVideoReceiver::launchCaptureTcpMirror(const std::string& adb_serial) {
+    std::string cmd = "adb -s " + adb_serial + " shell am start -n com.mirage.capture/.ui.CaptureActivity --ez auto_mirror true --es mirror_mode tcp";
+    execCommandHidden(cmd);
+}
+
 TcpVideoReceiver::TcpVideoReceiver() = default;
 TcpVideoReceiver::~TcpVideoReceiver() { stop(); }
 
@@ -218,11 +231,14 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
     bool scrcpy_launched = false;
 
     while (running_.load()) {
-        if (!setupAdbForward(serial, local_port)) {
-            MLOG_WARN("tcpvideo", "ADB forward failed for %s, retry in %dms", hardware_id.c_str(), reconnect_delay_ms);
-            std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
-            reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
-            continue;
+        // scrcpy起動後はforwardをscrcpy側が管理するので再設定しない
+        if (!scrcpy_launched) {
+            if (!setupAdbForward(serial, local_port)) {
+                MLOG_WARN("tcpvideo", "ADB forward failed for %s, retry in %dms", hardware_id.c_str(), reconnect_delay_ms);
+                std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
+                reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
+                continue;
+            }
         }
 
         SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -250,6 +266,14 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
             MLOG_WARN("tcpvideo", "connect() failed for %s (port %d), retry in %dms",
                       hardware_id.c_str(), local_port, reconnect_delay_ms);
             closesocket(sock);
+
+            // ScreenCaptureServiceが停止していれば自動起動
+            if (!isCaptureServiceRunning(serial)) {
+                MLOG_INFO("tcpvideo", "ScreenCaptureService not running on %s, sending auto_mirror intent", serial.c_str());
+                launchCaptureTcpMirror(serial);
+                std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+            }
+
             std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
             reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
             continue;
@@ -261,12 +285,6 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
         bool is_raw_h264 = false;  // auto-detected on first data
         bool format_detected = false;
 
-        // scrcpy sends codec header on each new connection
-        {
-            std::lock_guard<std::mutex> lock(devices_mutex_);
-            auto it = devices_.find(hardware_id);
-            if (it != devices_.end()) it->second.header_skipped = false;
-        }
         std::vector<uint8_t> stream_buffer;
         std::vector<uint8_t> recv_buf(TCP_RECV_BUF_SIZE);
 
@@ -322,6 +340,13 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                 reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
                 MLOG_INFO("tcpvideo", "No data from %s (attempt %d), backoff %dms",
                           hardware_id.c_str(), no_data_count, reconnect_delay_ms);
+
+                // ScreenCaptureServiceが停止していれば自動起動を試みる
+                if (no_data_count >= 1 && !scrcpy_launched && !isCaptureServiceRunning(serial)) {
+                    MLOG_INFO("tcpvideo", "ScreenCaptureService not running on %s, sending auto_mirror intent", serial.c_str());
+                    launchCaptureTcpMirror(serial);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+                }
 
                 // After 2 failed attempts, try launching scrcpy-server
                 if (no_data_count == 2 && !scrcpy_launched) {
@@ -384,8 +409,8 @@ bool TcpVideoReceiver::launchScrcpyServer(const std::string& serial, int local_p
 
     MLOG_INFO("tcpvideo", "[scrcpy] Launching for %s (scid=%s)", serial.c_str(), scid_str);
 
-    // Kill any existing scrcpy process on device
-    std::string kill_cmd = "adb -s " + serial + " shell \"pkill -f scrcpy 2>/dev/null; pkill -f app_process 2>/dev/null\"";
+    // 既存scrcpyプロセスをkill (app_processは他のプロセスも巻き込むのでscrcpy限定)
+    std::string kill_cmd = "adb -s " + serial + " shell \"pkill -f scrcpy-server.jar 2>/dev/null || true\"";
     execCommandHidden(kill_cmd);
     // Wait for LocalServerSocket release after killing scrcpy
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -439,8 +464,24 @@ bool TcpVideoReceiver::launchScrcpyServer(const std::string& serial, int local_p
     system(bg_cmd.c_str());
 #endif
 
-    // Wait for server to initialize
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // abstract socketが作成されるまでポーリングで待機 (最大10秒)
+    // blind sleepではなく実際のソケット存在確認
+    bool socket_ready = false;
+    for (int i = 0; i < 20; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::string check_cmd = "adb -s " + serial +
+            " shell \"cat /proc/net/unix 2>/dev/null | grep scrcpy_" + std::string(scid_str) + "\"";
+        std::string check_result = execCommandHidden(check_cmd);
+        if (!check_result.empty() && check_result.find("scrcpy_") != std::string::npos) {
+            MLOG_INFO("tcpvideo", "[scrcpy] Abstract socket ready after %dms", (i + 1) * 500);
+            socket_ready = true;
+            break;
+        }
+    }
+    if (!socket_ready) {
+        MLOG_WARN("tcpvideo", "[scrcpy] Abstract socket not found after 10s, proceeding anyway");
+    }
+
     MLOG_INFO("tcpvideo", "[scrcpy] Ready, forward tcp:%d -> %s", local_port, abstract_name.c_str());
     return true;
 }
@@ -452,29 +493,16 @@ bool TcpVideoReceiver::launchScrcpyServer(const std::string& serial, int local_p
 void TcpVideoReceiver::parseRawH264Stream(const std::string& hardware_id,
                                             std::vector<uint8_t>& buffer) {
     MirrorReceiver* decoder = nullptr;
-    bool* header_skipped = nullptr;
     {
         std::lock_guard<std::mutex> lock(devices_mutex_);
         auto it = devices_.find(hardware_id);
         if (it == devices_.end() || !it->second.decoder) return;
         decoder = it->second.decoder.get();
-        header_skipped = &it->second.header_skipped;
     }
 
-    if (!*header_skipped) {
-        // scrcpy raw_stream=true sends 12-byte codec header first:
-        // codec_id (4 bytes) + width (4 bytes) + height (4 bytes)
-        if (buffer.size() < 12) return;  // ヘッダ未到着、次のrecvを待つ
-
-        uint32_t codec_id = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
-        uint32_t width = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
-        uint32_t height = (buffer[8] << 24) | (buffer[9] << 16) | (buffer[10] << 8) | buffer[11];
-        MLOG_INFO("tcpvideo", "[%s] scrcpy codec header: id=%u, %ux%u",
-                  hardware_id.c_str(), codec_id, width, height);
-
-        buffer.erase(buffer.begin(), buffer.begin() + 12);
-        *header_skipped = true;
-    }
+    // raw_stream=true はsend_codec_meta=falseを含むため、
+    // codecヘッダ(12バイト)は送信されない。
+    // ストリーム先頭からいきなり生H.264 Annex Bデータ (SPS/PPS/IDR) が来る。
 
     // Feed raw H.264 Annex B data directly to decoder's process_raw_h264
     if (!buffer.empty()) {

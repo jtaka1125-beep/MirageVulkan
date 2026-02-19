@@ -102,10 +102,9 @@ VulkanTemplateMatcher::~VulkanTemplateMatcher() {
     }
 }
 
-bool VulkanTemplateMatcher::initialize(VulkanContext& ctx,
-                                        const VkMatcherConfig& config,
-                                        const std::string& shader_dir,
-                                        std::string& error) {
+mirage::Result<void> VulkanTemplateMatcher::initialize(VulkanContext& ctx,
+                                                        const VkMatcherConfig& config,
+                                                        const std::string& shader_dir) {
     ctx_ = &ctx;
     config_ = config;
     VkDevice dev = ctx.device();
@@ -117,8 +116,7 @@ bool VulkanTemplateMatcher::initialize(VulkanContext& ctx,
     poolCI.queueFamilyIndex = ctx.queueFamilies().compute;
 
     if (vkCreateCommandPool(dev, &poolCI, nullptr, &cmd_pool_) != VK_SUCCESS) {
-        error = "Failed to create compute command pool";
-        return false;
+        return mirage::Err<void>("Failed to create compute command pool");
     }
 
     VkCommandBufferAllocateInfo allocInfo{};
@@ -136,14 +134,12 @@ bool VulkanTemplateMatcher::initialize(VulkanContext& ctx,
     if (!createHostBuffer(ctx, sizeof(GpuMatchResult) * MAX_RESULTS,
                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                           result_buf_, result_mem_)) {
-        error = "Failed to create result buffer";
-        return false;
+        return mirage::Err<void>("Failed to create result buffer");
     }
     if (!createHostBuffer(ctx, sizeof(int32_t),
                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                           counter_buf_, counter_mem_)) {
-        error = "Failed to create counter buffer";
-        return false;
+        return mirage::Err<void>("Failed to create counter buffer");
     }
 
     // === Tile-based NCC pipeline (Opt G+C+B) ===
@@ -155,14 +151,12 @@ bool VulkanTemplateMatcher::initialize(VulkanContext& ctx,
 
     auto nccCode = loadSPIRV(shader_dir + "/template_match_ncc.spv");
     if (nccCode.empty()) {
-        error = "Failed to load NCC shader";
-        return false;
+        return mirage::Err<void>("Failed to load NCC shader");
     }
 
     ncc_pipeline_ = std::make_unique<VulkanComputePipeline>();
     if (!ncc_pipeline_->create(ctx, nccCode, nccBindings, sizeof(NccPushConstants))) {
-        error = "Failed to create NCC compute pipeline";
-        return false;
+        return mirage::Err<void>("Failed to create NCC compute pipeline");
     }
 
     // === SAT pipelines (Opt E) ===
@@ -240,26 +234,23 @@ bool VulkanTemplateMatcher::initialize(VulkanContext& ctx,
 
     auto pyrCode = loadSPIRV(shader_dir + "/pyramid_downsample.spv");
     if (pyrCode.empty()) {
-        error = "Failed to load pyramid shader";
-        return false;
+        return mirage::Err<void>("Failed to load pyramid shader");
     }
 
     pyramid_pipeline_ = std::make_unique<VulkanComputePipeline>();
     if (!pyramid_pipeline_->create(ctx, pyrCode, pyrBindings, 0)) {
-        error = "Failed to create pyramid compute pipeline";
-        return false;
+        return mirage::Err<void>("Failed to create pyramid compute pipeline");
     }
 
     pyr_desc_set_ = pyramid_pipeline_->allocateDescriptorSet();
     if (pyr_desc_set_ == VK_NULL_HANDLE) {
-        error = "Failed to allocate pyramid descriptor set";
-        return false;
+        return mirage::Err<void>("Failed to allocate pyramid descriptor set");
     }
 
     initialized_ = true;
     MLOG_INFO("matcher", "VulkanTemplateMatcher initialized (threshold=%.2f, pyramid=%d levels)",
               config_.default_threshold, config_.pyramid_levels);
-    return true;
+    return mirage::Ok();
 }
 
 VkDescriptorSet VulkanTemplateMatcher::allocateNccDescSet() {
@@ -338,14 +329,12 @@ void VulkanTemplateMatcher::updateNccDescSetImages(VkDescriptorSet ds,
     vkUpdateDescriptorSets(ctx_->device(), 2, imgWrites, 0, nullptr);
 }
 
-int VulkanTemplateMatcher::addTemplate(const std::string& name,
-                                        const uint8_t* gray_data,
-                                        int width, int height,
-                                        const std::string& group,
-                                        std::string* error) {
+mirage::Result<int> VulkanTemplateMatcher::addTemplate(const std::string& name,
+                                                        const uint8_t* gray_data,
+                                                        int width, int height,
+                                                        const std::string& group) {
     if (!initialized_) {
-        if (error) *error = "Matcher not initialized";
-        return -1;
+        return mirage::Err<int>("Matcher not initialized");
     }
 
     auto tpl = std::make_unique<GpuTemplate>();
@@ -357,20 +346,17 @@ int VulkanTemplateMatcher::addTemplate(const std::string& name,
     tpl->image = std::make_unique<VulkanImage>();
     if (!tpl->image->create(*ctx_, width, height, VK_FORMAT_R8_UNORM,
                              VK_IMAGE_USAGE_STORAGE_BIT)) {
-        if (error) *error = "Failed to create template VulkanImage";
-        return -1;
+        return mirage::Err<int>("Failed to create template VulkanImage");
     }
 
     if (!tpl->image->upload(cmd_pool_, ctx_->computeQueue(), gray_data,
                              width * height)) {
-        if (error) *error = "Failed to upload template data";
-        return -1;
+        return mirage::Err<int>("Failed to upload template data");
     }
 
     tpl->ncc_desc_set = allocateNccDescSet();
     if (tpl->ncc_desc_set == VK_NULL_HANDLE) {
-        if (error) *error = "Failed to allocate per-template descriptor set";
-        return -1;
+        return mirage::Err<int>("Failed to allocate per-template descriptor set");
     }
 
     // Precompute template statistics for SAT path (Opt E)
@@ -389,10 +375,10 @@ int VulkanTemplateMatcher::addTemplate(const std::string& name,
     }
 
     if (config_.enable_multi_scale) {
-        std::string pyrErr;
-        if (!buildPyramid(*tpl, pyrErr)) {
+        auto pyrResult = buildPyramid(*tpl);
+        if (pyrResult.is_err()) {
             MLOG_WARN("matcher", "Failed to build pyramid for '%s': %s",
-                      name.c_str(), pyrErr.c_str());
+                      name.c_str(), pyrResult.error().message.c_str());
         }
     }
 
@@ -402,7 +388,7 @@ int VulkanTemplateMatcher::addTemplate(const std::string& name,
     return id;
 }
 
-bool VulkanTemplateMatcher::buildPyramid(GpuTemplate& tpl, std::string& error) {
+mirage::Result<void> VulkanTemplateMatcher::buildPyramid(GpuTemplate& tpl) {
     int w = tpl.width;
     int h = tpl.height;
 
@@ -414,8 +400,7 @@ bool VulkanTemplateMatcher::buildPyramid(GpuTemplate& tpl, std::string& error) {
         auto downImg = std::make_unique<VulkanImage>();
         if (!downImg->create(*ctx_, nw, nh, VK_FORMAT_R8_UNORM,
                               VK_IMAGE_USAGE_STORAGE_BIT)) {
-            error = "Failed to create pyramid level " + std::to_string(level);
-            return false;
+            return mirage::Err<void>("Failed to create pyramid level " + std::to_string(level));
         }
 
         VulkanImage* srcLevel = (level == 1) ? tpl.image.get()
@@ -471,7 +456,7 @@ bool VulkanTemplateMatcher::buildPyramid(GpuTemplate& tpl, std::string& error) {
         w = nw;
         h = nh;
     }
-    return true;
+    return mirage::Ok();
 }
 
 bool VulkanTemplateMatcher::buildSourcePyramid(VulkanImage* src, int width, int height) {
@@ -699,6 +684,17 @@ bool VulkanTemplateMatcher::readResults(std::vector<VkMatchResult>& results) {
         r.y = gpuResults[i].y;
         r.score = gpuResults[i].score;
         r.template_id = gpuResults[i].template_id;
+
+        // テンプレートサイズ情報をマップから補完
+        auto it = templates_.find(r.template_id);
+        if (it != templates_.end()) {
+            r.template_width  = it->second->width;
+            r.template_height = it->second->height;
+        }
+        // 中心座標を計算（左上 + サイズ/2）
+        r.center_x = r.x + r.template_width / 2;
+        r.center_y = r.y + r.template_height / 2;
+
         results.push_back(r);
     }
     vkUnmapMemory(ctx_->device(), result_mem_);
@@ -789,15 +785,13 @@ bool VulkanTemplateMatcher::dispatchSatNcc(GpuTemplate& tpl, VulkanImage* src,
     return true;
 }
 
-bool VulkanTemplateMatcher::matchGpu(VulkanImage* gray_image,
-                                      int width, int height,
-                                      std::vector<VkMatchResult>& results,
-                                      std::string& error) {
-    if (!initialized_) { error = "Not initialized"; return false; }
-    if (templates_.empty()) return true;
+mirage::Result<std::vector<VkMatchResult>> VulkanTemplateMatcher::matchGpu(
+    VulkanImage* gray_image, int width, int height) {
+    if (!initialized_) return mirage::Err<std::vector<VkMatchResult>>("Not initialized");
+    if (templates_.empty()) return std::vector<VkMatchResult>{};
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    results.clear();
+    std::vector<VkMatchResult> results;
     sat_built_ = false;
 
     bool any_sat = false;
@@ -818,6 +812,7 @@ bool VulkanTemplateMatcher::matchGpu(VulkanImage* gray_image,
         int coarse_level = (int)src_pyramid_.size() - 1;
         if (coarse_level < 0) goto direct_match;
 
+        {
         VulkanImage* coarse_src = src_pyramid_[coarse_level].get();
         int scale = 1 << (coarse_level + 1);
         int cw = width / scale;
@@ -924,6 +919,7 @@ bool VulkanTemplateMatcher::matchGpu(VulkanImage* gray_image,
 
         readResults(results);
         goto finish;
+        } // end multi-scale block
     }
 
 direct_match:
@@ -957,8 +953,7 @@ direct_match:
 
         vkResetFences(ctx_->device(), 1, &fence_);
         if (vkQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_) != VK_SUCCESS) {
-            error = "Failed to submit NCC compute";
-            return false;
+            return mirage::Err<std::vector<VkMatchResult>>("Failed to submit NCC compute");
         }
 
         vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, UINT64_MAX);
@@ -979,18 +974,16 @@ finish:
         }
     }
 
-    return true;
+    return results;
 }
 
-bool VulkanTemplateMatcher::match(const uint8_t* gray_data, int width, int height,
-                                   std::vector<VkMatchResult>& results,
-                                   std::string& error) {
+mirage::Result<std::vector<VkMatchResult>> VulkanTemplateMatcher::match(
+    const uint8_t* gray_data, int width, int height) {
     if (!temp_src_ || temp_src_w_ != width || temp_src_h_ != height) {
         temp_src_ = std::make_unique<VulkanImage>();
         if (!temp_src_->create(*ctx_, width, height, VK_FORMAT_R8_UNORM,
                                 VK_IMAGE_USAGE_STORAGE_BIT)) {
-            error = "Failed to create temp source image";
-            return false;
+            return mirage::Err<std::vector<VkMatchResult>>("Failed to create temp source image");
         }
         temp_src_w_ = width;
         temp_src_h_ = height;
@@ -998,11 +991,10 @@ bool VulkanTemplateMatcher::match(const uint8_t* gray_data, int width, int heigh
 
     if (!temp_src_->upload(cmd_pool_, ctx_->computeQueue(), gray_data,
                             width * height)) {
-        error = "Failed to upload source frame";
-        return false;
+        return mirage::Err<std::vector<VkMatchResult>>("Failed to upload source frame");
     }
 
-    return matchGpu(temp_src_.get(), width, height, results, error);
+    return matchGpu(temp_src_.get(), width, height);
 }
 
 void VulkanTemplateMatcher::clearAll() {

@@ -23,6 +23,8 @@ option(USE_FFMPEG "Enable FFmpeg fallback decoder" ON)
 option(USE_LIBUSB "Enable USB AOA video receiver" ON)
 option(BUILD_TESTS "Build test executables" ON)
 option(USE_OCR "Enable Tesseract OCR frame analysis" OFF)
+option(MIRAGE_OCR_ENABLED "Enable OCR integration (alias for USE_OCR)" OFF)
+option(USE_AI "Enable AI engine (template matching + OCR integration)" OFF)
 
 # =============================================================================
 # Find Vulkan
@@ -55,6 +57,28 @@ set(CORE_SOURCES
     src/event_bus.hpp
     src/frame_dispatcher.hpp
     src/stb_image_impl.cpp
+    src/ai_engine.cpp
+    src/ai_engine.hpp
+)
+
+# AI / Learning / Template Management
+set(AI_SOURCES
+    src/ai/learning_mode.cpp
+    src/ai/learning_mode.hpp
+    src/ai/template_manifest.cpp
+    src/ai/template_manifest.hpp
+    src/ai/template_store.cpp
+    src/ai/template_store.hpp
+    src/ai/template_capture.cpp
+    src/ai/template_capture.hpp
+    src/ai/template_writer.cpp
+    src/ai/template_writer.hpp
+    src/ai/template_autoscan.cpp
+    src/ai/template_autoscan.hpp
+    src/ai/template_hot_reload.cpp
+    src/ai/template_hot_reload.hpp
+    src/ai/vision_decision_engine.cpp
+    src/ai/vision_decision_engine.hpp
 )
 
 # Video pipeline (Vulkan Video + FFmpeg fallback)
@@ -106,6 +130,7 @@ set(GUI_SOURCES
     src/gui/gui_window.cpp
     src/gui/gui_threads.cpp
     src/gui/gui_device_control.cpp
+    src/gui/gui_ai_panel.cpp
     src/gui/gui_state.cpp
     src/gui/mirage_context.cpp
     src/gui_application.cpp
@@ -139,6 +164,9 @@ set(COMM_SOURCES
     src/route_controller.cpp
     src/winusb_checker.cpp
     src/ipc_client.cpp
+    src/ai/ui_finder.cpp
+    src/ai/ui_finder.hpp
+    src/ui_finder.hpp
 )
 
 # ImGui
@@ -168,6 +196,7 @@ add_library(mirage_core OBJECT
 
 target_include_directories(mirage_core PUBLIC
     src
+    src/ai
     src/gui
     src/video
     src/vulkan
@@ -183,6 +212,7 @@ add_executable(mirage_vulkan WIN32 $<TARGET_OBJECTS:mirage_core>)
 
 target_include_directories(mirage_vulkan PRIVATE
     src
+    src/ai
     src/gui
     src/video
     src/vulkan
@@ -253,6 +283,21 @@ else()
     message(STATUS "Tesseract OCR disabled")
 endif()
 
+# MIRAGE_OCR_ENABLED alias → USE_OCRと同期
+if(MIRAGE_OCR_ENABLED AND NOT USE_OCR)
+    message(STATUS "MIRAGE_OCR_ENABLED=ON → USE_OCR also enabled")
+    set(USE_OCR ON CACHE BOOL "" FORCE)
+endif()
+
+# AI Engine
+if(USE_AI)
+    target_sources(mirage_core PRIVATE ${AI_SOURCES})
+    target_compile_definitions(mirage_core PRIVATE USE_AI)
+    message(STATUS "AI Engine enabled")
+else()
+    message(STATUS "AI Engine disabled (stub mode)")
+endif()
+
 # OBJECT ライブラリは target_link_directories の PUBLIC 伝播をサポートしないため
 # 消費側ターゲットに直接設定する必要がある
 if(USE_FFMPEG)
@@ -296,6 +341,7 @@ add_executable(mirage_vulkan_debug $<TARGET_OBJECTS:mirage_core>)
 
 target_include_directories(mirage_vulkan_debug PRIVATE
     src
+    src/ai
     src/gui
     src/video
     src/vulkan
@@ -502,6 +548,52 @@ if(BUILD_TESTS)
         target_link_libraries(test_usb_command PRIVATE gtest)
         target_compile_definitions(test_usb_command PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+        # TemplateManifest test (CPU only, no GPU)
+        add_executable(test_template_manifest
+            tests/test_template_manifest.cpp
+            src/ai/template_manifest.cpp
+        )
+        target_include_directories(test_template_manifest PRIVATE src)
+        target_link_libraries(test_template_manifest PRIVATE gtest)
+        target_compile_definitions(test_template_manifest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # TemplateCapture test (CPU only, RGBA→Gray8 conversion)
+        add_executable(test_template_capture
+            tests/test_template_capture.cpp
+            src/ai/template_capture.cpp
+        )
+        target_include_directories(test_template_capture PRIVATE src)
+        target_link_libraries(test_template_capture PRIVATE gtest)
+        target_compile_definitions(test_template_capture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # UiFinder XML parse test (CPU only, mock ADB)
+        add_executable(test_ui_finder_parse
+            tests/test_ui_finder_parse.cpp
+            src/ai/ui_finder.cpp
+        )
+        target_include_directories(test_ui_finder_parse PRIVATE src)
+        target_link_libraries(test_ui_finder_parse PRIVATE gtest)
+        target_compile_definitions(test_ui_finder_parse PRIVATE
+            WIN32_LEAN_AND_MEAN NOMINMAX VK_USE_PLATFORM_WIN32_KHR
+        )
+
+        # ActionMapper test (CPU only, header-only)
+        add_executable(test_action_mapper
+            tests/test_action_mapper.cpp
+        )
+        target_include_directories(test_action_mapper PRIVATE src)
+        target_link_libraries(test_action_mapper PRIVATE gtest)
+        target_compile_definitions(test_action_mapper PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        # VisionDecisionEngine test (CPU only, 状態遷移ロジック)
+        add_executable(test_vision_decision_engine
+            tests/test_vision_decision_engine.cpp
+            src/ai/vision_decision_engine.cpp
+        )
+        target_include_directories(test_vision_decision_engine PRIVATE src src/ai)
+        target_link_libraries(test_vision_decision_engine PRIVATE gtest)
+        target_compile_definitions(test_vision_decision_engine PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
         enable_testing()
         add_test(NAME VulkanVideoTest COMMAND test_vulkan_video)
         add_test(NAME H264ParserTest COMMAND test_h264_parser)
@@ -520,6 +612,34 @@ if(BUILD_TESTS)
         add_test(NAME RouteControllerTest COMMAND test_route_controller)
         add_test(NAME AdbDeviceManagerTest COMMAND test_adb_device_manager)
         add_test(NAME UsbCommandTest COMMAND test_usb_command)
+        add_test(NAME TemplateManifestTest COMMAND test_template_manifest)
+        add_test(NAME TemplateCaptureTest COMMAND test_template_capture)
+        add_test(NAME UiFinderParseTest COMMAND test_ui_finder_parse)
+        add_test(NAME ActionMapperTest COMMAND test_action_mapper)
+        add_test(NAME VisionDecisionEngineTest COMMAND test_vision_decision_engine)
+
+        # FrameAnalyzer CPUロジック ユニットテスト (Tesseract不要)
+        add_executable(test_frame_analyzer_unit
+            tests/test_frame_analyzer_unit.cpp
+        )
+        target_include_directories(test_frame_analyzer_unit PRIVATE src)
+        target_link_libraries(test_frame_analyzer_unit PRIVATE gtest)
+        target_compile_definitions(test_frame_analyzer_unit PRIVATE
+            WIN32_LEAN_AND_MEAN NOMINMAX MIRAGE_OCR_ENABLED=1
+        )
+        add_test(NAME FrameAnalyzerUnitTest COMMAND test_frame_analyzer_unit)
+
+        # AI E2E統合テスト (GPU不要、モック使用)
+        add_executable(test_ai_e2e
+            tests/test_ai_e2e.cpp
+            src/ai/template_capture.cpp
+            src/ai/template_store.cpp
+            src/stb_image_impl.cpp
+        )
+        target_include_directories(test_ai_e2e PRIVATE src)
+        target_link_libraries(test_ai_e2e PRIVATE gtest)
+        target_compile_definitions(test_ai_e2e PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME AIE2ETest COMMAND test_ai_e2e)
 
         # Frame Analyzer OCR test
         if(USE_OCR)
