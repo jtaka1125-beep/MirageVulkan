@@ -294,11 +294,27 @@ void initializeRouting() {
     g_bandwidth_monitor = std::make_unique<::gui::BandwidthMonitor>();
     g_route_controller = std::make_unique<::gui::RouteController>();
 
+    // TCP-onlyモード設定（USB映像なし、MirageCapture VID0使用）
+    g_route_controller->setTcpOnlyMode(true);
+
     // FPS command callback
     g_route_controller->setFpsCommandCallback([](const std::string& device_id, int fps) {
-        if (g_hybrid_cmd) {
+        // TCP-onlyモード: ADB broadcast経由でFPS送信（USB経由はスキップ）
+        if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
+            auto devices = g_adb_manager->getUniqueDevices();
+            for (const auto& dev : devices) {
+                if (dev.hardware_id == device_id) {
+                    std::string cmd = "shell am broadcast -a com.mirage.capture.SET_FPS --ei fps " + std::to_string(fps);
+                    g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
+                    MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)",
+                              fps, device_id.c_str(), dev.preferred_adb_id.c_str());
+                    break;
+                }
+            }
+        } else if (g_hybrid_cmd) {
+            // USB AOA経由でFPS送信
             g_hybrid_cmd->send_video_fps(device_id, fps);
-            MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s", fps, device_id.c_str());
+            MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s (USB)", fps, device_id.c_str());
         }
     });
 
@@ -331,6 +347,30 @@ void initializeRouting() {
         }
     } else {
         MLOG_INFO("gui", "RouteController: no USB command sender, WiFi-only mode");
+    }
+
+    // TCP-onlyモード: ADB hardware_idで登録（FrameDispatcherと一致させる）
+    if (g_route_controller->isTcpOnlyMode() && g_adb_manager) {
+        auto devices = g_adb_manager->getUniqueDevices();
+        if (!devices.empty()) {
+            // USB登録があればクリア（TCP-onlyではADB hardware_idを使う）
+            if (g_hybrid_cmd) {
+                auto usb_ids = g_hybrid_cmd->get_device_ids();
+                for (const auto& uid : usb_ids) {
+                    g_route_controller->unregisterDevice(uid);
+                }
+            }
+
+            int wifi_port = mirage::config::getConfig().network.video_base_port;
+            bool first = true;
+            for (const auto& dev : devices) {
+                g_route_controller->registerDevice(dev.hardware_id, first, wifi_port);
+                MLOG_INFO("gui", "RouteController TCP_ONLY: registered %s (%s) main=%d",
+                          dev.hardware_id.c_str(), dev.display_name.c_str(), first);
+                wifi_port++;
+                first = false;
+            }
+        }
     }
 
     // Start route evaluation thread
@@ -431,7 +471,19 @@ void initializeGUI(HWND hwnd) {
         }
 
         // Update FPS: main=60fps, sub=30fps
-        if (g_hybrid_cmd) {
+        if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
+            // TCP-onlyモード: ADB broadcast経由でFPS送信
+            auto devices = g_adb_manager->getUniqueDevices();
+            for (const auto& dev : devices) {
+                int target_fps = (dev.hardware_id == device_id) ? 60 : 30;
+                std::string cmd = "shell am broadcast -a com.mirage.capture.SET_FPS --ei fps " + std::to_string(target_fps);
+                g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
+                MLOG_INFO("gui", "FPS update (ADB): %s -> %d fps (%s)",
+                          dev.hardware_id.c_str(), target_fps,
+                          (dev.hardware_id == device_id) ? "MAIN" : "sub");
+            }
+        } else if (g_hybrid_cmd) {
+            // USB AOA経由でFPS送信
             // Build USB serial -> hardware_id map from ADB manager
             std::map<std::string, std::string> usb_to_hw;
             if (g_adb_manager) {
@@ -449,7 +501,7 @@ void initializeGUI(HWND hwnd) {
                 if (it != usb_to_hw.end()) hw_id = it->second;
                 int target_fps = (hw_id == device_id) ? 60 : 30;
                 g_hybrid_cmd->send_video_fps(uid, target_fps);
-                MLOG_INFO("gui", "FPS update: %s -> %d fps (%s)",
+                MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
                         uid.c_str(), target_fps,
                         (hw_id == device_id) ? "MAIN" : "sub");
             }
@@ -638,67 +690,7 @@ void initializeAI() {
             if (g_hybrid_cmd && g_hybrid_cmd->device_count() > 0) return true;
             // ADB fallback path (sendTapCommand handles ADB fallback)
             if (g_adb_manager) {
-                // === Auto-start MirageCapture ScreenCaptureService on all devices ===
-    {
-        auto all_devs = g_adb_manager->getUniqueDevices();
-        for (const auto& dev : all_devs) {
-            const std::string& adb_id = dev.preferred_adb_id;
-
-            // Check if ScreenCaptureService is already running
-            std::string svc_check = g_adb_manager->adbCommand(adb_id,
-                "shell dumpsys activity services com.mirage.capture");
-
-            if (svc_check.find("ScreenCaptureService") != std::string::npos) {
-                MLOG_INFO("gui", "ScreenCaptureService already running on %s",
-                          dev.display_name.c_str());
-                continue;
-            }
-
-            MLOG_INFO("gui", "Auto-starting MirageCapture on %s (%s)",
-                      dev.display_name.c_str(), adb_id.c_str());
-
-            // Send auto_mirror intent to CaptureActivity
-            // appops PROJECT_MEDIA:allow is pre-granted, so MediaProjection dialog is skipped
-            g_adb_manager->adbCommand(adb_id,
-                "shell am start -n com.mirage.capture/.ui.CaptureActivity "
-                "--ez auto_mirror true --es mirror_mode tcp");
-
-            // Wait for MediaProjection dialog (if it appears) and auto-tap
-            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-
-            // Check if dialog appeared by dumping UI
-            std::string ui_check = g_adb_manager->adbCommand(adb_id,
-                "shell dumpsys activity top");
-
-            if (ui_check.find("MediaProjectionPermissionActivity") != std::string::npos ||
-                ui_check.find("GrantPermissionsActivity") != std::string::npos) {
-                // Dialog appeared - auto-tap "Start now" button
-                // Position depends on screen resolution
-                std::string wm_size = g_adb_manager->adbCommand(adb_id, "shell wm size");
-                if (wm_size.find("1200x2000") != std::string::npos) {
-                    g_adb_manager->adbCommand(adb_id, "shell input tap 880 1220");
-                } else {
-                    g_adb_manager->adbCommand(adb_id, "shell input tap 590 810");
-                }
-                MLOG_INFO("gui", "Auto-tapped MediaProjection dialog on %s",
-                          dev.display_name.c_str());
-                std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-            }
-
-            // Verify service started
-            std::string verify = g_adb_manager->adbCommand(adb_id,
-                "shell dumpsys activity services com.mirage.capture");
-            if (verify.find("ScreenCaptureService") != std::string::npos) {
-                MLOG_INFO("gui", "ScreenCaptureService started successfully on %s",
-                          dev.display_name.c_str());
-            } else {
-                MLOG_WARN("gui", "ScreenCaptureService failed to start on %s (manual tap may be needed)",
-                          dev.display_name.c_str());
-            }
-        }
-    }
-
-    auto devices = g_adb_manager->getUniqueDevices();
+                auto devices = g_adb_manager->getUniqueDevices();
                 if (!devices.empty()) return true;
             }
             return false;

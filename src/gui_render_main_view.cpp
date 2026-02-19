@@ -227,19 +227,32 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
     float view_x = x;
     float view_y = y;
 
+    // Clip all drawing to the allocated container rect
+    draw_list->PushClipRect(ImVec2(x, y), ImVec2(x + w, y + h), true);
+
     if (device.vk_texture_ds && device.texture_width > 0 && device.texture_height > 0) {
         float aspect = static_cast<float>(device.texture_width) / device.texture_height;
         float container_aspect = w / h;  // Safe: h > 0 guaranteed above
 
         if (aspect > container_aspect) {
-            // Width-limited
+            // Width-limited: fit to container width
+            view_w = w;
             view_h = (aspect > 0) ? (w / aspect) : h;
+            view_x = x;
             view_y = y + (h - view_h) / 2;
         } else {
-            // Height-limited
+            // Height-limited: fit to container height
+            view_h = h;
             view_w = h * aspect;
             view_x = x + (w - view_w) / 2;
+            view_y = y;
         }
+
+        // Clamp to container bounds (defensive)
+        if (view_x < x) view_x = x;
+        if (view_y < y) view_y = y;
+        if (view_x + view_w > x + w) view_w = x + w - view_x;
+        if (view_y + view_h > y + h) view_h = y + h - view_y;
 
         // Store main view rect for input processing (thread-safe)
         if (is_main) {
@@ -257,6 +270,8 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
             ImVec2(view_x, view_y),
             ImVec2(view_x + view_w, view_y + view_h)
         );
+
+
 
         // Draw overlays
         if (config_.show_match_boxes || config_.show_match_labels) {
@@ -285,6 +300,8 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
             main_view_rect_.valid = false;
         }
     }
+
+    draw_list->PopClipRect();
 
     // Status border
     if (draw_border) {

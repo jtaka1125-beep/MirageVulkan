@@ -66,6 +66,10 @@ public:
     State getState() const { return state_; }
     RouteDecision getCurrentDecision() const { return current_; }
 
+    // TCP-only mode (no USB video, using MirageCapture VID0)
+    void setTcpOnlyMode(bool enabled) { tcp_only_mode_ = enabled; }
+    bool isTcpOnlyMode() const { return tcp_only_mode_; }
+
     // Manual override (for testing)
     void forceState(State state);
     void resetToNormal();
@@ -85,6 +89,7 @@ private:
     std::map<std::string, DeviceInfo> devices_;
     RouteDecision current_;
     State state_ = State::NORMAL;
+    bool tcp_only_mode_ = false;
 
     // Consecutive counts for hysteresis
     int consecutive_usb_congestion_ = 0;
