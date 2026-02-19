@@ -34,6 +34,7 @@
 
 #ifdef USE_AI
 #include "ai_engine.hpp"
+#include "ai/learning_mode.hpp"
 #endif
 #ifdef USE_OCR
 #include "ocr_engine.hpp"
@@ -144,6 +145,7 @@ public:
 #ifdef USE_AI
     std::unique_ptr<mirage::ai::AIEngine> ai_engine;
     std::atomic<bool> ai_enabled{true};
+    std::unique_ptr<mirage::ai::LearningMode> learning_mode;
 #endif
 
 #ifdef USE_OCR

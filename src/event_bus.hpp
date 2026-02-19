@@ -59,16 +59,79 @@ struct DeviceStatusEvent : Event {
     float bandwidth_mbps = 0;
 };
 
-// Commands (GUI -> backend)
+// コマンドソース種別（AI自動/ユーザ手動/マクロ）
+enum class CommandSource { AI, USER, MACRO };
+
+// Commands (GUI/AI/Macro -> backend)
 struct TapCommandEvent : Event {
     std::string device_id;
     int x = 0, y = 0;
+    CommandSource source = CommandSource::USER;
 };
 
 struct SwipeCommandEvent : Event {
     std::string device_id;
     int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
     int duration_ms = 300;
+    CommandSource source = CommandSource::USER;
+};
+
+struct KeyCommandEvent : Event {
+    std::string device_id;
+    int keycode = 0;
+    CommandSource source = CommandSource::USER;
+};
+
+// Learning mode (GUI -> AI)
+struct LearningStartEvent : Event {
+    std::string device_id;
+    std::string name_stem;         // テンプレート名のベース（例: "home_button"）
+    int roi_x = 0, roi_y = 0;     // ROI左上座標（フレーム座標系 px）
+    int roi_w = 0, roi_h = 0;     // ROIサイズ（px）
+};
+
+struct LearningCaptureEvent : Event {
+    bool ok = false;
+    std::string error;
+    std::string device_id;
+    std::string name_stem;
+    int template_id = -1;
+    int w = 0, h = 0;
+    std::string saved_file_rel;    // manifest相対パス
+};
+
+// AI テンプレートマッチング結果
+struct MatchResultEvent : Event {
+    std::string device_id;
+    struct Match {
+        std::string template_name;
+        int x = 0, y = 0;
+        float score = 0.0f;
+        int template_id = -1;
+        // テンプレートサイズ情報
+        int template_width = 0;
+        int template_height = 0;
+    };
+    std::vector<Match> matches;
+    uint64_t frame_id = 0;
+    double process_time_ms = 0.0;
+};
+
+// OCR テキスト認識結果（AIEngine → GUI/ログ用）
+struct OcrMatchResult : Event {
+    std::string device_id;
+    std::string text;          // 認識テキスト
+    int x = 0, y = 0;         // テキスト中心座標
+    float confidence = 0.0f;   // 信頼度 (0-100)
+};
+
+// AI 状態遷移イベント（VisionDecisionEngine → GUI/ログ用）
+struct StateChangeEvent : Event {
+    std::string device_id;
+    int old_state = 0;         // VisionState enum値
+    int new_state = 0;         // VisionState enum値
+    std::string template_id;   // 関連テンプレートID（空の場合あり）
+    int64_t timestamp = 0;     // steady_clock epoch ms
 };
 
 // System

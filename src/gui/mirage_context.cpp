@@ -83,6 +83,10 @@ void MirageContext::shutdown() {
 
     // Shutdown AI
 #ifdef USE_AI
+    if (learning_mode) {
+        learning_mode->stop();
+        learning_mode.reset();
+    }
     if (ai_engine) {
         ai_engine->shutdown();
         ai_engine.reset();

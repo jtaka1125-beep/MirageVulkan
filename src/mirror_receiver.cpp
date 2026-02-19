@@ -28,6 +28,7 @@
 #include <atomic>
 #include <mutex>
 #include "mirage_log.hpp"
+#include "vid0_parser.hpp"
 
 namespace gui {
 
@@ -394,6 +395,110 @@ void MirrorReceiver::tcp_receive_thread(uint16_t tcp_port) {
 #endif
   MLOG_INFO("mirror", "TCP receive thread ended");
 }
+
+// ==============================================================================
+// VID0 TCP receive mode - MirageCapture TcpVideoSender (port 50100)
+// VID0 format: "VID0" (4B) + payload_length (4B big-endian) + RTP packet
+// ==============================================================================
+bool MirrorReceiver::start_tcp_vid0(uint16_t tcp_port) {
+  tcp_port_ = tcp_port;
+  if (!init_decoder()) return false;
+  running_.store(true);
+  bound_port_.store(tcp_port);
+  thread_ = std::thread(&MirrorReceiver::tcp_vid0_receive_thread, this, tcp_port);
+  decode_thread_ = std::thread(&MirrorReceiver::decode_thread_func, this);
+  return true;
+}
+
+void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
+  MLOG_INFO("mirror", "VID0 TCP receive thread started (port %d, auto-reconnect enabled)", tcp_port);
+
+#ifdef _WIN32
+  // Outer reconnection loop: reconnects indefinitely until running_ is false
+  while (running_.load()) {
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+      MLOG_ERROR("mirror", "VID0 TCP socket creation failed, retrying in 3s");
+      std::this_thread::sleep_for(std::chrono::seconds(3));
+      continue;
+    }
+
+    int nodelay = 1;
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
+
+    int bufsize = 4 * 1024 * 1024;
+    setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char*)&bufsize, sizeof(bufsize));
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(tcp_port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    // Connection retry (wait for MirageCapture to start accepting)
+    bool connected = false;
+    for (int i = 0; i < 50 && running_.load(); i++) {
+      if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == 0) {
+        connected = true;
+        break;
+      }
+      if (i % 10 == 9) {
+        MLOG_INFO("mirror", "VID0 TCP connect retry %d/50 (port %d)", i+1, tcp_port);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    if (!connected) {
+      MLOG_WARN("mirror", "VID0 TCP connect failed (port %d), retrying in 3s...", tcp_port);
+      closesocket(sock);
+      std::this_thread::sleep_for(std::chrono::seconds(3));
+      continue;  // Outer loop: retry connection indefinitely
+    }
+
+    MLOG_INFO("mirror", "VID0 TCP connected on port %d (MirageCapture)", tcp_port);
+
+    DWORD tv = 100;  // 100ms recv timeout
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+
+    std::vector<uint8_t> vid0_buf;
+    vid0_buf.reserve(256 * 1024);
+
+    char buf[65536];
+    while (running_.load()) {
+      int n = recv(sock, buf, sizeof(buf), 0);
+      if (n > 0) {
+        bytes_received_.fetch_add(n);
+        vid0_buf.insert(vid0_buf.end(), buf, buf + n);
+
+        // Parse VID0 framing to extract RTP packets
+        auto parse_result = mirage::video::parseVid0Packets(vid0_buf);
+
+        for (const auto& rtp_pkt : parse_result.rtp_packets) {
+          packets_received_.fetch_add(1);
+          process_rtp_packet(rtp_pkt.data(), rtp_pkt.size());
+        }
+      } else if (n == 0) {
+        MLOG_WARN("mirror", "VID0 TCP connection closed by server (port %d)", tcp_port);
+        break;  // Inner loop exit -> reconnect via outer loop
+      } else {
+        int err = WSAGetLastError();
+        if (err != WSAETIMEDOUT && err != WSAEWOULDBLOCK) {
+          MLOG_ERROR("mirror", "VID0 TCP recv error: %d (port %d)", err, tcp_port);
+          break;  // Inner loop exit -> reconnect via outer loop
+        }
+      }
+    }
+
+    closesocket(sock);
+
+    if (running_.load()) {
+      MLOG_INFO("mirror", "VID0 TCP disconnected, reconnecting in 2s (port %d)", tcp_port);
+      std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+  }  // End outer reconnection loop
+#endif
+  MLOG_INFO("mirror", "VID0 TCP receive thread ended (port %d)", tcp_port);
+}
+
 
 // ==============================================================================
 // Raw H.264 Annex B stream processing (for scrcpy raw_stream=true)

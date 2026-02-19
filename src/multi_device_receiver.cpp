@@ -30,6 +30,12 @@ bool MultiDeviceReceiver::start(uint16_t base_port) {
         entry.hardware_id = device.hardware_id;
         entry.display_name = device.display_name;
         entry.receiver = std::make_unique<MirrorReceiver>();
+        // VulkanコンテキストをReceiverに伝播
+        if (vk_device_ != VK_NULL_HANDLE) {
+            entry.receiver->setVulkanContext(vk_physical_device_, vk_device_,
+                vk_graphics_queue_family_, vk_graphics_queue_,
+                vk_compute_queue_family_, vk_compute_queue_);
+        }
         entry.last_stats_time = std::chrono::steady_clock::now();
 
         // Always use port=0 for OS-assigned port to avoid TIME_WAIT conflicts
@@ -70,6 +76,12 @@ bool MultiDeviceReceiver::restart_as_tcp(const std::string& hardware_id, uint16_
 
     // Create new receiver in TCP mode
     entry.receiver = std::make_unique<MirrorReceiver>();
+    // VulkanコンテキストをReceiverに伝播
+    if (vk_device_ != VK_NULL_HANDLE) {
+        entry.receiver->setVulkanContext(vk_physical_device_, vk_device_,
+            vk_graphics_queue_family_, vk_graphics_queue_,
+            vk_compute_queue_family_, vk_compute_queue_);
+    }
     if (entry.receiver->start_tcp(tcp_port)) {
         entry.port = tcp_port;
         port_to_device_.erase(old_port);
@@ -84,8 +96,131 @@ bool MultiDeviceReceiver::restart_as_tcp(const std::string& hardware_id, uint16_
     }
 }
 
+bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port) {
+    std::lock_guard<std::mutex> lock(receivers_mutex_);
+    auto it = receivers_.find(hardware_id);
+    if (it == receivers_.end()) {
+        // エントリが無い場合は新規作成 (start()をスキップした場合)
+        ReceiverEntry entry;
+        entry.hardware_id = hardware_id;
+        entry.display_name = hardware_id;
+        if (adb_manager_) {
+            AdbDeviceManager::UniqueDevice dev_info;
+            if (adb_manager_->getUniqueDevice(hardware_id, dev_info)) {
+                entry.display_name = dev_info.display_name;
+            }
+        }
+        entry.receiver = std::make_unique<MirrorReceiver>();
+        // VulkanコンテキストをReceiverに伝播
+        if (vk_device_ != VK_NULL_HANDLE) {
+            entry.receiver->setVulkanContext(vk_physical_device_, vk_device_,
+                vk_graphics_queue_family_, vk_graphics_queue_,
+                vk_compute_queue_family_, vk_compute_queue_);
+        }
+        entry.last_stats_time = std::chrono::steady_clock::now();
+
+        if (entry.receiver->start_tcp_vid0(tcp_port)) {
+            entry.port = tcp_port;
+            port_to_device_[tcp_port] = hardware_id;
+            MLOG_INFO("multi", "Started %s in VID0 TCP mode on port %d (new entry)",
+                      entry.display_name.c_str(), tcp_port);
+            receivers_[hardware_id] = std::move(entry);
+            running_ = true;
+            return true;
+        } else {
+            MLOG_ERROR("multi", "Failed to start %s in VID0 TCP mode on port %d",
+                       entry.display_name.c_str(), tcp_port);
+            return false;
+        }
+    }
+
+    auto& entry = it->second;
+    int old_port = entry.port;
+
+    if (entry.receiver) {
+        entry.receiver->stop();
+    }
+
+    entry.receiver = std::make_unique<MirrorReceiver>();
+    // VulkanコンテキストをReceiverに伝播
+    if (vk_device_ != VK_NULL_HANDLE) {
+        entry.receiver->setVulkanContext(vk_physical_device_, vk_device_,
+            vk_graphics_queue_family_, vk_graphics_queue_,
+            vk_compute_queue_family_, vk_compute_queue_);
+    }
+    if (entry.receiver->start_tcp_vid0(tcp_port)) {
+        entry.port = tcp_port;
+        port_to_device_.erase(old_port);
+        port_to_device_[tcp_port] = hardware_id;
+        MLOG_INFO("multi", "Restarted %s in VID0 TCP mode on port %d (was %d)",
+                  entry.display_name.c_str(), tcp_port, old_port);
+        return true;
+    } else {
+        MLOG_ERROR("multi", "Failed to restart %s in VID0 TCP mode on port %d",
+                   entry.display_name.c_str(), tcp_port);
+        return false;
+    }
+}
+
+void MultiDeviceReceiver::setVulkanContext(VkPhysicalDevice physical_device, VkDevice device,
+                                            uint32_t graphics_queue_family, uint32_t compute_queue_family,
+                                            VkQueue graphics_queue, VkQueue compute_queue) {
+    vk_physical_device_ = physical_device;
+    vk_device_ = device;
+    vk_graphics_queue_family_ = graphics_queue_family;
+    vk_compute_queue_family_ = compute_queue_family;
+    vk_graphics_queue_ = graphics_queue;
+    vk_compute_queue_ = compute_queue;
+    MLOG_INFO("multi", "Vulkanコンテキスト設定完了");
+}
+
+void MultiDeviceReceiver::setFrameCallback(FrameCallback cb) {
+    frame_callback_ = std::move(cb);
+
+    // コールバック設定済み＆レシーバー稼働中ならポーリングスレッド開始
+    if (frame_callback_ && running_ && !frame_poll_running_.load()) {
+        frame_poll_running_.store(true);
+        frame_poll_thread_ = std::thread(&MultiDeviceReceiver::framePollThreadFunc, this);
+    }
+}
+
+void MultiDeviceReceiver::framePollThreadFunc() {
+    MLOG_INFO("multi", "フレームポーリングスレッド開始");
+    MirrorFrame frame;
+
+    while (frame_poll_running_.load() && running_) {
+        // 各デバイスのフレームをポーリング
+        std::vector<std::string> device_ids;
+        {
+            std::lock_guard<std::mutex> lock(receivers_mutex_);
+            device_ids.reserve(receivers_.size());
+            for (const auto& [hw_id, entry] : receivers_) {
+                device_ids.push_back(hw_id);
+            }
+        }
+
+        for (const auto& hw_id : device_ids) {
+            if (!frame_poll_running_.load()) break;
+            // get_latest_frame()がtrue返す = 新フレームあり → callback + stats更新
+            if (get_latest_frame(hw_id, frame)) {
+                // frame_callback_はget_latest_frame()内で呼ばれる
+            }
+        }
+
+        // ~60FPS相当のポーリング間隔
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    MLOG_INFO("multi", "フレームポーリングスレッド終了");
+}
+
 void MultiDeviceReceiver::stop() {
     if (!running_) return;
+
+    // フレームポーリングスレッド停止
+    frame_poll_running_.store(false);
+    if (frame_poll_thread_.joinable()) {
+        frame_poll_thread_.join();
+    }
 
     std::lock_guard<std::mutex> lock(receivers_mutex_);
 

@@ -1,10 +1,13 @@
 #pragma once
 #include "mirror_receiver.hpp"
 #include "adb_device_manager.hpp"
+#include <vulkan/vulkan.h>
 #include <memory>
 #include <map>
 #include <mutex>
 #include <functional>
+#include <thread>
+#include <atomic>
 
 namespace gui {
 
@@ -41,6 +44,11 @@ public:
     // Set device manager (required before start)
     void setDeviceManager(AdbDeviceManager* manager) { adb_manager_ = manager; }
 
+    // Vulkanコンテキストを設定（GPUデコード用）
+    void setVulkanContext(VkPhysicalDevice physical_device, VkDevice device,
+                          uint32_t graphics_queue_family, uint32_t compute_queue_family,
+                          VkQueue graphics_queue, VkQueue compute_queue);
+
     // Start receivers for all devices (base_port, base_port+1, ...)
     bool start(uint16_t base_port = 60000);
     void stop();
@@ -60,7 +68,8 @@ public:
     int getActiveDeviceCount() const;
 
     // Frame callback (called when new frame received for any device)
-    void setFrameCallback(FrameCallback cb) { frame_callback_ = std::move(cb); }
+    // コールバック設定時にフレームポーリングスレッドを開始
+    void setFrameCallback(FrameCallback cb);
 
     // Get all hardware IDs of managed devices
     std::vector<std::string> getDeviceIds() const;
@@ -68,6 +77,9 @@ public:
 
     // Restart a device receiver in TCP mode (scrcpy direct connection)
     bool restart_as_tcp(const std::string& hardware_id, uint16_t tcp_port);
+
+    // Restart a device receiver in VID0 TCP mode (MirageCapture TcpVideoSender)
+    bool restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port);
 
     // Feed RTP packet to the first device's receiver (for USB video)
     void feed_rtp_packet(const uint8_t* data, size_t len);
@@ -97,11 +109,24 @@ private:
     bool running_ = false;
     AdbDeviceManager* adb_manager_ = nullptr;
 
+    // Vulkanコンテキスト（GPUデコード用）
+    VkPhysicalDevice vk_physical_device_ = VK_NULL_HANDLE;
+    VkDevice vk_device_ = VK_NULL_HANDLE;
+    uint32_t vk_graphics_queue_family_ = 0;
+    uint32_t vk_compute_queue_family_ = 0;
+    VkQueue vk_graphics_queue_ = VK_NULL_HANDLE;
+    VkQueue vk_compute_queue_ = VK_NULL_HANDLE;
+
     mutable std::mutex receivers_mutex_;
     std::map<std::string, ReceiverEntry> receivers_;  // hardware_id -> receiver
     std::map<int, std::string> port_to_device_;       // port -> hardware_id
 
     FrameCallback frame_callback_;
+
+    // フレームポーリングスレッド（各デバイスのget_latest_frame()を定期呼び出し）
+    std::thread frame_poll_thread_;
+    std::atomic<bool> frame_poll_running_{false};
+    void framePollThreadFunc();
 
     void updateStats();
 };

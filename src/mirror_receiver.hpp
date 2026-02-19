@@ -70,6 +70,9 @@ public:
   // Start TCP receive mode (connects to localhost:tcp_port for raw H.264)
   bool start_tcp(uint16_t tcp_port);
 
+  // Start TCP receive mode for VID0-framed RTP (MirageCapture TcpVideoSender)
+  bool start_tcp_vid0(uint16_t tcp_port);
+
   bool running() const { return running_.load(); }
 
   // Get assigned port (valid after start(), returns 0 if not started)
@@ -103,6 +106,7 @@ public:
 private:
   void receive_thread(uint16_t port);
   void tcp_receive_thread(uint16_t tcp_port);
+  void tcp_vid0_receive_thread(uint16_t tcp_port);
   void process_rtp_packet(const uint8_t* data, size_t len);
   size_t find_start_code(const uint8_t* data, size_t len, size_t offset);
   void decode_nal(const uint8_t* data, size_t len);

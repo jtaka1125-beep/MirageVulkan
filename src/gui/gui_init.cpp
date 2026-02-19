@@ -32,12 +32,21 @@ void setupUsbVideoCallback() {
     if (!g_hybrid_cmd) return;
 
     g_hybrid_cmd->set_video_callback([](const std::string& device_id, const uint8_t* data, size_t len) {
+        // Resolve USB serial to hardware_id for device unification
+        std::string resolved_id = device_id;
+        if (g_adb_manager) {
+            std::string hw_id = g_adb_manager->resolveUsbSerial(device_id);
+            if (!hw_id.empty()) {
+                resolved_id = hw_id;
+            }
+        }
+
         // Accumulate data in per-device buffer and parse VID0 packets
         mirage::video::ParseResult parse_result;
 
         {
             std::lock_guard<std::mutex> buf_lock(g_usb_video_buffers_mutex);
-            auto& buffer = g_usb_video_buffers[device_id];
+            auto& buffer = g_usb_video_buffers[resolved_id];
             buffer.insert(buffer.end(), data, data + len);
             parse_result = mirage::video::parseVid0Packets(buffer);
         }
@@ -48,7 +57,7 @@ void setupUsbVideoCallback() {
 
         std::lock_guard<std::mutex> lock(g_usb_decoders_mutex);
 
-        auto it = g_usb_decoders.find(device_id);
+        auto it = g_usb_decoders.find(resolved_id);
         if (it == g_usb_decoders.end()) {
             auto decoder = std::make_unique<::gui::MirrorReceiver>();
 
@@ -69,11 +78,11 @@ void setupUsbVideoCallback() {
             }
 
             if (decoder->init_decoder()) {
-                auto [inserted_it, success] = g_usb_decoders.emplace(device_id, std::move(decoder));
+                auto [inserted_it, success] = g_usb_decoders.emplace(resolved_id, std::move(decoder));
                 it = inserted_it;
-                MLOG_INFO("gui", "Created USB decoder for device: %s", device_id.c_str());
+                MLOG_INFO("gui", "Created USB decoder for device: %s (raw: %s)", resolved_id.c_str(), device_id.c_str());
             } else {
-                MLOG_ERROR("gui", "Failed to create decoder for device: %s", device_id.c_str());
+                MLOG_ERROR("gui", "Failed to create decoder for device: %s", resolved_id.c_str());
                 return;
             }
         }
@@ -100,38 +109,134 @@ bool initializeMultiReceiver() {
 
     g_multi_receiver->setDeviceManager(g_adb_manager.get());
 
-    if (g_multi_receiver->start(mirage::config::getConfig().network.video_base_port)) {
-        auto device_ids = g_multi_receiver->getDeviceIds();
-        MLOG_INFO("gui", "Multi-receiver: started with %zu device(s)", device_ids.size());
-
-        // Assign actual receiver ports to devices (not config base_port)
-        for (const auto& hw_id : device_ids) {
-            int actual_port = g_multi_receiver->getPortForDevice(hw_id);
-            if (actual_port > 0) {
-                g_adb_manager->setDevicePort(hw_id, actual_port);
-            }
-        }
-
-        // Auto-start screen capture using actual receiver ports
-        std::string host_ip = mirage::config::getConfig().network.pc_ip;
-        int success = g_adb_manager->startScreenCaptureOnAll(host_ip, 0);  // 0 = use pre-assigned ports
-        MLOG_INFO("gui", "Screen capture started: %d/%zu devices", success, device_ids.size());
-
-        // Switch MirrorReceivers to TCP direct mode (bypass UDP packet loss)
-        if (success > 0 && g_multi_receiver) {
-            auto devices = g_adb_manager->getUniqueDevices();
-            for (const auto& dev : devices) {
-                MLOG_INFO("gui", "TCP switch check: %s tcp_port=%d", dev.hardware_id.c_str(), dev.assigned_tcp_port);
-                if (dev.assigned_tcp_port > 0) {
-                    g_multi_receiver->restart_as_tcp(dev.hardware_id, dev.assigned_tcp_port);
-                }
-            }
-        }
-        return true;
+    // VulkanコンテキストをMultiDeviceReceiverに設定（GPUデコード用）
+    auto gui = g_gui;
+    if (gui && gui->vulkanContext()) {
+        auto* vk_ctx = gui->vulkanContext();
+        g_multi_receiver->setVulkanContext(
+            vk_ctx->physicalDevice(), vk_ctx->device(),
+            vk_ctx->queueFamilies().graphics, vk_ctx->queueFamilies().compute,
+            vk_ctx->graphicsQueue(), vk_ctx->computeQueue());
     }
 
-    g_multi_receiver.reset();
-    return false;
+    // MirrorReceiverスロット初期化 (エントリ作成 + デコーダ準備)
+    g_multi_receiver->start(mirage::config::getConfig().network.video_base_port);
+
+    // MirageCapture APK直接受信モード
+    // 各デバイスに adb forward を設定し、VID0 TCP受信を開始
+    // scrcpyは使わない (MirageCapture側でキャプチャ済み前提)
+    // === Auto-start MirageCapture ScreenCaptureService on all devices ===
+    {
+        auto all_devs = g_adb_manager->getUniqueDevices();
+        for (const auto& dev : all_devs) {
+            const std::string& adb_id = dev.preferred_adb_id;
+
+            // Check if ScreenCaptureService is already running
+            std::string svc_check = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity services com.mirage.capture");
+
+            if (svc_check.find("ScreenCaptureService") != std::string::npos) {
+                MLOG_INFO("gui", "ScreenCaptureService already running on %s",
+                          dev.display_name.c_str());
+                continue;
+            }
+
+            MLOG_INFO("gui", "Auto-starting MirageCapture on %s (%s)",
+                      dev.display_name.c_str(), adb_id.c_str());
+
+            // Send auto_mirror intent to CaptureActivity
+            // appops PROJECT_MEDIA:allow is pre-granted, so MediaProjection dialog is skipped
+            g_adb_manager->adbCommand(adb_id,
+                "shell am start -n com.mirage.capture/.ui.CaptureActivity "
+                "--ez auto_mirror true --es mirror_mode tcp");
+
+            // Wait for MediaProjection dialog (if it appears) and auto-tap
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+
+            // Check if dialog appeared by dumping UI
+            std::string ui_check = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity top");
+
+            if (ui_check.find("MediaProjectionPermissionActivity") != std::string::npos ||
+                ui_check.find("GrantPermissionsActivity") != std::string::npos) {
+                // Dialog appeared - auto-tap "Start now" button
+                // Position depends on screen resolution
+                std::string wm_size = g_adb_manager->adbCommand(adb_id, "shell wm size");
+                if (wm_size.find("1200x2000") != std::string::npos) {
+                    g_adb_manager->adbCommand(adb_id, "shell input tap 880 1220");
+                } else {
+                    g_adb_manager->adbCommand(adb_id, "shell input tap 590 810");
+                }
+                MLOG_INFO("gui", "Auto-tapped MediaProjection dialog on %s",
+                          dev.display_name.c_str());
+                std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            }
+
+            // Verify service started
+            std::string verify = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity services com.mirage.capture");
+            if (verify.find("ScreenCaptureService") != std::string::npos) {
+                MLOG_INFO("gui", "ScreenCaptureService started successfully on %s",
+                          dev.display_name.c_str());
+            } else {
+                MLOG_WARN("gui", "ScreenCaptureService failed to start on %s (manual tap may be needed)",
+                          dev.display_name.c_str());
+            }
+        }
+    }
+
+    auto devices = g_adb_manager->getUniqueDevices();
+    if (devices.empty()) {
+        MLOG_WARN("gui", "Multi-receiver: デバイスが見つかりません");
+        g_multi_receiver.reset();
+        return false;
+    }
+
+    constexpr int REMOTE_PORT = 50100;  // MirageCapture TcpVideoSender
+    constexpr int BASE_LOCAL_PORT = 50100;
+
+    int success = 0;
+    for (size_t i = 0; i < devices.size(); ++i) {
+        const auto& dev = devices[i];
+
+        // assigned_tcp_port (devices.json由来) があれば使う、なければ動的割当
+        int local_port = (dev.assigned_tcp_port > 0)
+            ? dev.assigned_tcp_port
+            : BASE_LOCAL_PORT + static_cast<int>(i) * 2;
+
+        const std::string& adb_id = dev.preferred_adb_id;
+
+        // adb forward設定
+        std::string fwd_cmd = "forward tcp:" + std::to_string(local_port) +
+                              " tcp:" + std::to_string(REMOTE_PORT);
+        std::string fwd_result = g_adb_manager->adbCommand(adb_id, fwd_cmd);
+        MLOG_INFO("gui", "adb forward: %s -> %s (result: %s)",
+                  adb_id.c_str(), fwd_cmd.c_str(), fwd_result.c_str());
+
+        // VID0 TCP受信開始 (既存スロットをTCPモードに切替、なければ新規作成)
+        if (g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port)) {
+            MLOG_INFO("gui", "VID0 TCP受信開始: %s port=%d", dev.display_name.c_str(), local_port);
+            success++;
+        } else {
+            MLOG_ERROR("gui", "VID0 TCP受信失敗: %s port=%d", dev.display_name.c_str(), local_port);
+        }
+    }
+
+    MLOG_INFO("gui", "Multi-receiver: %d/%zu devices VID0 TCP mode",
+              success, devices.size());
+
+    // フレームコールバック設定: デコード済みフレームをEventBus経由でGUIに配信
+    g_multi_receiver->setFrameCallback([](const std::string& hardware_id, const ::gui::MirrorFrame& frame) {
+        mirage::FrameReadyEvent evt;
+        evt.device_id = hardware_id;
+        evt.rgba_data = frame.rgba.data();
+        evt.width = frame.width;
+        evt.height = frame.height;
+        evt.frame_id = frame.frame_id;
+        mirage::bus().publish(evt);
+    });
+
+    return success > 0;
 }
 
 // DISABLED: Using TCP direct mode via restart_as_tcp instead
@@ -368,7 +473,67 @@ void initializeGUI(HWND hwnd) {
         if (gui) gui->logInfo(u8"Starting mirroring on all devices...");
         std::string host_ip = mirage::config::getConfig().network.pc_ip;
         int success = g_adb_manager->startScreenCaptureOnAll(host_ip, mirage::config::getConfig().network.video_base_port);
-        auto devices = g_adb_manager->getUniqueDevices();
+        // === Auto-start MirageCapture ScreenCaptureService on all devices ===
+    {
+        auto all_devs = g_adb_manager->getUniqueDevices();
+        for (const auto& dev : all_devs) {
+            const std::string& adb_id = dev.preferred_adb_id;
+
+            // Check if ScreenCaptureService is already running
+            std::string svc_check = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity services com.mirage.capture");
+
+            if (svc_check.find("ScreenCaptureService") != std::string::npos) {
+                MLOG_INFO("gui", "ScreenCaptureService already running on %s",
+                          dev.display_name.c_str());
+                continue;
+            }
+
+            MLOG_INFO("gui", "Auto-starting MirageCapture on %s (%s)",
+                      dev.display_name.c_str(), adb_id.c_str());
+
+            // Send auto_mirror intent to CaptureActivity
+            // appops PROJECT_MEDIA:allow is pre-granted, so MediaProjection dialog is skipped
+            g_adb_manager->adbCommand(adb_id,
+                "shell am start -n com.mirage.capture/.ui.CaptureActivity "
+                "--ez auto_mirror true --es mirror_mode tcp");
+
+            // Wait for MediaProjection dialog (if it appears) and auto-tap
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+
+            // Check if dialog appeared by dumping UI
+            std::string ui_check = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity top");
+
+            if (ui_check.find("MediaProjectionPermissionActivity") != std::string::npos ||
+                ui_check.find("GrantPermissionsActivity") != std::string::npos) {
+                // Dialog appeared - auto-tap "Start now" button
+                // Position depends on screen resolution
+                std::string wm_size = g_adb_manager->adbCommand(adb_id, "shell wm size");
+                if (wm_size.find("1200x2000") != std::string::npos) {
+                    g_adb_manager->adbCommand(adb_id, "shell input tap 880 1220");
+                } else {
+                    g_adb_manager->adbCommand(adb_id, "shell input tap 590 810");
+                }
+                MLOG_INFO("gui", "Auto-tapped MediaProjection dialog on %s",
+                          dev.display_name.c_str());
+                std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            }
+
+            // Verify service started
+            std::string verify = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity services com.mirage.capture");
+            if (verify.find("ScreenCaptureService") != std::string::npos) {
+                MLOG_INFO("gui", "ScreenCaptureService started successfully on %s",
+                          dev.display_name.c_str());
+            } else {
+                MLOG_WARN("gui", "ScreenCaptureService failed to start on %s (manual tap may be needed)",
+                          dev.display_name.c_str());
+            }
+        }
+    }
+
+    auto devices = g_adb_manager->getUniqueDevices();
         if (gui) gui->logInfo(u8"Mirroring started: " + std::to_string(success) + "/" +
                               std::to_string(devices.size()) + u8" devices");
     });
@@ -379,10 +544,21 @@ void initializeGUI(HWND hwnd) {
     auto sub_connect = mirage::bus().subscribe<mirage::DeviceConnectedEvent>(
         [](const mirage::DeviceConnectedEvent& e) {
             auto gui = g_gui;
-            if (gui) {
-                gui->addDevice(e.device_id, e.display_name);
-                gui->logInfo(u8"Device connected: " + e.display_name);
+            if (!gui) return;
+
+            // Skip USB serial device IDs - these duplicate WiFi ADB devices
+            // Hardware IDs: "xxxxxxxx_xxxxxxxxx" format (underscore at pos 8)
+            // USB serials: raw numbers/alphanumeric without underscore pattern
+            const auto& id = e.device_id;
+            bool is_hardware_id = (id.size() > 9 && id[8] == '_');
+            if (!is_hardware_id) {
+                MLOG_DEBUG("gui", "Skipping USB device (not hardware_id): %s",
+                          id.c_str());
+                return;
             }
+
+            gui->addDevice(e.device_id, e.display_name);
+            gui->logInfo(u8"Device connected: " + e.display_name);
         });
     sub_connect.release();
 
@@ -437,21 +613,23 @@ void initializeAI() {
     ai_config.default_threshold = 0.80f;
     ai_config.enable_multi_scale = true;
 
-    std::string ai_error;
     // Pass VulkanContext for GPU compute backend
     mirage::vk::VulkanContext* vk_ctx = gui ? gui->vulkanContext() : nullptr;
-    if (g_ai_engine->initialize(ai_config, ai_error, vk_ctx)) {
+    auto initResult = g_ai_engine->initialize(ai_config, vk_ctx);
+    if (initResult.is_ok()) {
         if (gui) gui->logInfo(u8"AI engine initialized");
-        if (g_ai_engine->loadTemplatesFromDir(ai_config.templates_dir, ai_error)) {
+        auto loadResult = g_ai_engine->loadTemplatesFromDir(ai_config.templates_dir);
+        if (loadResult.is_ok()) {
             auto stats = g_ai_engine->getStats();
             if (gui) gui->logInfo(u8"AI templates loaded: " + std::to_string(stats.templates_loaded));
         }
 
+        // NOTE: AIアクション実行はEventBus経由パイプライン
+        // (decideAction → TapCommandEvent/KeyCommandEvent → gui_command購読)
+        // action_callback_は後方互換・ログ用のみ
         g_ai_engine->setActionCallback([](int slot, const mirage::ai::AIAction& action) {
-            std::string device_id = getDeviceIdFromSlot(slot);
-            if (action.type == mirage::ai::AIAction::Type::TAP) {
-                sendTapCommand(device_id, action.x, action.y);
-            }
+            MLOG_DEBUG("ai", "ActionCallback(後方互換): slot=%d type=%d",
+                       slot, (int)action.type);
         });
 
         // Wire CanSendCallback: allow AI actions when USB or ADB path is available
@@ -460,7 +638,67 @@ void initializeAI() {
             if (g_hybrid_cmd && g_hybrid_cmd->device_count() > 0) return true;
             // ADB fallback path (sendTapCommand handles ADB fallback)
             if (g_adb_manager) {
-                auto devices = g_adb_manager->getUniqueDevices();
+                // === Auto-start MirageCapture ScreenCaptureService on all devices ===
+    {
+        auto all_devs = g_adb_manager->getUniqueDevices();
+        for (const auto& dev : all_devs) {
+            const std::string& adb_id = dev.preferred_adb_id;
+
+            // Check if ScreenCaptureService is already running
+            std::string svc_check = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity services com.mirage.capture");
+
+            if (svc_check.find("ScreenCaptureService") != std::string::npos) {
+                MLOG_INFO("gui", "ScreenCaptureService already running on %s",
+                          dev.display_name.c_str());
+                continue;
+            }
+
+            MLOG_INFO("gui", "Auto-starting MirageCapture on %s (%s)",
+                      dev.display_name.c_str(), adb_id.c_str());
+
+            // Send auto_mirror intent to CaptureActivity
+            // appops PROJECT_MEDIA:allow is pre-granted, so MediaProjection dialog is skipped
+            g_adb_manager->adbCommand(adb_id,
+                "shell am start -n com.mirage.capture/.ui.CaptureActivity "
+                "--ez auto_mirror true --es mirror_mode tcp");
+
+            // Wait for MediaProjection dialog (if it appears) and auto-tap
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+
+            // Check if dialog appeared by dumping UI
+            std::string ui_check = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity top");
+
+            if (ui_check.find("MediaProjectionPermissionActivity") != std::string::npos ||
+                ui_check.find("GrantPermissionsActivity") != std::string::npos) {
+                // Dialog appeared - auto-tap "Start now" button
+                // Position depends on screen resolution
+                std::string wm_size = g_adb_manager->adbCommand(adb_id, "shell wm size");
+                if (wm_size.find("1200x2000") != std::string::npos) {
+                    g_adb_manager->adbCommand(adb_id, "shell input tap 880 1220");
+                } else {
+                    g_adb_manager->adbCommand(adb_id, "shell input tap 590 810");
+                }
+                MLOG_INFO("gui", "Auto-tapped MediaProjection dialog on %s",
+                          dev.display_name.c_str());
+                std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            }
+
+            // Verify service started
+            std::string verify = g_adb_manager->adbCommand(adb_id,
+                "shell dumpsys activity services com.mirage.capture");
+            if (verify.find("ScreenCaptureService") != std::string::npos) {
+                MLOG_INFO("gui", "ScreenCaptureService started successfully on %s",
+                          dev.display_name.c_str());
+            } else {
+                MLOG_WARN("gui", "ScreenCaptureService failed to start on %s (manual tap may be needed)",
+                          dev.display_name.c_str());
+            }
+        }
+    }
+
+    auto devices = g_adb_manager->getUniqueDevices();
                 if (!devices.empty()) return true;
             }
             return false;
