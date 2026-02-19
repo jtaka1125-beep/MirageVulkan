@@ -141,12 +141,26 @@ void GuiApplication::addDevice(const std::string& id, const std::string& name) {
         devices_[id] = std::move(info);
         device_order_.push_back(id);
         
-        // Set as main if first device
-        if (main_device_id_.empty()) {
+        // Set as main: first device, OR higher resolution device (prefer largest screen)
+        bool should_be_main = main_device_id_.empty();
+        if (!should_be_main && info.expected_width > 0 && info.expected_height > 0) {
+            auto main_it = devices_.find(main_device_id_);
+            if (main_it != devices_.end()) {
+                int main_px = main_it->second.expected_width * main_it->second.expected_height;
+                int new_px = info.expected_width * info.expected_height;
+                if (new_px > main_px) {
+                    should_be_main = true;
+                    MLOG_INFO("app", "Promoting %s to main (res %dx%d > %dx%d)",
+                              id.c_str(), info.expected_width, info.expected_height,
+                              main_it->second.expected_width, main_it->second.expected_height);
+                }
+            }
+        }
+        if (should_be_main) {
             main_device_id_ = id;
             {
                 std::lock_guard<std::mutex> rect_lock(view_rect_mutex_);
-                main_view_rect_.valid = false;  // Reset view rect when main device changes
+                main_view_rect_.valid = false;
             }
         }
         
@@ -287,12 +301,21 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
                 const int old_px = old_w * old_h;
                 const int new_px = width * height;
                 if (new_px <= old_px) {
-                    // Log only on state transition (first mismatch for current texture)
-                    if (!device.size_mismatch_logged) {
-                        MLOG_WARN("VkTex", "Size mismatch skip device=%s tex=%dx%d frame=%dx%d (suppressing further)", id.c_str(), old_w, old_h, width, height);
-                        device.size_mismatch_logged = true;
+                    // Allow recreation if aspect ratio changed significantly (encoder reconfiguration)
+                    float old_aspect = (old_h > 0) ? static_cast<float>(old_w) / old_h : 0.0f;
+                    float new_aspect = (height > 0) ? static_cast<float>(width) / height : 0.0f;
+                    bool aspect_changed = std::abs(old_aspect - new_aspect) > 0.01f;
+                    if (aspect_changed) {
+                        MLOG_WARN("VkTex", "Aspect ratio change, recreating: device=%s %dx%d(%.3f) -> %dx%d(%.3f)",
+                                  id.c_str(), old_w, old_h, old_aspect, width, height, new_aspect);
+                    } else {
+                        // True dual-stream mismatch: skip
+                        if (!device.size_mismatch_logged) {
+                            MLOG_WARN("VkTex", "Size mismatch skip device=%s tex=%dx%d frame=%dx%d (suppressing further)", id.c_str(), old_w, old_h, width, height);
+                            device.size_mismatch_logged = true;
+                        }
+                        return;
                     }
-                    return;
                 }
                 MLOG_WARN("VkTex", "Size upgrade recreate device=%s %dx%d -> %dx%d", id.c_str(), old_w, old_h, width, height);
             }

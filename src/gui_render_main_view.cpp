@@ -273,6 +273,7 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
 
 
 
+
         // Draw overlays
         if (config_.show_match_boxes || config_.show_match_labels) {
             renderOverlays(device, view_x, view_y, view_w, view_h);
