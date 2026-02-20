@@ -16,6 +16,7 @@
 #include "vulkan/vulkan_context.hpp"
 #include "vulkan/vulkan_swapchain.hpp"
 #include "vulkan/vulkan_texture.hpp"
+#include "device_transform.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -81,6 +82,9 @@ struct DeviceInfo {
     int video_width = 0;
     int video_height = 0;
     
+    // Coordinate transform between decoded video and native device coordinates
+    DeviceTransform transform;
+    
     // Matching results overlay
     struct MatchOverlay {
         std::string template_id;
@@ -122,6 +126,7 @@ struct DeviceInfo {
         expected_height = o.expected_height;
         video_width = o.video_width;
         video_height = o.video_height;
+        transform = o.transform;
         overlays = o.overlays;
         last_frame_time = o.last_frame_time;
         status_changed_at = o.status_changed_at;

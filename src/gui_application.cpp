@@ -132,7 +132,10 @@ void GuiApplication::addDevice(const std::string& id, const std::string& name) {
         int exp_w = 0, exp_h = 0;
         if (mirage::config::ExpectedSizeRegistry::instance().getExpectedSize(id, exp_w, exp_h)) {
             info.expected_width = exp_w;
+            info.transform.native_w = exp_w;
             info.expected_height = exp_h;
+            info.transform.native_h = exp_h;
+            info.transform.recalculate();
             MLOG_INFO("app", "Device %s expected resolution: %dx%d", id.c_str(), exp_w, exp_h);
         } else {
             MLOG_WARN("app", "Device %s not in registry, accepting any resolution", id.c_str());

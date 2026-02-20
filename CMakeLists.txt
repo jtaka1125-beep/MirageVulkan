@@ -139,6 +139,7 @@ set(GUI_SOURCES
     src/gui_render_main_view.cpp
     src/gui_render_dialogs.cpp
     src/gui_input.cpp
+    src/device_transform.cpp
 )
 
 # Communication
