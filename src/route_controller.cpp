@@ -134,7 +134,7 @@ RouteController::RouteDecision RouteController::evaluate(
         }
 
         decision.video = VideoRoute::WIFI;
-        decision.control = ControlRoute::WIFI_ADB;
+        decision.control = ControlRoute::USB;  // Keep control on USB for low-latency input
         decision.state = state_;
 
         // 変更があれば適用
