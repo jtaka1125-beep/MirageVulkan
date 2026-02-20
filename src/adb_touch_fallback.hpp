@@ -27,7 +27,7 @@ namespace mirage {
 class AdbTouchFallback {
 public:
     AdbTouchFallback() = default;
-    ~AdbTouchFallback() = default;
+    ~AdbTouchFallback();
 
     // Set target device serial for adb -s <serial>
     void set_device(const std::string& serial) {
@@ -54,10 +54,19 @@ public:
     int last_latency_ms() const { return last_latency_ms_.load(); }
 
     // Enable/disable (for testing or intentional bypass)
+    // Use persistent `adb shell` session to avoid process spawn latency.
+    void set_persistent_shell(bool en) { persistent_shell_.store(en); }
+    bool is_persistent_shell() const { return persistent_shell_.load(); }
+
     void set_enabled(bool en) { enabled_.store(en); }
     bool is_enabled() const { return enabled_.load(); }
 
 private:
+    // Persistent shell (Windows only). If unavailable, falls back to spawning adb per command.
+    bool start_shell_if_needed();
+    void stop_shell();
+    bool write_shell_line(const std::string& line);
+
     // Execute an adb command asynchronously (fire-and-forget, non-blocking)
     bool exec_adb_async(const std::string& args);
 
@@ -71,6 +80,15 @@ private:
     std::string device_serial_;
     std::atomic<bool> enabled_{true};
     std::atomic<int> last_latency_ms_{0};
+    std::atomic<bool> persistent_shell_{true};
+#ifdef _WIN32
+    // Handles for persistent adb shell session
+    void* shell_process_ = nullptr;
+    void* shell_thread_ = nullptr;
+    void* shell_stdin_w_ = nullptr;
+    bool shell_running_ = false;
+    std::string shell_device_{};
+#endif
 };
 
 } // namespace mirage

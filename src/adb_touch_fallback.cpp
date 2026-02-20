@@ -14,6 +14,10 @@
 
 namespace mirage {
 
+AdbTouchFallback::~AdbTouchFallback() {
+    stop_shell();
+}
+
 namespace {
 // Execute command without showing console window (Windows)
 // Returns exit code (0 = success)
@@ -68,8 +72,151 @@ std::string AdbTouchFallback::adb_prefix() const {
     return "adb -s " + device_serial_;
 }
 
+
+#ifdef _WIN32
+static HANDLE asHandle(void* p) { return reinterpret_cast<HANDLE>(p); }
+static void* asVoid(HANDLE h) { return reinterpret_cast<void*>(h); }
+#endif
+
+bool AdbTouchFallback::start_shell_if_needed() {
+#ifndef _WIN32
+    return false;
+#else
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!persistent_shell_.load()) return false;
+
+    std::string dev = device_serial_;
+
+    if (shell_running_ && shell_process_ && shell_stdin_w_ && dev == shell_device_) {
+        return true;
+    }
+
+    stop_shell();
+
+    std::string cmd = "adb";
+    if (!dev.empty()) cmd += " -s " + dev;
+    cmd += " shell";
+
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    HANDLE child_stdin_r = NULL;
+    HANDLE child_stdin_w = NULL;
+    if (!CreatePipe(&child_stdin_r, &child_stdin_w, &sa, 0)) {
+        return false;
+    }
+    SetHandleInformation(child_stdin_w, HANDLE_FLAG_INHERIT, 0);
+
+    HANDLE nul = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdInput = child_stdin_r;
+    si.hStdOutput = nul;
+    si.hStdError = nul;
+
+    PROCESS_INFORMATION pi = {};
+    std::string cmd_copy = cmd;
+
+    BOOL ok = CreateProcessA(nullptr, cmd_copy.data(), nullptr, nullptr, TRUE,
+                             CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+
+    CloseHandle(child_stdin_r);
+    CloseHandle(nul);
+
+    if (!ok) {
+        CloseHandle(child_stdin_w);
+        return false;
+    }
+
+    shell_process_ = asVoid(pi.hProcess);
+    shell_thread_  = asVoid(pi.hThread);
+    shell_stdin_w_ = asVoid(child_stdin_w);
+    shell_running_ = true;
+    shell_device_  = dev;
+
+    MLOG_INFO("adb_touch", "Persistent adb shell started for %s", dev.empty() ? "<default>" : dev.c_str());
+    return true;
+#endif
+}
+
+void AdbTouchFallback::stop_shell() {
+#ifndef _WIN32
+    return;
+#else
+    if (!shell_running_) return;
+
+    if (shell_stdin_w_) {
+        DWORD written = 0;
+        const char* exit_cmd = "exit\n";
+        WriteFile(asHandle(shell_stdin_w_), exit_cmd, (DWORD)strlen(exit_cmd), &written, nullptr);
+        FlushFileBuffers(asHandle(shell_stdin_w_));
+        CloseHandle(asHandle(shell_stdin_w_));
+        shell_stdin_w_ = nullptr;
+    }
+
+    if (shell_process_) {
+        WaitForSingleObject(asHandle(shell_process_), 200);
+        DWORD code = 0;
+        if (GetExitCodeProcess(asHandle(shell_process_), &code) && code == STILL_ACTIVE) {
+            TerminateProcess(asHandle(shell_process_), 0);
+        }
+        CloseHandle(asHandle(shell_process_));
+        shell_process_ = nullptr;
+    }
+
+    if (shell_thread_) {
+        CloseHandle(asHandle(shell_thread_));
+        shell_thread_ = nullptr;
+    }
+
+    shell_running_ = false;
+    shell_device_.clear();
+#endif
+}
+
+bool AdbTouchFallback::write_shell_line(const std::string& line) {
+#ifndef _WIN32
+    (void)line;
+    return false;
+#else
+    if (!start_shell_if_needed()) return false;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!shell_running_ || !shell_stdin_w_) return false;
+
+    std::string s = line;
+    if (s.empty() || s.back() != '\n') s.push_back('\n');
+
+    DWORD written = 0;
+    BOOL ok = WriteFile(asHandle(shell_stdin_w_), s.data(), (DWORD)s.size(), &written, nullptr);
+    if (!ok) {
+        stop_shell();
+        return false;
+    }
+    FlushFileBuffers(asHandle(shell_stdin_w_));
+    return (written == (DWORD)s.size());
+#endif
+}
+
 bool AdbTouchFallback::exec_adb_sync(const std::string& args) {
     if (!enabled_.load()) return false;
+    // Fast path: persistent adb shell for `shell ...` commands
+    if (persistent_shell_.load() && args.rfind("shell ", 0) == 0) {
+        auto t0 = std::chrono::steady_clock::now();
+        bool ok = write_shell_line(args.substr(6));
+        auto t1 = std::chrono::steady_clock::now();
+        int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        last_latency_ms_.store(ms);
+        if (ok) {
+            MLOG_DEBUG("adb_touch", "Shell OK (%dms): %s", ms, args.c_str());
+            return true;
+        }
+        // Fallback to spawning adb process
+    }
 
     auto t0 = std::chrono::steady_clock::now();
 
