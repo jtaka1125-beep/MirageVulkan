@@ -42,16 +42,36 @@ std::pair<int, int> GuiApplication::screenToDeviceCoords(
     }
     
     // Convert to device coordinates
+    // Convert to normalized coordinates within the rendered view
     float rel_x = (screen_x - view_x) / view_w;
     float rel_y = (screen_y - view_y) / view_h;
-    
-    int dev_x = static_cast<int>(rel_x * device.texture_width);
-    int dev_y = static_cast<int>(rel_y * device.texture_height);
-    
-    // Clamp
-    dev_x = std::max(0, std::min(dev_x, device.texture_width - 1));
-    dev_y = std::max(0, std::min(dev_y, device.texture_height - 1));
-    
+    rel_x = std::clamp(rel_x, 0.0f, 1.0f);
+    rel_y = std::clamp(rel_y, 0.0f, 1.0f);
+
+    // Map to decoded video pixel coordinates
+    const int vw = (device.video_width  > 0) ? device.video_width  : device.texture_width;
+    const int vh = (device.video_height > 0) ? device.video_height : device.texture_height;
+    float vx = rel_x * static_cast<float>(vw);
+    float vy = rel_y * static_cast<float>(vh);
+    vx = std::clamp(vx, 0.0f, static_cast<float>(std::max(0, vw - 1)));
+    vy = std::clamp(vy, 0.0f, static_cast<float>(std::max(0, vh - 1)));
+
+    // Apply DeviceTransform: video -> native (automation coordinate system)
+    float nx = vx, ny = vy;
+    device.transform.video_to_native(vx, vy, nx, ny);
+    int dev_x = static_cast<int>(std::lround(nx));
+    int dev_y = static_cast<int>(std::lround(ny));
+
+    // Clamp to native bounds (expected/native resolution)
+    const int nw = (device.expected_width  > 0) ? device.expected_width  : device.texture_width;
+    const int nh = (device.expected_height > 0) ? device.expected_height : device.texture_height;
+    dev_x = std::max(0, std::min(dev_x, std::max(0, nw - 1)));
+    dev_y = std::max(0, std::min(dev_y, std::max(0, nh - 1)));
+
+    // Optional debug log (kept quiet unless needed)
+    // MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) video=(%.1f,%.1f) native=(%d,%d) xf(rot=%d s=%.6f off=(%.2f,%.2f))",
+    //          device.id.c_str(), rel_x, rel_y, vx, vy, dev_x, dev_y, device.transform.rotation, device.transform.scale_x, device.transform.offset_x, device.transform.offset_y);
+
     return {dev_x, dev_y};
 }
 
