@@ -317,7 +317,9 @@ std::vector<MultiDeviceReceiver::DeviceStats> MultiDeviceReceiver::getStats() co
         ds.display_name = entry.display_name;
         ds.port = entry.port;
         ds.packets = entry.packets;
-        ds.bytes = entry.bytes;
+        // Use live bytes_received() so BandwidthMonitor sees TCP VID0 traffic
+        // even before the first decoded frame (entry.bytes lags by one stats cycle).
+        ds.bytes = entry.receiver ? entry.receiver->bytes_received() : entry.bytes;
         ds.fps = entry.fps;
         ds.bandwidth_mbps = entry.bandwidth_mbps;
 
