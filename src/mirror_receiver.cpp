@@ -803,6 +803,7 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
     }
   }
   else if (nal_type == 28) {
+    // FU-A (fragmentation unit)
     if (payload_len < 2) return;
 
     uint8_t fu_header = payload[1];
@@ -816,37 +817,32 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
       fu_buf_.push_back(nri | real_type);
       fu_buf_.insert(fu_buf_.end(), payload + 2, payload + payload_len);
       fu_start_seq_ = seq;
+      fu_last_seq_ = seq;
+      fu_have_last_seq_ = true;
       have_fu_ = true;
     } else if (have_fu_) {
-      uint16_t expected = static_cast<uint16_t>(prev_seq + 1);
+      // IMPORTANT: FU-A continuity must be tracked with FU-specific sequence, not last_seq_ of all packets.
+      uint16_t expected = static_cast<uint16_t>(fu_last_seq_ + 1);
+
       if (seq != expected) {
         gaps_detected_.fetch_add(1);
-        need_idr_.store(true);
-        request_decoder_flush_.store(true);
-        MLOG_INFO("mirror", "[FU-A] Gap! expected=%u got=%u -> drop until IDR + flush", static_cast<unsigned>(expected), static_cast<unsigned>(seq));
+        // Local recovery: drop only this fragmented NAL. Do NOT enter global drop-until-IDR mode.
+        MLOG_INFO("mirror", "[FU-A] Gap! expected=%u got=%u -> drop this NAL", static_cast<unsigned>(expected), static_cast<unsigned>(seq));
         have_fu_ = false;
         fu_buf_.clear();
-
-        // Drop queued NALs to avoid building latency while waiting for recovery.
-        {
-          std::lock_guard<std::mutex> lk(nal_queue_mtx_);
-          while (!nal_queue_.empty()) nal_queue_.pop();
-        }
+        fu_have_last_seq_ = false;
       } else {
         size_t new_size = fu_buf_.size() + (payload_len - 2);
         if (new_size > MAX_FU_BUFFER_SIZE) {
           gaps_detected_.fetch_add(1);
-          need_idr_.store(true);
-          request_decoder_flush_.store(true);
-          MLOG_INFO("mirror", "[FU-A] Buffer overflow! size=%zu -> drop until IDR + flush", new_size);
+          MLOG_INFO("mirror", "[FU-A] Buffer overflow! size=%zu -> drop this NAL", new_size);
           have_fu_ = false;
           fu_buf_.clear();
-          {
-            std::lock_guard<std::mutex> lk(nal_queue_mtx_);
-            while (!nal_queue_.empty()) nal_queue_.pop();
-          }
+          fu_have_last_seq_ = false;
         } else {
           fu_buf_.insert(fu_buf_.end(), payload + 2, payload + payload_len);
+          fu_last_seq_ = seq;
+          fu_have_last_seq_ = true;
         }
       }
     }
@@ -858,6 +854,7 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
       }
       have_fu_ = false;
       fu_buf_.clear();
+      fu_have_last_seq_ = false;
     }
   }
 }

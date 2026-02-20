@@ -125,6 +125,8 @@ private:
   // RTP depacketizer state
   bool have_fu_ = false;
   uint16_t fu_start_seq_ = 0;
+  uint16_t fu_last_seq_ = 0;
+  bool fu_have_last_seq_ = false;
   std::atomic<uint16_t> last_seq_{0};
   std::vector<uint8_t> fu_buf_;
 
