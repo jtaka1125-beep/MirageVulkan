@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem v2 GUI - Command Functions
 // =============================================================================
 // Tap, Swipe, and other device commands
@@ -125,7 +125,41 @@ static std::string resolveToUsbId(const std::string& device_id) {
 
     MLOG_INFO("cmd", "Could not resolve %s to USB ID", device_id.c_str());
     return device_id;  // Return as-is, let caller handle
+
 }
+
+
+// Prefer USB ADB serial for low-latency input when falling back to adb shell input
+static std::string resolvePreferredAdbIdForInput(const ::gui::AdbDeviceManager::UniqueDevice& dev) {
+    if (!g_adb_manager) return dev.preferred_adb_id;
+
+    // 1) Prefer any ONLINE USB serial
+    for (const auto& usb : dev.usb_connections) {
+        ::gui::AdbDeviceManager::DeviceInfo info;
+        if (g_adb_manager->getDeviceInfo(usb, info) && info.is_online) {
+            return usb;
+        }
+    }
+
+    // 2) Fall back to preferred (may be WiFi)
+    if (!dev.preferred_adb_id.empty()) {
+        ::gui::AdbDeviceManager::DeviceInfo info;
+        if (g_adb_manager->getDeviceInfo(dev.preferred_adb_id, info) && info.is_online) {
+            return dev.preferred_adb_id;
+        }
+    }
+
+    // 3) Any ONLINE WiFi entry
+    for (const auto& w : dev.wifi_connections) {
+        ::gui::AdbDeviceManager::DeviceInfo info;
+        if (g_adb_manager->getDeviceInfo(w, info) && info.is_online) {
+            return w;
+        }
+    }
+    return dev.preferred_adb_id;
+}
+
+
 
 // =============================================================================
 // Tap Commands
@@ -169,8 +203,9 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
         for (const auto& dev : devices) {
             if (dev.hardware_id == device_id) {
                 std::string cmd = "shell input tap " + std::to_string(x) + " " + std::to_string(y);
-                g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
-                MLOG_INFO("cmd", "ADB tap sent to %s via %s", device_id.c_str(), dev.preferred_adb_id.c_str());
+                std::string adb_id = resolvePreferredAdbIdForInput(dev);
+                g_adb_manager->adbCommand(adb_id, cmd);
+                MLOG_INFO("cmd", "ADB tap sent to %s via %s", device_id.c_str(), adb_id.c_str());
                 if (gui) {
                     gui->logInfo(u8"ADB タップ " + dev.display_name +
                                  " (" + std::to_string(x) + ", " + std::to_string(y) + ")");
@@ -243,7 +278,8 @@ void sendSwipeCommand(const std::string& device_id, int x1, int y1, int x2, int 
                     std::to_string(x1) + " " + std::to_string(y1) + " " +
                     std::to_string(x2) + " " + std::to_string(y2) + " " +
                     std::to_string(duration_ms);
-                g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
+                std::string adb_id = resolvePreferredAdbIdForInput(dev);
+                g_adb_manager->adbCommand(adb_id, cmd);
                 MLOG_INFO("cmd", "ADB swipe sent to %s", device_id.c_str());
                 if (gui) {
                     gui->logInfo(u8"ADB スワイプ " + dev.display_name +
@@ -294,7 +330,8 @@ void sendKeyCommand(const std::string& device_id, int keycode) {
         for (const auto& dev : devices) {
             if (dev.hardware_id == device_id) {
                 std::string cmd = "shell input keyevent " + std::to_string(keycode);
-                g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
+                std::string adb_id = resolvePreferredAdbIdForInput(dev);
+                g_adb_manager->adbCommand(adb_id, cmd);
                 MLOG_INFO("cmd", "ADB key %d sent to %s", keycode, device_id.c_str());
                 return;
             }
