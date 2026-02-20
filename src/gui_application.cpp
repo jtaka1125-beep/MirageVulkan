@@ -290,6 +290,41 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
         }
     }
 
+
+
+    // Update coordinate transform (video->native) for AI/macro/touch mapping.
+    device.transform.native_w = device.expected_width;
+    device.transform.native_h = device.expected_height;
+    device.transform.video_w = width;
+    device.transform.video_h = height;
+    // Best-effort rotation inference (VID0 rotation will override in the future)
+    if (device.expected_width > 0 && device.expected_height > 0) {
+        const bool swapped = (width == device.expected_height && height == device.expected_width);
+        device.transform.rotation = swapped ? 90 : 0;
+    } else {
+        device.transform.rotation = 0;
+    }
+    device.transform.recalculate();
+
+    // Log transform when it changes (once per device per change)
+    {
+        struct XfKey { int nw, nh, vw, vh, rot, crop; };
+        static std::map<std::string, XfKey> last;
+        XfKey cur{device.transform.native_w, device.transform.native_h, device.transform.video_w, device.transform.video_h,
+                 device.transform.rotation, device.transform.crop ? 1 : 0};
+        auto it = last.find(id);
+        bool changed = (it == last.end()) ||
+                       it->second.nw != cur.nw || it->second.nh != cur.nh ||
+                       it->second.vw != cur.vw || it->second.vh != cur.vh ||
+                       it->second.rot != cur.rot || it->second.crop != cur.crop;
+        if (changed) {
+            last[id] = cur;
+            MLOG_INFO("xform", "Transform: device=%s native=%dx%d video=%dx%d rot=%d scale=%.6f off=(%.2f,%.2f) crop=%d",
+                      id.c_str(), cur.nw, cur.nh, cur.vw, cur.vh, cur.rot,
+                      device.transform.scale_x, device.transform.offset_x, device.transform.offset_y, cur.crop);
+        }
+    }
+
     // Create or resize Vulkan texture if needed
     if (!device.vk_texture ||
         device.texture_width != width ||
