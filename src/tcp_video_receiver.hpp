@@ -41,6 +41,7 @@ private:
         std::unique_ptr<MirrorReceiver> decoder;
         std::thread thread;
         uint64_t pkt_count = 0;  // per-device packet counter
+        bool forward_established = false;  // ADB forward済みフラグ（再接続時の重複回避）
     };
 
     void receiverThread(const std::string& hardware_id, const std::string& serial, int local_port);

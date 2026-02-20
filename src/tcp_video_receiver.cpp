@@ -29,6 +29,8 @@
 #include <chrono>
 #include <memory>
 #include <algorithm>
+#include <functional>
+#include <cstdlib>
 
 #include "vid0_parser.hpp"  // Common VID0 parser
 
@@ -229,31 +231,42 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
     int reconnect_delay_ms = RECONNECT_INIT_MS;
     int no_data_count = 0;
     bool scrcpy_launched = false;
+    bool             forward_established = false;  // forwardが外れた可能性があるので次回再設定
+    auto jittered_delay = [](int delay_ms) -> int {
+        int jitter = delay_ms * (rand() % 40 - 20) / 100;
+        return delay_ms + jitter;
+    };
 
     while (running_.load()) {
         // scrcpy起動後はforwardをscrcpy側が管理するので再設定しない
-        if (!scrcpy_launched) {
+                // forward_established: 成功済みなら毎回 adb forward コマンドを叩かない
+        if (!scrcpy_launched && !forward_established) {
             if (!setupAdbForward(serial, local_port)) {
                 MLOG_WARN("tcpvideo", "ADB forward failed for %s, retry in %dms", hardware_id.c_str(), reconnect_delay_ms);
-                std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
+                std::this_thread::sleep_for(std::chrono::milliseconds(jittered_delay(reconnect_delay_ms)));
                 reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
                 continue;
             }
+            forward_established = true;
         }
 
         SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock == INVALID_SOCKET) {
             MLOG_ERROR("tcpvideo", "socket() failed for %s", hardware_id.c_str());
-            std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
+            std::this_thread::sleep_for(std::chrono::milliseconds(jittered_delay(reconnect_delay_ms)));
             reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
             continue;
         }
 
+        // SO_LINGER(linger=0): RST即断でTIME_WAIT回避
+        struct linger lin = {1, 0};
+        setsockopt(sock, SOL_SOCKET, SO_LINGER, (const char*)&lin, sizeof(lin));
+
 #ifdef _WIN32
-        DWORD tv = 2000;
+        DWORD tv = 5000;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 #else
-        struct timeval tv; tv.tv_sec = 2; tv.tv_usec = 0;
+        struct timeval tv; tv.tv_sec = 5; tv.tv_usec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
@@ -263,9 +276,16 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
         inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
         if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+#ifdef _WIN32
+            int err = WSAGetLastError();
+#else
+            int err = errno;
+#endif
             MLOG_WARN("tcpvideo", "connect() failed for %s (port %d), retry in %dms",
                       hardware_id.c_str(), local_port, reconnect_delay_ms);
+            MLOG_WARN("tcpvideo", "connect() errno=%d for %s", err, hardware_id.c_str());
             closesocket(sock);
+                        forward_established = false;  // forwardが外れた可能性があるので次回再設定
 
             // ScreenCaptureServiceが停止していれば自動起動
             if (!isCaptureServiceRunning(serial)) {
@@ -274,7 +294,7 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                 std::this_thread::sleep_for(std::chrono::milliseconds(3000));
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
+            std::this_thread::sleep_for(std::chrono::milliseconds(jittered_delay(reconnect_delay_ms)));
             reconnect_delay_ms = std::min(reconnect_delay_ms * 2, RECONNECT_MAX_MS);
             continue;
         }
@@ -319,6 +339,7 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                     }
                 }
             } else if (received == 0) {
+                MLOG_WARN("tcpvideo", "recv() returned 0 (peer closed) for %s", hardware_id.c_str());
                 break;
             } else {
 #ifdef _WIN32
@@ -327,7 +348,7 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
 #else
                 if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
 #endif
-                MLOG_WARN("tcpvideo", "recv() error for %s", hardware_id.c_str());
+                MLOG_WARN("tcpvideo", "recv() error for %s (errno=%d)", hardware_id.c_str(), err);
                 break;
             }
         }
@@ -360,7 +381,7 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                 no_data_count = 0;  // Reset on successful data
                 MLOG_INFO("tcpvideo", "Reconnecting %s in %dms...", hardware_id.c_str(), reconnect_delay_ms);
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_delay_ms));
+            std::this_thread::sleep_for(std::chrono::milliseconds(jittered_delay(reconnect_delay_ms)));
         }
     }
 
