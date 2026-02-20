@@ -183,6 +183,15 @@ private:
   bool sps_logged_ = false;
   bool pps_logged_ = false;
 
+  // SPS/PPS validation gate — ブロック無効SPSでのデコード防止
+  bool has_valid_sps_ = false;
+  int sps_width_ = 0;
+  int sps_height_ = 0;
+  size_t nal_log_count_ = 0;  // NALデバッグログ制御
+
+  // SPS次元パーサ（有効な解像度ならtrue）
+  static bool parse_sps_dimensions(const uint8_t* sps_data, size_t sps_len, int& width, int& height);
+
   // Raw H.264 Annex B accumulation buffer (for scrcpy raw_stream=true)
   std::vector<uint8_t> raw_h264_buf_;
 

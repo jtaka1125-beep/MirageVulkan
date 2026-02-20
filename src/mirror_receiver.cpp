@@ -32,6 +32,180 @@
 
 namespace gui {
 
+// ==============================================================================
+// BitReader — H.264 NALユニットのビットストリーム読み取りヘルパー
+// ==============================================================================
+class BitReader {
+public:
+  BitReader(const uint8_t* data, size_t len)
+    : data_(data), len_(len), byte_pos_(0), bit_pos_(0) {}
+
+  // nビット読み取り（最大32ビット）
+  uint32_t read_bits(int n) {
+    uint32_t val = 0;
+    for (int i = 0; i < n; i++) {
+      if (byte_pos_ >= len_) return val;  // ストリーム終端
+      val = (val << 1) | ((data_[byte_pos_] >> (7 - bit_pos_)) & 1);
+      if (++bit_pos_ == 8) {
+        bit_pos_ = 0;
+        byte_pos_++;
+      }
+    }
+    return val;
+  }
+
+  // Exp-Golomb符号読み取り（unsigned）
+  uint32_t read_exp_golomb() {
+    int leading_zeros = 0;
+    while (byte_pos_ < len_ && read_bits(1) == 0) {
+      leading_zeros++;
+      if (leading_zeros > 31) return 0;  // 異常値防止
+    }
+    if (leading_zeros == 0) return 0;
+    uint32_t val = read_bits(leading_zeros);
+    return (1u << leading_zeros) - 1 + val;
+  }
+
+  bool has_data() const { return byte_pos_ < len_; }
+
+private:
+  const uint8_t* data_;
+  size_t len_;
+  size_t byte_pos_;
+  int bit_pos_;
+};
+
+// ==============================================================================
+// SPS次元パーサ — 解像度を抽出してバリデーション
+// ==============================================================================
+bool MirrorReceiver::parse_sps_dimensions(const uint8_t* sps_data, size_t sps_len,
+                                           int& width, int& height) {
+  // SPS NAL payload requires at least a few bytes
+  if (sps_len < 4) return false;
+
+  // Convert EBSP -> RBSP by removing emulation_prevention_three_byte (0x03)
+  // This is required for correct bit parsing.
+  std::vector<uint8_t> rbsp;
+  rbsp.reserve(sps_len);
+  int zero_count = 0;
+  for (size_t i = 1; i < sps_len; ++i) {
+    const uint8_t b = sps_data[i];
+    if (zero_count == 2 && b == 0x03) {
+      zero_count = 0;
+      continue;
+    }
+    rbsp.push_back(b);
+    if (b == 0x00) zero_count++;
+    else zero_count = 0;
+  }
+  if (rbsp.size() < 3) return false;
+
+  BitReader br(rbsp.data(), rbsp.size());
+
+  uint32_t profile_idc = br.read_bits(8);
+  br.read_bits(8);  // constraint_set flags + reserved
+  br.read_bits(8);  // level_idc
+
+  br.read_exp_golomb();  // seq_parameter_set_id
+
+  // Defaults for non-high profiles
+  uint32_t chroma_format_idc = 1;  // 4:2:0
+  uint32_t separate_colour_plane_flag = 0;
+
+  // High profile extras
+  if (profile_idc == 100 || profile_idc == 110 || profile_idc == 122 ||
+      profile_idc == 244 || profile_idc == 44  || profile_idc == 83  ||
+      profile_idc == 86  || profile_idc == 118 || profile_idc == 128 ||
+      profile_idc == 138 || profile_idc == 139 || profile_idc == 134) {
+    chroma_format_idc = br.read_exp_golomb();
+    if (chroma_format_idc == 3) {
+      separate_colour_plane_flag = br.read_bits(1);
+    }
+    br.read_exp_golomb();  // bit_depth_luma_minus8
+    br.read_exp_golomb();  // bit_depth_chroma_minus8
+    br.read_bits(1);       // qpprime_y_zero_transform_bypass_flag
+    uint32_t seq_scaling_matrix_present = br.read_bits(1);
+    if (seq_scaling_matrix_present) {
+      int cnt = (chroma_format_idc != 3) ? 8 : 12;
+      for (int i = 0; i < cnt; i++) {
+        uint32_t present = br.read_bits(1);
+        if (present) {
+          int size = (i < 6) ? 16 : 64;
+          int last_scale = 8, next_scale = 8;
+          for (int j = 0; j < size; j++) {
+            if (next_scale != 0) {
+              int delta = static_cast<int>(br.read_exp_golomb());
+              // Map UE to SE (H.264 signed Exp-Golomb)
+              delta = (delta & 1) ? ((delta + 1) >> 1) : -(delta >> 1);
+              next_scale = (last_scale + delta + 256) % 256;
+            }
+            last_scale = (next_scale == 0) ? last_scale : next_scale;
+          }
+        }
+      }
+    }
+  }
+
+  br.read_exp_golomb();  // log2_max_frame_num_minus4
+
+  uint32_t pic_order_cnt_type = br.read_exp_golomb();
+  if (pic_order_cnt_type == 0) {
+    br.read_exp_golomb();
+  } else if (pic_order_cnt_type == 1) {
+    br.read_bits(1);
+    br.read_exp_golomb();
+    br.read_exp_golomb();
+    uint32_t num_ref = br.read_exp_golomb();
+    for (uint32_t i = 0; i < num_ref && i < 256; i++) {
+      br.read_exp_golomb();
+    }
+  }
+
+  br.read_exp_golomb();  // max_num_ref_frames
+  br.read_bits(1);       // gaps_in_frame_num_value_allowed_flag
+
+  uint32_t pic_width_in_mbs_minus1 = br.read_exp_golomb();
+  uint32_t pic_height_in_map_units_minus1 = br.read_exp_golomb();
+
+  uint32_t frame_mbs_only_flag = br.read_bits(1);
+  if (!frame_mbs_only_flag) {
+    br.read_bits(1);
+  }
+
+  br.read_bits(1);  // direct_8x8_inference_flag
+
+  uint32_t crop_left = 0, crop_right = 0, crop_top = 0, crop_bottom = 0;
+  uint32_t frame_cropping_flag = br.read_bits(1);
+  if (frame_cropping_flag) {
+    crop_left   = br.read_exp_golomb();
+    crop_right  = br.read_exp_golomb();
+    crop_top    = br.read_exp_golomb();
+    crop_bottom = br.read_exp_golomb();
+  }
+
+  // Compute dimensions with correct cropping units
+  const uint32_t chroma_array_type = (chroma_format_idc == 3 && separate_colour_plane_flag) ? 0 : chroma_format_idc;
+  uint32_t crop_unit_x = 1;
+  uint32_t crop_unit_y = (2 - frame_mbs_only_flag);
+  if (chroma_array_type != 0) {
+    uint32_t sub_width_c = 1;
+    uint32_t sub_height_c = 1;
+    if (chroma_format_idc == 1) { sub_width_c = 2; sub_height_c = 2; }
+    else if (chroma_format_idc == 2) { sub_width_c = 2; sub_height_c = 1; }
+    else if (chroma_format_idc == 3) { sub_width_c = 1; sub_height_c = 1; }
+    crop_unit_x = sub_width_c;
+    crop_unit_y = sub_height_c * (2 - frame_mbs_only_flag);
+  }
+
+  const int full_w = static_cast<int>((pic_width_in_mbs_minus1 + 1) * 16);
+  const int full_h = static_cast<int>((pic_height_in_map_units_minus1 + 1) * (2 - frame_mbs_only_flag) * 16);
+
+  width  = full_w - static_cast<int>((crop_left + crop_right) * crop_unit_x);
+  height = full_h - static_cast<int>((crop_top + crop_bottom) * crop_unit_y);
+
+  return (width > 0 && height > 0);
+}
+
 // Global WSA reference counting for multiple MirrorReceiver instances
 #ifdef _WIN32
 static std::atomic<int> g_wsa_ref_count{0};
@@ -94,8 +268,8 @@ bool MirrorReceiver::init_decoder() {
     config.prefer_vulkan_video = true;
     config.allow_ffmpeg_fallback = true;
     config.enable_hw_accel = true;
-    config.max_width = 1920;
-    config.max_height = 1080;
+    config.max_width = 4096;
+    config.max_height = 4096;
 
     if (unified_decoder_->initialize(config)) {
       unified_decoder_->setFrameCallback([this](const mirage::video::DecodedFrame& frame) {
@@ -544,6 +718,15 @@ void MirrorReceiver::process_raw_h264(const uint8_t* data, size_t len) {
     size_t nal_len = next_sc - sc_len;
     if (nal_len > 0) {
       packets_received_.fetch_add(1);
+
+      // NALタイプデバッグログ（最初の5個は全て、以降はSPS/PPS/IDRのみ）
+      uint8_t dbg_nal_type = nal_data[0] & 0x1F;
+      if (nal_log_count_ < 5) {
+        MLOG_INFO("mirror", "NAL[%zu] type=%d len=%zu", nal_log_count_, dbg_nal_type, nal_len);
+      } else if (dbg_nal_type == 7 || dbg_nal_type == 8 || dbg_nal_type == 5) {
+        MLOG_INFO("mirror", "NAL[%zu] type=%d len=%zu", nal_log_count_, dbg_nal_type, nal_len);
+      }
+
       enqueue_nal(nal_data, nal_len);
     }
 
@@ -681,6 +864,50 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
 
 void MirrorReceiver::enqueue_nal(const uint8_t* data, size_t len) {
   if (len < 1) return;
+
+  uint8_t nal_type = data[0] & 0x1F;
+
+  // === SPS/PPS validation gate ===
+  if (nal_type == 7) {
+    // SPS: 次元をパースして妥当性チェック
+    int w = 0, h = 0;
+    if (parse_sps_dimensions(data, len, w, h)) {
+      // アスペクト比チェック（4:1超は異常）
+      bool sane = (w >= 320 && w <= 4096 && h >= 320 && h <= 4096);
+      if (sane && w > 0 && h > 0) {
+        double ratio = (w > h) ? static_cast<double>(w) / h : static_cast<double>(h) / w;
+        sane = (ratio < 4.0);
+      }
+      if (sane) {
+        if (!has_valid_sps_ || sps_width_ != w || sps_height_ != h) {
+          MLOG_INFO("mirror", "Valid SPS: %dx%d (len=%zu)", w, h, len);
+        }
+        has_valid_sps_ = true;
+        sps_width_ = w;
+        sps_height_ = h;
+      } else {
+        MLOG_WARN("mirror", "Invalid SPS dimensions: %dx%d, dropping frames until valid SPS", w, h);
+        has_valid_sps_ = false;
+        return;  // 無効SPSはデコーダに渡さない
+      }
+    } else {
+      MLOG_WARN("mirror", "SPS parse failed (len=%zu), dropping frames until valid SPS", len);
+      has_valid_sps_ = false;
+      return;
+    }
+  } else if (nal_type == 8) {
+    // PPS: 常にパススルー（キャッシュはdecode_nalで実施）
+  } else {
+    // IDR(5) / 非IDR(1) / その他: has_valid_sps_がないとドロップ
+    if (!has_valid_sps_) {
+      if (nal_log_count_ < 5 || (nal_log_count_ % 100 == 0)) {
+        MLOG_INFO("mirror", "Dropping NAL type=%d (no valid SPS yet, count=%zu)", nal_type, nal_log_count_);
+      }
+      nal_log_count_++;
+      return;
+    }
+  }
+
   {
     std::lock_guard<std::mutex> lock(nal_queue_mtx_);
     if (nal_queue_.size() >= MAX_NAL_QUEUE_SIZE) {
