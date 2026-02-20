@@ -76,6 +76,10 @@ struct DeviceInfo {
     // Expected native resolution (from devices.json)
     int expected_width = 0;   // 0 = unknown, accept any
     int expected_height = 0;
+
+    // Current video frame resolution (decoder output, may differ from native)
+    int video_width = 0;
+    int video_height = 0;
     
     // Matching results overlay
     struct MatchOverlay {
@@ -116,6 +120,8 @@ struct DeviceInfo {
         size_mismatch_logged = o.size_mismatch_logged;
         expected_width = o.expected_width;
         expected_height = o.expected_height;
+        video_width = o.video_width;
+        video_height = o.video_height;
         overlays = o.overlays;
         last_frame_time = o.last_frame_time;
         status_changed_at = o.status_changed_at;

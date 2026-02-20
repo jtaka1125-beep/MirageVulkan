@@ -259,10 +259,10 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
             float got_ratio = static_cast<float>(width) / static_cast<float>(height);
             if (std::abs(exp_ratio - got_ratio) < 0.10f) {
                 // Accept and update expected size for this device
-                MLOG_INFO("VkTex", "Aspect ratio match, updating expected: device=%s %dx%d -> %dx%d",
+                MLOG_INFO("VkTex", "Aspect ratio match, accepting non-native video size: device=%s native=%dx%d video=%dx%d",
                           id.c_str(), exp_w, exp_h, width, height);
-                device.expected_width = width;
-                device.expected_height = height;
+                device.video_width = width;
+                device.video_height = height;
             } else {
                 // Frame doesn't match expected resolution - skip silently (log once)
                 static std::map<std::string, bool> logged_mismatch;
