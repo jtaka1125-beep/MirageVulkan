@@ -8,6 +8,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -35,13 +36,21 @@ class TcpVideoSender(
 
     companion object {
         private const val TAG = "TcpVideoSender"
-        private const val QUEUE_CAPACITY = 256
+        private const val QUEUE_CAPACITY = 512
         private const val STATS_INTERVAL = 100L
+        private const val QUEUE_DROP_LOG_INTERVAL = 50L
+        private const val SEQ_WARN_INTERVAL = 200L
     }
 
     private val active = AtomicBoolean(true)
     private val packetsSent = AtomicLong(0)
     private val bytesSent = AtomicLong(0)
+    private val drops = AtomicLong(0)
+    private val seqJumps = AtomicLong(0)
+
+
+    // RTP seq tracking (debug): helps correlate PC-side RTP seq discontinuity with sender-side drops
+    private val lastEnqueuedSeq = AtomicInteger(-1)
 
     // Packet queue: encoder thread → writer thread (non-blocking for encoder)
     private val sendQueue = ArrayBlockingQueue<ByteArray>(QUEUE_CAPACITY)
@@ -83,13 +92,32 @@ class TcpVideoSender(
     override fun send(rtpPacket: ByteArray) {
         if (!active.get() || !clientConnected) return
 
+        // RTP header: bytes[2..3] = seq (big-endian)
+        if (rtpPacket.size >= 4) {
+            val seq = ((rtpPacket[2].toInt() and 0xFF) shl 8) or (rtpPacket[3].toInt() and 0xFF)
+            val prev = lastEnqueuedSeq.getAndSet(seq)
+            if (prev >= 0) {
+                val expected = (prev + 1) and 0xFFFF
+                if (seq != expected) {
+                    val j = seqJumps.incrementAndGet()
+                    if ((j % SEQ_WARN_INTERVAL) == 0L) {
+                        Log.w(TAG, "RTP seq jump at sender: prev=$prev now=$seq expected=$expected (seqJumps=$j drops=${drops.get()})")
+                    }
+                }
+            }
+        }
+
         // Wrap in VID0 framing (same format as UsbVideoSender)
         val vid0Packet = Protocol.buildVideoFrame(rtpPacket)
 
-        // Non-blocking enqueue: drop oldest if full (real-time video)
+        // Non-blocking enqueue: drop THIS (newest) packet if full
+        // Dropping oldest would break in-progress FU-A sequences
         if (!sendQueue.offer(vid0Packet)) {
-            sendQueue.poll()  // Drop oldest
-            sendQueue.offer(vid0Packet)
+            val d = drops.incrementAndGet()
+            if ((d % QUEUE_DROP_LOG_INTERVAL) == 0L) {
+                Log.w(TAG, "QUEUE_DROP x$d (cap=$QUEUE_CAPACITY size=${sendQueue.size})")
+            }
+            return
         }
     }
 

@@ -16,12 +16,14 @@ static constexpr uint32_t VID0_MAGIC = 0x56494430;
 static constexpr size_t VID0_HEADER_SIZE = 8;
 static constexpr size_t RTP_MAX_LEN = 65535;
 static constexpr size_t RTP_MIN_LEN = 12;
-static constexpr size_t BUFFER_MAX = 128 * 1024;
-static constexpr size_t BUFFER_TRIM = 32 * 1024;
+static constexpr size_t BUFFER_MAX = 2 * 1024 * 1024;  // was 128KB
+static constexpr size_t BUFFER_TRIM = 256 * 1024;      // keep tail for resync
 
 struct ParseResult {
     std::vector<std::vector<uint8_t>> rtp_packets;
     int sync_errors = 0;
+    int invalid_len = 0;
+    int magic_resync = 0;
     bool buffer_overflow = false;
 };
 
@@ -40,6 +42,7 @@ inline ParseResult parseVid0Packets(std::vector<uint8_t>& buffer) {
 
         if (magic != VID0_MAGIC) {
             result.sync_errors++;
+            result.magic_resync++;
             bool found = false;
             for (size_t i = pos + 1; i + 3 < buffer.size(); i++) {
                 if (buffer[i] == 0x56 && buffer[i+1] == 0x49 &&
@@ -62,6 +65,7 @@ inline ParseResult parseVid0Packets(std::vector<uint8_t>& buffer) {
                           uint32_t(buffer[pos + 7]);
 
         if (pkt_len > RTP_MAX_LEN || pkt_len < RTP_MIN_LEN) {
+            result.invalid_len++;
             pos++;
             continue;
         }

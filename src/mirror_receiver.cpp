@@ -646,6 +646,51 @@ void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
         // Parse VID0 framing to extract RTP packets
         auto parse_result = mirage::video::parseVid0Packets(vid0_buf);
 
+        // Update last parse stats for discontinuity diagnostics
+        last_vid0_recv_n_.store(n);
+        last_vid0_buf_size_.store(vid0_buf.size());
+        last_vid0_rtp_count_.store((int)parse_result.rtp_packets.size());
+        last_vid0_sync_errors_.store(parse_result.sync_errors);
+        last_vid0_resync_.store(parse_result.magic_resync);
+        last_vid0_invalid_len_.store(parse_result.invalid_len);
+
+        // Periodic VID0/TCP stats (per port)
+        // Time-based VID0/TCP stats (per port)
+        static thread_local auto last_stat_t = std::chrono::steady_clock::now();
+        static thread_local uint64_t last_bytes = 0;
+        static thread_local uint64_t last_pkts = 0;
+        static thread_local uint64_t last_disc = 0;
+        static thread_local uint64_t last_gap = 0;
+        auto now_t = std::chrono::steady_clock::now();
+        auto dt_ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(now_t - last_stat_t).count();
+        if (dt_ms >= 2000) {
+          uint64_t b = bytes_received_.load();
+          uint64_t p = packets_received_.load();
+          uint64_t d = discontinuities_.load();
+          uint64_t g = gaps_detected_.load();
+          double mbps = (dt_ms > 0) ? ((double)(b - last_bytes) * 8.0 / 1e6) / ((double)dt_ms / 1000.0) : 0.0;
+          MLOG_INFO("mirror", "VID0 stats port %d: mbps=%.2f rtp=%zu recv=%d buf=%zu sync=%d resync=%d invalid=%d disc=%llu gap=%llu",
+                    tcp_port, mbps, parse_result.rtp_packets.size(), n, vid0_buf.size(),
+                    parse_result.sync_errors, parse_result.magic_resync, parse_result.invalid_len,
+                    (unsigned long long)(d - last_disc), (unsigned long long)(g - last_gap));
+          last_stat_t = now_t;
+          last_bytes = b;
+          last_pkts = p;
+          last_disc = d;
+          last_gap = g;
+        }
+
+        // VID0 parser health check (helps diagnose FU-A gaps on TCP)
+        if (parse_result.sync_errors > 0 || parse_result.buffer_overflow) {
+          MLOG_WARN("mirror", "VID0 parser anomalies: sync_errors=%d resync=%d invalid_len=%d overflow=%d buf=%zu (port %d)",
+                    parse_result.sync_errors, parse_result.magic_resync, parse_result.invalid_len, (int)parse_result.buffer_overflow, vid0_buf.size(), tcp_port);
+          // If overflow happened, drop buffer to resync quickly (avoid endless FU-A gaps)
+          if (parse_result.buffer_overflow) {
+            vid0_buf.clear();
+          }
+        }
+
+
         for (const auto& rtp_pkt : parse_result.rtp_packets) {
           packets_received_.fetch_add(1);
           process_rtp_packet(rtp_pkt.data(), rtp_pkt.size());
@@ -761,9 +806,22 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
 
   uint16_t seq = rd16(data + 2);
 
+  // RTP seq discontinuity monitor (helps diagnose FU-A gaps on TCP)
+  uint16_t prev_seq_dbg = last_seq_.load(std::memory_order_relaxed);
+  uint16_t prev_plus_one_dbg = static_cast<uint16_t>(prev_seq_dbg + 1);
+  if (prev_seq_dbg != 0 && prev_plus_one_dbg != seq) {
+    discontinuities_.fetch_add(1);
+    // Log occasionally to avoid spam
+    uint64_t n = gaps_detected_.load();
+    if ((n % 100) == 0) {
+      MLOG_WARN("mirror", "RTP seq discontinuity: prev=%u now=%u (port %d) | last_recv=%d vid0_buf=%zu rtp=%d sync=%d resync=%d invalid=%d", (unsigned)prev_seq_dbg, (unsigned)seq, (int)tcp_port_, last_vid0_recv_n_.load(), last_vid0_buf_size_.load(), last_vid0_rtp_count_.load(), last_vid0_sync_errors_.load(), last_vid0_resync_.load(), last_vid0_invalid_len_.load());
+    }
+  }
+
+
   // Track sequence for FU-A continuity (must be done BEFORE processing)
-  uint16_t prev_seq = last_seq_.load(std::memory_order_relaxed);
   last_seq_.store(seq, std::memory_order_relaxed);
+
 
   uint8_t cc = data[0] & 0x0F;
   bool has_extension = (data[0] & 0x10) != 0;
@@ -821,32 +879,36 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
       fu_have_last_seq_ = true;
       have_fu_ = true;
     } else if (have_fu_) {
-      // IMPORTANT: FU-A continuity must be tracked with FU-specific sequence, not last_seq_ of all packets.
+      // Strict FU-A assembly: if sequence is not contiguous, drop ONLY this fragmented NAL and wait for next.
       uint16_t expected = static_cast<uint16_t>(fu_last_seq_ + 1);
-
       if (seq != expected) {
         gaps_detected_.fetch_add(1);
-        // Local recovery: drop only this fragmented NAL. Do NOT enter global drop-until-IDR mode.
-        MLOG_INFO("mirror", "[FU-A] Gap! expected=%u got=%u -> drop this NAL", static_cast<unsigned>(expected), static_cast<unsigned>(seq));
+        MLOG_INFO("mirror", "[FU-A] Gap! expected=%u got=%u -> drop this NAL",
+                  (unsigned)expected, (unsigned)seq);
+        have_fu_ = false;
+        fu_buf_.clear();
+        fu_have_last_seq_ = false;
+        // IDR要求コールバック（FU-Aギャップからの回復用）
+        if (on_idr_needed_) on_idr_needed_();
+        // Do not enter global drop-until-IDR mode; just abandon this NAL.
+        goto fu_done;
+      }
+
+      size_t new_size = fu_buf_.size() + (payload_len - 2);
+      if (new_size > MAX_FU_BUFFER_SIZE) {
+        gaps_detected_.fetch_add(1);
+        MLOG_INFO("mirror", "[FU-A] Buffer overflow! size=%zu -> drop this NAL", new_size);
         have_fu_ = false;
         fu_buf_.clear();
         fu_have_last_seq_ = false;
       } else {
-        size_t new_size = fu_buf_.size() + (payload_len - 2);
-        if (new_size > MAX_FU_BUFFER_SIZE) {
-          gaps_detected_.fetch_add(1);
-          MLOG_INFO("mirror", "[FU-A] Buffer overflow! size=%zu -> drop this NAL", new_size);
-          have_fu_ = false;
-          fu_buf_.clear();
-          fu_have_last_seq_ = false;
-        } else {
-          fu_buf_.insert(fu_buf_.end(), payload + 2, payload + payload_len);
-          fu_last_seq_ = seq;
-          fu_have_last_seq_ = true;
-        }
+        fu_buf_.insert(fu_buf_.end(), payload + 2, payload + payload_len);
+        fu_last_seq_ = seq;
+        fu_have_last_seq_ = true;
       }
     }
 
+    fu_done:
     if (end && have_fu_) {
       if (fu_buf_.size() > 1) {
         enqueue_nal(fu_buf_.data(), fu_buf_.size());

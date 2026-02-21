@@ -119,6 +119,24 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, ui
         }
         entry.last_stats_time = std::chrono::steady_clock::now();
 
+        // FU-Aギャップ検出時にIDR要求（デバウンス: 1秒に1回まで）
+        if (adb_manager_) {
+            auto* mgr = adb_manager_;
+            entry.receiver->setIdrCallback([hardware_id, mgr]() {
+                static thread_local auto last_idr = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_idr).count() < 1000) return;
+                last_idr = now;
+                AdbDeviceManager::UniqueDevice dev;
+                if (mgr->getUniqueDevice(hardware_id, dev) && !dev.preferred_adb_id.empty()) {
+                    MLOG_INFO("multi", "FU-A gap → IDR要求: %s", dev.preferred_adb_id.c_str());
+                    std::thread([adb_id = dev.preferred_adb_id, mgr]() {
+                        mgr->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR");
+                    }).detach();
+                }
+            });
+        }
+
         if (entry.receiver->start_tcp_vid0(tcp_port)) {
             entry.port = tcp_port;
             port_to_device_[tcp_port] = hardware_id;
@@ -148,6 +166,25 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, ui
             vk_graphics_queue_family_, vk_graphics_queue_,
             vk_compute_queue_family_, vk_compute_queue_);
     }
+
+    // FU-Aギャップ検出時にIDR要求（デバウンス: 1秒に1回まで）
+    if (adb_manager_) {
+        auto* mgr = adb_manager_;
+        entry.receiver->setIdrCallback([hardware_id, mgr]() {
+            static thread_local auto last_idr = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_idr).count() < 1000) return;
+            last_idr = now;
+            AdbDeviceManager::UniqueDevice dev;
+            if (mgr->getUniqueDevice(hardware_id, dev) && !dev.preferred_adb_id.empty()) {
+                MLOG_INFO("multi", "FU-A gap → IDR要求: %s", dev.preferred_adb_id.c_str());
+                std::thread([adb_id = dev.preferred_adb_id, mgr]() {
+                    mgr->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR");
+                }).detach();
+            }
+        });
+    }
+
     if (entry.receiver->start_tcp_vid0(tcp_port)) {
         entry.port = tcp_port;
         port_to_device_.erase(old_port);

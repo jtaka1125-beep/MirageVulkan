@@ -103,7 +103,11 @@ public:
   // Feed raw H.264 Annex B data from external source (e.g., scrcpy TCP)
   void process_raw_h264(const uint8_t* data, size_t len);
 
+  // FU-Aギャップ検出時にIDR要求するコールバック
+  void setIdrCallback(std::function<void()> cb) { on_idr_needed_ = std::move(cb); }
+
 private:
+  std::function<void()> on_idr_needed_;
   void receive_thread(uint16_t port);
   void tcp_receive_thread(uint16_t tcp_port);
   void tcp_vid0_receive_thread(uint16_t tcp_port);
@@ -136,6 +140,16 @@ private:
   std::atomic<uint64_t> frames_decoded_{0};
   std::atomic<uint64_t> bytes_received_{0};
   std::atomic<uint64_t> gaps_detected_{0};
+  std::atomic<uint64_t> discontinuities_{0};
+
+  // Debug: last VID0/TCP parse stats (to diagnose RTP seq discontinuity on TCP)
+  std::atomic<int>    last_vid0_recv_n_{0};
+  std::atomic<size_t> last_vid0_buf_size_{0};
+  std::atomic<int>    last_vid0_rtp_count_{0};
+  std::atomic<int>    last_vid0_sync_errors_{0};
+  std::atomic<int>    last_vid0_resync_{0};
+  std::atomic<int>    last_vid0_invalid_len_{0};
+
 
   // Recovery controls
   std::atomic<bool> need_idr_{false};           // drop until next IDR
