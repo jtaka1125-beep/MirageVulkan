@@ -95,6 +95,9 @@ class ScreenCaptureService : Service() {
             registerReceiver(fpsReceiver, fpsFilter)
         }
         Log.i(TAG, "FPS receiver registered")
+        // Probe existing USB: if AccessoryIoService was already running when this service started,
+        // attach to its TCP video forwarding port without waiting for ACTION_USB_CONNECTED broadcast.
+        ipcReceiver?.probeExistingUsb(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -227,13 +230,29 @@ class ScreenCaptureService : Service() {
 
     fun detachUsbStream() {
         if (videoSender !is UsbVideoSender) return
-        Log.i(TAG, "USB disconnected, stopping video")
+        val proj = projection
+        if (proj == null) {
+            Log.w(TAG, "USB detached but projection is null, cannot restore UDP")
+            stopTcpSecondary()
+            encoder?.stop()
+            videoSender?.close()
+            videoSender = null
+            encoder = null
+            mirrorMode = MIRROR_MODE_UDP
+            return
+        }
+        Log.i(TAG, "USB disconnected, restoring UDP \u2192 $lastHost:$lastPort")
         stopTcpSecondary()
         encoder?.stop()
         videoSender?.close()
-        videoSender = null
-        encoder = null
+        // Restart encoder with UDP sender (projection still valid, no re-consent needed)
+        val udpSender = UdpVideoSender(lastHost, lastPort)
+        videoSender = udpSender
         mirrorMode = MIRROR_MODE_UDP
+        encoder = H264Encoder(this, proj, udpSender)
+        encoder?.start()
+        startTcpSecondary()
+        Log.i(TAG, "UDP restored: $lastHost:$lastPort")
     }
 
     fun updateFps(targetFps: Int) {

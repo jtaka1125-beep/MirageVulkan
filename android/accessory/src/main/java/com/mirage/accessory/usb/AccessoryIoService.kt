@@ -169,7 +169,7 @@ class AccessoryIoService : Service() {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
             Log.i(TAG, "Video forward thread started")
 
-            // ServerSocket は一度だけ作成し、再接続ループで使い回す
+            // ✅ FIX-1: ServerSocket は一度だけ作成し、再接続ループで使い回す
             try {
                 videoServerSocket = ServerSocket().also {
                     it.reuseAddress = true
@@ -177,56 +177,53 @@ class AccessoryIoService : Service() {
                 }
                 Log.i(TAG, "TCP ServerSocket listening on localhost:$VIDEO_TCP_PORT")
             } catch (e: IOException) {
-                Log.e(TAG, "Failed to bind VideoForward ServerSocket", e)
+                Log.e(TAG, "Failed to bind ServerSocket on :$VIDEO_TCP_PORT", e)
                 return@Thread
             }
 
-            // 外側ループ: MirageCapture が再起動するたびに accept() を繰り返す
+            // ✅ FIX-1: 外側ループ — MirageCapture 再起動のたびに accept() を繰り返す
             while (running.get()) {
                 try {
-                    Log.i(TAG, "VideoForward: waiting for MirageCapture on :$VIDEO_TCP_PORT...")
+                    Log.i(TAG, "Waiting for MirageCapture on :$VIDEO_TCP_PORT...")
                     val client = videoServerSocket?.accept() ?: break
                     videoClientSocket = client
                     client.tcpNoDelay = true
                     client.receiveBufferSize = 256 * 1024
-                    Log.i(TAG, "VideoForward: MirageCapture connected")
+                    Log.i(TAG, "MirageCapture connected")
 
                     // 内側ループ: 1接続のデータ転送
-                    try {
-                        val clientIn = client.inputStream
-                        val buf = ByteArray(131072)
-                        var totalBytes = 0L
-                        var lastLogTime = System.currentTimeMillis()
+                    val clientIn = client.inputStream
+                    val buf = ByteArray(131072)
+                    var totalBytes = 0L
+                    var lastLogTime = System.currentTimeMillis()
 
-                        while (running.get()) {
-                            val n = clientIn.read(buf)
-                            if (n < 0) {
-                                Log.i(TAG, "VideoForward: MirageCapture disconnected (EOF)")
-                                break
-                            }
-                            if (n == 0) continue
-                            outputStream?.write(buf, 0, n)
-                            totalBytes += n
-                            val now = System.currentTimeMillis()
-                            if (now - lastLogTime >= 5000) {
-                                Log.i(TAG, "VideoForward: ${totalBytes / 1024}KB total")
-                                lastLogTime = now
-                            }
+                    while (running.get()) {
+                        val n = clientIn.read(buf)
+                        if (n < 0) {
+                            Log.i(TAG, "MirageCapture disconnected (EOF), waiting for reconnect...")
+                            break  // 外側ループに戺り次の accept() へ
                         }
-                    } finally {
-                        // 切断クリーンアップ (ServerSocket は維持して次の接続を待つ)
-                        try { client.close() } catch (_: Exception) {}
-                        videoClientSocket = null
-                        if (running.get()) {
-                            Log.i(TAG, "VideoForward: ready for next MirageCapture connection")
+                        if (n == 0) continue
+                        outputStream?.write(buf, 0, n)
+                        totalBytes += n
+                        val now = System.currentTimeMillis()
+                        if (now - lastLogTime >= 5000) {
+                            Log.i(TAG, "Video fwd: ${totalBytes / 1024}KB total, last ${n}B")
+                            lastLogTime = now
                         }
                     }
+
+                    // 切断クリーンアップ (ServerSocket は維持して次の accept() へ)
+                    try { videoClientSocket?.close() } catch (_: Exception) {}
+                    videoClientSocket = null
+
                 } catch (e: IOException) {
                     if (!running.get()) break
-                    Log.w(TAG, "VideoForward: accept error (${e.message}), retry in 1s")
+                    Log.w(TAG, "Video forward accept error: ${e.message}, retry in 1s")
                     try { Thread.sleep(1000) } catch (_: InterruptedException) { break }
                 }
             }
+
             Log.i(TAG, "Video forward thread ended")
         }, "VideoForward").also { it.start() }
     }

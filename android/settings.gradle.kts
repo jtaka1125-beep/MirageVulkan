@@ -15,6 +15,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "MirageAndroid"
-include(":app")         // Legacy unified app (deprecated)
+// :app (Legacy unified monolith) excluded 2026-02-24. Replaced by :capture + :accessory.
+// Sources remain in android/app/ for reference. Do NOT re-include without discussion.
 include(":capture")     // MirageCapture - screen capture + video sending
 include(":accessory")   // MirageAccessory - AOA + command receiving
