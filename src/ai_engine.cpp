@@ -368,6 +368,13 @@ public:
             } else if (!decision.should_act) {
                 // 未確定 or COOLDOWN中 → WAIT
                 if (!vk_results.empty()) {
+                    // 改善K: skip_count (match found but cooldown/unconfirmed)
+                    for (const auto& r : vk_results) {
+                        auto kit = names_snap.find(r.template_id);
+                        std::string n = (kit != names_snap.end()) ? kit->second
+                                        : "tpl_" + std::to_string(r.template_id);
+                        stats_.template_stats[n].skip_count++;
+                    }
                     action.type = AIAction::Type::WAIT;
                     action.reason = "VisionEngine: " +
                         std::string(visionStateToString(decision.state));
