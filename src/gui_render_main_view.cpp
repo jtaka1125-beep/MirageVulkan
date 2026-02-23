@@ -280,18 +280,6 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
         }
 
         // Draw texture
-        if (is_main) {
-            static int main_draw_log = 0;
-            if (main_draw_log++ < 20) {
-                MLOG_INFO("render", "MAIN AddImage: ds=%p valid_tex=%d tw=%d th=%d container=%.0fx%.0f view=%.0fx%.0f@(%.0f,%.0f) has_pending=%d layout_init=%d",
-                    (void*)device.vk_texture_ds,
-                    (device.vk_texture && device.vk_texture->valid()) ? 1 : 0,
-                    device.texture_width, device.texture_height,
-                    w, h, view_w, view_h, view_x, view_y,
-                    device.vk_texture ? (int)device.vk_texture->hasPendingUpload() : -1,
-                    device.vk_texture ? (int)device.vk_texture->isLayoutInitialized() : -1);
-            }
-        }
         draw_list->AddImage(
             reinterpret_cast<ImTextureID>(device.vk_texture_ds),
             ImVec2(view_x, view_y),
