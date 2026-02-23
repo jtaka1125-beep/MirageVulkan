@@ -68,7 +68,7 @@ public:
 
         // Assigned port for screen capture (each device gets unique port)
         int assigned_port = 0;
-        int assigned_tcp_port = 0;  // scrcpy TCP port (from AutoSetup)
+        int assigned_tcp_port = 0;  // MirageCapture TcpVideoSender port (assigned by adb forward)
     };
 
     AdbDeviceManager() = default;
@@ -97,6 +97,10 @@ public:
 
     // Execute ADB command on specific device
     std::string adbCommand(const std::string& adb_id, const std::string& command);
+
+    // DEPRECATED: startScreenCapture/startScreenCaptureOnAll are no longer called.
+    // MirageCapture startup is handled by autoStartCaptureService() in gui_init.cpp.
+    // These functions will be removed in a future cleanup pass.
 
     // Start screen capture on device with auto permission approval
     bool startScreenCapture(const std::string& adb_id, const std::string& host, int port, bool is_main = true);
@@ -158,7 +162,7 @@ private:
     mutable std::mutex mutex_;
     std::map<std::string, DeviceInfo> devices_;           // adb_id -> DeviceInfo
     std::map<std::string, UniqueDevice> unique_devices_;  // hardware_id -> UniqueDevice
-    std::map<std::string, std::shared_ptr<mirage::AutoSetup>> active_setups_;  // adb_id -> persistent AutoSetup
+    std::map<std::string, std::shared_ptr<mirage::AutoSetup>> active_setups_;  // DEPRECATED: unused (scrcpy flow removed)
 };
 
 } // namespace gui

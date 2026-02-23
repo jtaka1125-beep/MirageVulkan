@@ -135,6 +135,19 @@ void adbDetectionThread() {
     g_adb_manager->refresh();
 
     auto devices = g_adb_manager->getUniqueDevices();
+
+        // Force X1 max_size periodically (prevents adaptive downscale to 1072 on TCP-only)
+        for (const auto& dev : devices) {
+            if (dev.display_name.find("Npad X1") != std::string::npos) {
+                const std::string adb_id = !dev.wifi_connections.empty() ? dev.wifi_connections[0] : (!dev.usb_connections.empty() ? dev.usb_connections[0] : std::string());
+                if (!adb_id.empty()) {
+                    g_adb_manager->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000");
+                    g_adb_manager->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture");
+                    MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", adb_id.c_str());
+                }
+            }
+        }
+
     MLOG_INFO("adb", "%zu 台のデバイスを検出:", devices.size());
     for (const auto& dev : devices) {
         MLOG_INFO("threads", "  - %s [%s] USB:%zu WiFi:%zu IP:%s", dev.display_name.c_str(),
@@ -230,7 +243,7 @@ void deviceUpdateThread() {
             //             MLOG_INFO("threads", "TCP video receiver started: %zu device(s)", tcp_ids.size());
             //             gui->logInfo(u8"TCP映像レシーバー起動: " + std::to_string(tcp_ids.size()) + u8"台");
             //         } else {
-            //             MLOG_WARN("threads", "TCP video receiver failed to start (will retry via scrcpy)");
+            //             MLOG_WARN("threads", "TCP video receiver failed to start");
             //             g_tcp_video_receiver.reset();
             //         }
             //     }
@@ -435,6 +448,9 @@ void deviceUpdateThread() {
         }
 
         // Fallback: Update from hybrid receiver if no per-device decoders active
+        // NOTE: g_hybrid_receiver is currently always nullptr (MirageCapture TCP path
+        // handles video via g_usb_decoders + g_multi_receiver). This block is kept
+        // for future compatibility if HybridReceiver is re-enabled.
         if (g_hybrid_receiver && g_hybrid_receiver->running() && g_usb_decoders.empty()) {
             ::gui::MirrorFrame frame;
             if (g_hybrid_receiver->get_latest_frame(frame)) {

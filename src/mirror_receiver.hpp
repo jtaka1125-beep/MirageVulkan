@@ -100,7 +100,7 @@ public:
   // Feed RTP packet from external source (e.g., USB AOA)
   void feed_rtp_packet(const uint8_t* data, size_t len);
 
-  // Feed raw H.264 Annex B data from external source (e.g., scrcpy TCP)
+  // Feed raw H.264 Annex B data from external source (Annex B stream)
   void process_raw_h264(const uint8_t* data, size_t len);
 
   // FU-Aギャップ検出時にIDR要求するコールバック
@@ -118,7 +118,7 @@ private:
 
   std::atomic<bool> running_{false};
   std::atomic<uint16_t> bound_port_{0};
-  uint16_t tcp_port_{0};  // TCP port for scrcpy direct connection
+  uint16_t tcp_port_{0};  // TCP port for direct connection (TcpVideoSender / VID0)
   std::thread thread_;
 
   // Frame buffer
@@ -193,6 +193,9 @@ private:
   void on_decoded_frame(const uint8_t* rgba, int width, int height, uint64_t pts);
 #endif
 
+  // HEVC detection
+  bool stream_is_hevc_ = false;
+
   // SPS/PPS cache for stream recovery
   std::vector<uint8_t> cached_sps_;
   std::vector<uint8_t> cached_pps_;
@@ -208,7 +211,7 @@ private:
   // SPS次元パーサ（有効な解像度ならtrue）
   static bool parse_sps_dimensions(const uint8_t* sps_data, size_t sps_len, int& width, int& height);
 
-  // Raw H.264 Annex B accumulation buffer (for scrcpy raw_stream=true)
+  // Raw H.264 Annex B accumulation buffer (for Annex B stream input)
   std::vector<uint8_t> raw_h264_buf_;
 
   // Reusable annexb buffer for decode_nal

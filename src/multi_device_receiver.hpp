@@ -75,7 +75,7 @@ public:
     std::vector<std::string> getDeviceIds() const;
     int getPortForDevice(const std::string& hardware_id) const;
 
-    // Restart a device receiver in TCP mode (scrcpy direct connection)
+    // Restart a device receiver in TCP mode (raw H.264 Annex B)
     bool restart_as_tcp(const std::string& hardware_id, uint16_t tcp_port);
 
     // Restart a device receiver in VID0 TCP mode (MirageCapture TcpVideoSender)

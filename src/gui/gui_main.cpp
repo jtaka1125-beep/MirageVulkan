@@ -150,10 +150,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     }
 
     // Initialize components
-    // IMPORTANT: AOA switch MUST happen BEFORE scrcpy startup.
-    // AOA switching causes USB re-enumeration which kills ADB transport,
-    // disconnecting any active scrcpy sessions. By doing AOA first,
-    // devices are already in AOA mode when scrcpy starts.
+    // IMPORTANT: AOA switch MUST happen BEFORE MirageCapture startup.
+    // AOA switching causes USB re-enumeration which kills ADB transport.
+    // By initializing AOA first, devices are already in AOA mode when capture starts.
     initializeHybridCommand();
     (void)initializeMultiReceiver();
     // DISABLED: Using TCP direct mode via restart_as_tcp instead
@@ -166,7 +165,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     g_ipc->connect();
 
     // Show window BEFORE Vulkan init (AMD driver requires visible window for surface)
-    ShowWindow(hwnd, nCmdShow);
+    // Always show normal: schtasks passes nCmdShow=SW_HIDE which hides the window
+    ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
 
     // Initialize GUI

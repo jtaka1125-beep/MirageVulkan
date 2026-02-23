@@ -257,6 +257,7 @@ bool MirrorReceiver::init_decoder() {
     unified_decoder_ = std::make_unique<mirage::video::UnifiedDecoder>();
 
     mirage::video::UnifiedDecoderConfig config;
+    config.codec = stream_is_hevc_ ? mirage::video::VideoCodec::HEVC : mirage::video::VideoCodec::H264;
     config.physical_device = vk_physical_device_;
     config.device = vk_device_;
     config.graphics_queue_family = vk_graphics_queue_family_;
@@ -487,7 +488,7 @@ static inline uint16_t rd16(const uint8_t* p) {
 }
 
 // ==============================================================================
-// TCP receive mode - connects directly to scrcpy-server via ADB forward
+// TCP receive mode - connects directly to MirageCapture TcpVideoSender via ADB forward
 // Eliminates UDP packet loss that causes green screen / block artifacts
 // ==============================================================================
 bool MirrorReceiver::start_tcp(uint16_t tcp_port) {
@@ -524,7 +525,7 @@ void MirrorReceiver::tcp_receive_thread(uint16_t tcp_port) {
   addr.sin_port = htons(tcp_port);
   inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-  // Retry connect (scrcpy server may still be starting)
+  // Retry connect (MirageCapture service may still be starting)
   bool connected = false;
   for (int i = 0; i < 30 && running_.load(); i++) {
     if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == 0) {
@@ -541,7 +542,7 @@ void MirrorReceiver::tcp_receive_thread(uint16_t tcp_port) {
     return;
   }
 
-  MLOG_INFO("mirror", "TCP connected to scrcpy on port %d", tcp_port);
+  MLOG_INFO("mirror", "TCP connected on port %d", tcp_port);
 
   // Set recv timeout so we can check running_ flag
   DWORD tv = 100;  // 100ms
@@ -720,7 +721,7 @@ void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
 
 
 // ==============================================================================
-// Raw H.264 Annex B stream processing (for scrcpy raw_stream=true)
+// Raw H.264 Annex B stream processing (Annex B input path)
 // Accumulates UDP chunks and extracts NAL units at start code boundaries
 // ==============================================================================
 void MirrorReceiver::process_raw_h264(const uint8_t* data, size_t len) {
@@ -752,8 +753,10 @@ void MirrorReceiver::process_raw_h264(const uint8_t* data, size_t len) {
       // No second start code - NAL is incomplete, wait for more data
       // Safety: if buffer is huge (>1MB), something is wrong - flush it
       if (raw_h264_buf_.size() > 1024 * 1024) {
-        MLOG_WARN("mirror", "Raw H.264 buffer overflow (%zu bytes), flushing", raw_h264_buf_.size());
+        MLOG_WARN("mirror", "Raw H.264 buffer overflow (%zu bytes), flushing + requesting IDR", raw_h264_buf_.size());
         raw_h264_buf_.clear();
+        need_idr_.store(true);
+        if (on_idr_needed_) on_idr_needed_();
       }
       return;
     }
@@ -794,7 +797,7 @@ size_t MirrorReceiver::find_start_code(const uint8_t* data, size_t len, size_t o
 void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
   if (len < 12) return;
 
-  // Check if this is raw H.264 Annex B (from scrcpy bridge) or RTP
+  // Check if this is raw H.264 Annex B or RTP
   uint8_t version = (data[0] >> 6) & 0x03;
   if (version != 2) {
     // Not RTP - treat as raw H.264 Annex B stream chunk
@@ -970,7 +973,16 @@ void MirrorReceiver::enqueue_nal(const uint8_t* data, size_t len) {
   {
     std::lock_guard<std::mutex> lock(nal_queue_mtx_);
     if (nal_queue_.size() >= MAX_NAL_QUEUE_SIZE) {
-      nal_queue_.pop();
+      // IDRが来たらキュー全クリアして先頭に置く（I-frame優先）
+      if (nal_type == 5) {
+        while (!nal_queue_.empty()) nal_queue_.pop();
+        MLOG_WARN("mirror", "[enqueue_nal] Queue full: IDR arrived, flushed %zu stale NALs",
+                  (size_t)MAX_NAL_QUEUE_SIZE);
+      } else {
+        // 非IDRは捨てる（古いIDRを守る）
+        MLOG_DEBUG("mirror", "[enqueue_nal] Queue full: dropping NAL type=%d", nal_type);
+        return;
+      }
     }
     NalUnit nal;
     nal.data.reserve(len);
@@ -995,6 +1007,12 @@ void MirrorReceiver::decode_thread_func() {
 #ifdef USE_FFMPEG
       if (decoder_) decoder_->flush();
 #endif
+      // SPS状態もリセット: flush後は再度SPS受信まで待つ
+      has_valid_sps_ = false;
+      sps_logged_ = false;
+      pps_logged_ = false;
+      cached_sps_.clear();
+      cached_pps_.clear();
     }
 
     {
@@ -1024,6 +1042,20 @@ void MirrorReceiver::decode_thread_func() {
 
 void MirrorReceiver::decode_nal(const uint8_t* data, size_t len) {
   if (len < 1) return;
+
+  // Auto-detect HEVC by NAL unit type (VPS/SPS/PPS are 32/33/34 in HEVC)
+  // HEVC nal_type = (byte0 >> 1) & 0x3f
+  if (!stream_is_hevc_ && len >= 2) {
+    int hevc_type = (data[0] >> 1) & 0x3f;
+    if (hevc_type == 32 || hevc_type == 33 || hevc_type == 34) {
+      stream_is_hevc_ = true;
+      MLOG_INFO("mirror", "HEVC VPS/SPS detected (nal_type=%d) - switching decoder to HEVC", hevc_type);
+      unified_decoder_.reset();
+      init_decoder();
+      has_valid_sps_ = true; // bypass H.264 SPS gate
+    }
+  }
+
 
   uint8_t nal_type = data[0] & 0x1F;
 

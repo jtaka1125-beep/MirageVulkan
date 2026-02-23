@@ -97,6 +97,27 @@ bool MultiDeviceReceiver::restart_as_tcp(const std::string& hardware_id, uint16_
 }
 
 bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port) {
+    // IDRコールバック：デバウンス付き（スレッド横断で共有するatomicタイマー）
+    auto make_idr_callback = [this](const std::string& hw_id) -> std::function<void()> {
+        auto last_idr_ms = std::make_shared<std::atomic<int64_t>>(0);
+        auto* mgr = adb_manager_;
+        return [hw_id, mgr, last_idr_ms]() {
+            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            int64_t prev = last_idr_ms->load();
+            if (now_ms - prev < 1000) return;  // 1秒デバウンス
+            if (!last_idr_ms->compare_exchange_strong(prev, now_ms)) return;  // CASで競合防止
+            if (!mgr) return;
+            AdbDeviceManager::UniqueDevice dev;
+            if (mgr->getUniqueDevice(hw_id, dev) && !dev.preferred_adb_id.empty()) {
+                MLOG_INFO("multi", "FU-A gap → IDR要求: %s", dev.preferred_adb_id.c_str());
+                std::thread([adb_id = dev.preferred_adb_id, mgr]() {
+                    mgr->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR");
+                }).detach();
+            }
+        };
+    };
+
     std::lock_guard<std::mutex> lock(receivers_mutex_);
     auto it = receivers_.find(hardware_id);
     if (it == receivers_.end()) {
@@ -121,20 +142,7 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, ui
 
         // FU-Aギャップ検出時にIDR要求（デバウンス: 1秒に1回まで）
         if (adb_manager_) {
-            auto* mgr = adb_manager_;
-            entry.receiver->setIdrCallback([hardware_id, mgr]() {
-                static thread_local auto last_idr = std::chrono::steady_clock::now() - std::chrono::seconds(10);
-                auto now = std::chrono::steady_clock::now();
-                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_idr).count() < 1000) return;
-                last_idr = now;
-                AdbDeviceManager::UniqueDevice dev;
-                if (mgr->getUniqueDevice(hardware_id, dev) && !dev.preferred_adb_id.empty()) {
-                    MLOG_INFO("multi", "FU-A gap → IDR要求: %s", dev.preferred_adb_id.c_str());
-                    std::thread([adb_id = dev.preferred_adb_id, mgr]() {
-                        mgr->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR");
-                    }).detach();
-                }
-            });
+            entry.receiver->setIdrCallback(make_idr_callback(hardware_id));
         }
 
         if (entry.receiver->start_tcp_vid0(tcp_port)) {
@@ -169,20 +177,7 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, ui
 
     // FU-Aギャップ検出時にIDR要求（デバウンス: 1秒に1回まで）
     if (adb_manager_) {
-        auto* mgr = adb_manager_;
-        entry.receiver->setIdrCallback([hardware_id, mgr]() {
-            static thread_local auto last_idr = std::chrono::steady_clock::now() - std::chrono::seconds(10);
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_idr).count() < 1000) return;
-            last_idr = now;
-            AdbDeviceManager::UniqueDevice dev;
-            if (mgr->getUniqueDevice(hardware_id, dev) && !dev.preferred_adb_id.empty()) {
-                MLOG_INFO("multi", "FU-A gap → IDR要求: %s", dev.preferred_adb_id.c_str());
-                std::thread([adb_id = dev.preferred_adb_id, mgr]() {
-                    mgr->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR");
-                }).detach();
-            }
-        });
+        entry.receiver->setIdrCallback(make_idr_callback(hardware_id));
     }
 
     if (entry.receiver->start_tcp_vid0(tcp_port)) {
@@ -214,10 +209,17 @@ void MultiDeviceReceiver::setVulkanContext(VkPhysicalDevice physical_device, VkD
 void MultiDeviceReceiver::setFrameCallback(FrameCallback cb) {
     frame_callback_ = std::move(cb);
 
-    // コールバック設定済み＆レシーバー稼働中ならポーリングスレッド開始
-    if (frame_callback_ && running_ && !frame_poll_running_.load()) {
+    // receiverが存在していてコールバック設定済みならポーリングスレッドを起動
+    bool has_receivers;
+    {
+        std::lock_guard<std::mutex> lock(receivers_mutex_);
+        has_receivers = !receivers_.empty();
+    }
+    if (frame_callback_ && has_receivers && !frame_poll_running_.load()) {
+        running_ = true;  // ensure running flag is set
         frame_poll_running_.store(true);
         frame_poll_thread_ = std::thread(&MultiDeviceReceiver::framePollThreadFunc, this);
+        MLOG_INFO("multi", "Frame poll thread started by setFrameCallback");
     }
 }
 

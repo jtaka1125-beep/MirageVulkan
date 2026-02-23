@@ -63,6 +63,21 @@ void GuiApplication::renderCenterPanel() {
     }
 
     if (has_main) {
+        // MAINVIEW diag (periodic): verify main selection + texture descriptor + recency
+        static std::atomic<uint32_t> s_mainview_diag{0};
+        uint32_t dn = s_mainview_diag.fetch_add(1);
+        if ((dn % 300) == 0) {
+            uint64_t now = getCurrentTimeMs();
+            uint64_t last_tex = main_device.last_texture_update_ms.load(std::memory_order_relaxed);
+            MLOG_INFO("ui",
+                      "MAINVIEW diag: main=%s name=%s tex=%dx%d ds=%p lastTexAge=%llums fps=%.1f lat=%.0fms",
+                      main_id.c_str(), main_device.name.c_str(),
+                      main_device.texture_width, main_device.texture_height,
+                      (void*)main_device.vk_texture_ds,
+                      (unsigned long long)(now - last_tex),
+                      main_device.fps, main_device.latency_ms);
+        }
+
         // Header
         ImGui::Text(u8"\u30e1\u30a4\u30f3: %s", main_device.name.c_str());
         if (config_.show_fps) {

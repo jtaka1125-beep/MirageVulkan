@@ -36,6 +36,12 @@ enum class DecoderBackend {
     FFmpegSW,       // Tier 3: FFmpeg CPU decode (last resort)
 };
 
+// Video codec type
+enum class VideoCodec {
+    H264,
+    HEVC,
+};
+
 // =============================================================================
 // Decoded Frame
 // =============================================================================
@@ -73,6 +79,8 @@ struct UnifiedDecoderConfig {
     uint32_t max_width = 1920;
     uint32_t max_height = 1080;
     uint32_t dpb_slot_count = 8;
+
+    VideoCodec codec = VideoCodec::H264;
 
     bool prefer_vulkan_video = true;    // Try Vulkan Video first
     bool allow_ffmpeg_fallback = true;  // Fall back to FFmpeg if Vulkan unavailable

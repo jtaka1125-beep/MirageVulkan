@@ -26,6 +26,23 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace mirage::gui {
 
+// === Rotate RGBA buffer 90deg clockwise (portrait view for landscape frames) ===
+static void RotateRgba90CW(const uint8_t* src, int sw, int sh, std::vector<uint8_t>& dst) {
+    const int dw = sh;
+    const int dh = sw;
+    dst.resize((size_t)dw * (size_t)dh * 4);
+    for (int y = 0; y < sh; y++) {
+        for (int x = 0; x < sw; x++) {
+            int dx = sh - 1 - y;
+            int dy = x;
+            const uint8_t* sp = src + ((size_t)y * sw + x) * 4;
+            uint8_t* dp = dst.data() + ((size_t)dy * dw + dx) * 4;
+            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
+        }
+    }
+}
+
+
 // =============================================================================
 // Constructor / Destructor
 // =============================================================================
@@ -237,6 +254,25 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
 
     DeviceInfo& device = it->second;
 
+    // Allow rotation / re-mapping without touching the original pointer
+    const uint8_t* rgba_ptr = rgba_data;
+
+    bool x1_rotated = false;
+    // Force portrait rotate for X1 when incoming frame is landscape.
+    // Must happen BEFORE expected-resolution checks so frames are not rejected.
+    {
+        const bool isX1 = (id.find("f1925da3_") != std::string::npos);
+        const bool frameLandscape = (width > height);
+        if (isX1 && frameLandscape && rgba_ptr) {
+            static thread_local std::vector<uint8_t> rotate_buf;
+            RotateRgba90CW(rgba_ptr, width, height, rotate_buf);
+            rgba_ptr = rotate_buf.data();
+            std::swap(width, height);
+            x1_rotated = true;
+        }
+    }
+
+
     // Expected resolution check: accept native or nav-bar-cropped frames
     // Nav bar tolerance: allow frames where width matches and height is slightly smaller (up to 200px)
     constexpr int NAV_BAR_TOLERANCE = 200;  // Max nav bar height (typical: 48-144px, safety margin: 200)
@@ -257,7 +293,7 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
 
         if (!match_normal && !match_rotated && !cropped_normal && !cropped_rotated) {
             // Aspect ratio fallback: accept if same aspect ratio within 10%
-            // (scrcpy may output downscaled resolution e.g. 1080x1920 vs 1200x2000)
+            // (MirageCapture may output downscaled resolution e.g. 1080x1920 vs 1200x2000)
             float exp_ratio = static_cast<float>(exp_w) / static_cast<float>(exp_h);
             float got_ratio = static_cast<float>(width) / static_cast<float>(height);
             if (std::abs(exp_ratio - got_ratio) < 0.10f) {
@@ -289,10 +325,7 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
             }
         }
     }
-
-
-
-    // Update coordinate transform (video->native) for AI/macro/touch mapping.
+// Update coordinate transform (video->native) for AI/macro/touch mapping.
     device.transform.native_w = device.expected_width;
     device.transform.native_h = device.expected_height;
     device.transform.video_w = width;
@@ -304,6 +337,7 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
     } else {
         device.transform.rotation = 0;
     }
+    if (x1_rotated) device.transform.rotation = 90;
     device.transform.recalculate();
 
     // Log transform when it changes (once per device per change)
@@ -373,7 +407,7 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
     }
 
     // Update texture data
-    device.vk_texture->update(vk_command_pool_, vk_context_->graphicsQueue(), rgba_data, width, height);
+    device.vk_texture->update(vk_command_pool_, vk_context_->graphicsQueue(), rgba_ptr, width, height);
 
     // Update stats
     device.frame_count++;

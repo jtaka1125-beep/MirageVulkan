@@ -14,6 +14,8 @@ public:
 
     bool create(VulkanContext& ctx, VkDescriptorPool pool, int width, int height);
     void update(VkCommandPool cmd_pool, VkQueue queue, const uint8_t* rgba, int width, int height);
+    // Initialize/clear texture to a known color (prevents showing uninitialized VRAM)
+    void clear(VkCommandPool cmd_pool, VkQueue queue, uint32_t rgba = 0xFF000000u);
     void destroy();
 
     VkDescriptorSet imguiDescriptorSet() const { return imgui_ds_; }
@@ -47,6 +49,7 @@ private:
     // Diagnostics / robustness
     uint64_t last_submit_ms_ = 0;
     uint32_t skipped_updates_ = 0;
+    uint32_t update_count_ = 0;
 };
 
 } // namespace mirage::vk

@@ -5,6 +5,8 @@
 #include "mirage_log.hpp"
 #include <algorithm>
 #include <limits>
+#include <thread>
+#include <chrono>
 
 namespace mirage::vk {
 
@@ -38,10 +40,22 @@ void VulkanSwapchain::destroy() {
 bool VulkanSwapchain::createSwapchain(int w, int h) {
     MLOG_INFO("VkSwap", "createSwapchain(%d, %d) begin", w, h);
     auto dev = ctx_->physicalDevice();
-    VkSurfaceCapabilitiesKHR caps;
-    VkResult capsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface_, &caps);
+    if (w <= 0 || h <= 0) {
+        MLOG_ERROR("VkSwap", "invalid swapchain extent: %d x %d", w, h);
+        return false;
+    }
+
+    VkSurfaceCapabilitiesKHR caps{};
+    VkResult capsResult = VK_ERROR_UNKNOWN;
+    // Some drivers may return VK_ERROR_UNKNOWN if queried too early right after surface creation.
+    // Retry briefly to avoid transient startup freezes / init failures.
+    for (int i = 0; i < 20; i++) {
+        capsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface_, &caps);
+        if (capsResult == VK_SUCCESS) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
     if (capsResult != VK_SUCCESS) {
-        MLOG_ERROR("VkSwap", "getSurfaceCaps failed: %d", (int)capsResult);
+        MLOG_ERROR("VkSwap", "getSurfaceCaps failed after retry: %d", (int)capsResult);
         return false;
     }
     MLOG_INFO("VkSwap", "caps: min=%ux%u max=%ux%u cur=%ux%u minImg=%u maxImg=%u",

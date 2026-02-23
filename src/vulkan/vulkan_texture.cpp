@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem - Vulkan Texture (for ImGui display)
 // =============================================================================
 #include "vulkan_texture.hpp"
@@ -6,6 +6,27 @@
 #include <imgui_impl_vulkan.h>
 #include <cstring>
 #include <chrono>
+
+
+// === Debug: lightweight RGBA hash to detect frozen input ===
+static uint64_t QuickRgbaHash(const uint8_t* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0) return 0;
+    const int sx = 6;
+    const int sy = 6;
+    uint64_t hash = 1469598103934665603ull;
+    for (int y = 0; y < sy; y++) {
+        int py = (h - 1) * y / (sy - 1);
+        for (int x = 0; x < sx; x++) {
+            int px = (w - 1) * x / (sx - 1);
+            const uint8_t* p = rgba + (py * w + px) * 4;
+            for (int k = 0; k < 4; k++) {
+                hash ^= (uint64_t)p[k];
+                hash *= 1099511628211ull;
+            }
+        }
+    }
+    return hash;
+}
 
 namespace mirage::vk {
 
@@ -105,20 +126,127 @@ bool VulkanTexture::create(VulkanContext& ctx, VkDescriptorPool /*pool*/, int w,
     return true;
 }
 
+
+void VulkanTexture::clear(VkCommandPool cmd_pool, VkQueue queue, uint32_t rgba) {
+    if (!ctx_ || !image_) return;
+    VkDevice dev = ctx_->device();
+
+    // Wait previous upload (short) to avoid fighting fences
+    if (upload_fence_) {
+        vkWaitForFences(dev, 1, &upload_fence_, VK_TRUE, 50'000'000ULL); // 50ms max
+        vkResetFences(dev, 1, &upload_fence_);
+    }
+
+    VkCommandBufferAllocateInfo ai{}; ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = cmd_pool; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount = 1;
+    VkCommandBuffer cb{};
+    if (vkAllocateCommandBuffers(dev, &ai, &cb) != VK_SUCCESS) return;
+
+    VkCommandBufferBeginInfo bi{}; bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cb, &bi);
+
+    // Transition to TRANSFER_DST
+    VkImageMemoryBarrier b1{}; b1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    b1.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b1.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b1.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b1.image = image_;
+    b1.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    b1.srcAccessMask = 0;
+    b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &b1);
+
+    // Clear
+    VkClearColorValue cv{};
+    cv.float32[0] = 0.0f;
+    cv.float32[1] = 0.0f;
+    cv.float32[2] = 0.0f;
+    cv.float32[3] = 1.0f;
+    VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdClearColorImage(cb, image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &cv, 1, &range);
+
+    // Transition to SHADER_READ
+    VkImageMemoryBarrier b2{}; b2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b2.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b2.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b2.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b2.image = image_;
+    b2.subresourceRange = range;
+    b2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &b2);
+
+    vkEndCommandBuffer(cb);
+
+    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &cb;
+    vkQueueSubmit(queue, 1, &si, upload_fence_);
+    // Wait briefly for clear to complete so the first frame never shows stale VRAM
+    vkWaitForFences(dev, 1, &upload_fence_, VK_TRUE, 200'000'000ULL);
+
+    vkFreeCommandBuffers(dev, cmd_pool, 1, &cb);
+    layout_initialized_ = true;
+}
+
 void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
                             const uint8_t* rgba, int w, int h)
 {
-    if (!ctx_ || !image_ || w != width_ || h != height_) return;
+    if (!ctx_ || !image_ || w != width_ || h != height_) {
+        static uint32_t early_ret = 0;
+        early_ret++;
+        if (early_ret <= 5 || early_ret % 300 == 0) {
+            MLOG_WARN("VkTex", "update early-return#%u: ctx=%p image=%p w=%d/tex=%d h=%d/tex=%d",
+                      early_ret, (void*)ctx_, (void*)image_, w, width_, h, height_);
+        }
+        return;
+    }
     VkDevice dev = ctx_->device();
 
-    // If previous upload is still in-flight, skip this update (keep UI responsive).
-    // This mimics D3D11's WRITE_DISCARD behavior (drop intermediate frames under load).
+    // If previous upload is still in-flight, wait up to 2ms then skip if still busy.
     if (upload_fence_ != VK_NULL_HANDLE) {
         VkResult st = vkGetFenceStatus(dev, upload_fence_);
         if (st == VK_NOT_READY) {
+            st = vkWaitForFences(dev, 1, &upload_fence_, VK_TRUE, 2'000'000);
+        }
+        if (st == VK_NOT_READY) {
+            skipped_updates_++;
+            if (skipped_updates_ % 60 == 1) {
+                MLOG_WARN("VkTex", "update SKIP fence still NOT_READY after 2ms wait: skip#%u w=%d h=%d",
+                          skipped_updates_, w, h);
+            }
             return;
         }
+        if (skipped_updates_ > 0 && skipped_updates_ % 60 == 0) {
+            MLOG_WARN("VkTex", "upload resumed after %u skips", skipped_updates_);
+        }
         vkResetFences(dev, 1, &upload_fence_);
+    }
+    // Per-instance update counter with periodic log
+    update_count_++;
+    if (update_count_ <= 5 || update_count_ % 300 == 0) {
+        MLOG_INFO("VkTex", "update#%u pool=%p cache_pool=%p w=%d h=%d skip=%u",
+                  update_count_, (void*)cmd_pool, (void*)cached_cmd_pool_, w, h, skipped_updates_);
+
+    // Debug: hash sampled pixels to confirm input actually changes
+    static uint64_t last_hash = 0;
+    static int hash_cnt = 0;
+    hash_cnt++;
+    if (hash_cnt < 20 || (hash_cnt % 300 == 0)) {
+        uint64_t h64 = QuickRgbaHash(rgba, w, h);
+        MLOG_INFO("VkTex", "InputHash update#%d w=%d h=%d hash=%llu same=%d",\
+                  update_count_, w, h, (unsigned long long)h64, (h64 == last_hash));
+        last_hash = h64;
+    }
+
     }
 
     // Copy to staging (persistently mapped)
@@ -181,12 +309,14 @@ void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
     last_submit_ms_ = now_ms();
     skipped_updates_ = 0;
 
-    if (vkQueueSubmit(queue, 1, &si, upload_fence_) != VK_SUCCESS) {
-        MLOG_ERROR("VkTex", "vkQueueSubmit failed");
-        // Fence is in reset state now; mark as signaled-ish by setting it signaled via wait(0) reset not possible.
-        // Next call will see NOT_READY maybe; best effort: wait idle once on failure.
+    VkResult submit_result = vkQueueSubmit(queue, 1, &si, upload_fence_);
+    if (submit_result != VK_SUCCESS) {
+        MLOG_ERROR("VkTex", "vkQueueSubmit FAILED result=%d update#%u", (int)submit_result, update_count_);
         vkQueueWaitIdle(queue);
         return;
+    }
+    if (update_count_ <= 5 || update_count_ % 300 == 0) {
+        MLOG_INFO("VkTex", "vkQueueSubmit OK update#%u", update_count_);
     }
 
     layout_initialized_ = true;

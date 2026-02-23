@@ -19,14 +19,20 @@ struct UnifiedDecoder::FFmpegDecoder {
     std::unique_ptr<::gui::H264Decoder> decoder;
     std::vector<uint8_t> frame_buffer;
 
-    bool init() {
+    bool init(VideoCodec codec) {
         decoder = std::make_unique<::gui::H264Decoder>();
-        return decoder->init();
+        return decoder->init(codec == VideoCodec::HEVC);
     }
 
     void setCallback(std::function<void(const uint8_t*, int, int, int64_t)> cb) {
-        decoder->set_frame_callback([cb](const uint8_t* data, int w, int h, uint64_t pts) {
-            cb(data, w, h, static_cast<int64_t>(pts));
+        // IMPORTANT: H264Decoder's callback pointer is only valid during the callback.
+        // Copy into a persistent buffer before forwarding.
+        decoder->set_frame_callback([this, cb](const uint8_t* data, int w, int h, uint64_t pts) {
+            if (!data || w <= 0 || h <= 0) return;
+            const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4;
+            if (frame_buffer.size() != bytes) frame_buffer.resize(bytes);
+            std::memcpy(frame_buffer.data(), data, bytes);
+            cb(frame_buffer.data(), w, h, static_cast<int64_t>(pts));
         });
     }
 
@@ -60,7 +66,8 @@ bool UnifiedDecoder::initialize(const UnifiedDecoderConfig& config) {
     config_ = config;
 
     // Try Vulkan Video first if configured and available
-    if (config_.prefer_vulkan_video &&
+    // NOTE: HEVC currently uses FFmpeg backend (Vulkan Video path is H.264-only here).
+    if (config_.codec != VideoCodec::HEVC && config_.prefer_vulkan_video &&
         config_.instance != VK_NULL_HANDLE &&
         config_.physical_device != VK_NULL_HANDLE &&
         config_.device != VK_NULL_HANDLE) {
@@ -148,7 +155,7 @@ bool UnifiedDecoder::initializeVulkanVideo() {
 bool UnifiedDecoder::initializeFFmpeg() {
     ffmpeg_decoder_ = std::make_unique<FFmpegDecoder>();
 
-    if (!ffmpeg_decoder_->init()) {
+    if (!ffmpeg_decoder_->init(config_.codec)) {
         MLOG_ERROR("UnifiedDec", "Failed to initialize FFmpeg decoder");
         ffmpeg_decoder_.reset();
         return false;

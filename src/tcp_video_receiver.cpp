@@ -1,4 +1,4 @@
-﻿// =============================================================================
+// =============================================================================
 // MirageSystem - TCP Video Receiver (ADB Forward Mode)
 // =============================================================================
 
@@ -117,8 +117,38 @@ bool TcpVideoReceiver::isCaptureServiceRunning(const std::string& adb_serial) {
 
 // MirageCapture TCPミラーモードをintentで起動
 void TcpVideoReceiver::launchCaptureTcpMirror(const std::string& adb_serial) {
-    std::string cmd = "adb -s " + adb_serial + " shell am start -n com.mirage.capture/.ui.CaptureActivity --ez auto_mirror true --es mirror_mode tcp";
+    // Determine device native size and pass max_size to MirageCapture to avoid implicit downscale.
+    // Many capture stacks default to max_size=1440, which turns 1200x2000 -> 864x1440.
+    int max_side = 0;
+    {
+        std::string cmd = "adb -s " + adb_serial + " shell wm size";
+        std::string out = execCommandHidden(cmd);
+        // Parse "Physical size: WxH" or "Override size: WxH"
+        auto parseWH = [&](const std::string& s) {
+            int w=0,h=0;
+            if (sscanf(s.c_str(), "%*[^0-9]%dx%d", &w, &h) == 2) {
+                max_side = std::max(w, h);
+            }
+        };
+        // Prefer Physical size if present
+        size_t pos = out.find("Physical size");
+        if (pos != std::string::npos) {
+            parseWH(out.substr(pos));
+        } else {
+            parseWH(out);
+        }
+        if (max_side <= 0) max_side = 2000; // safe default for Npad X1
+    }
+
+    // Launch MirageCapture in TCP mirror mode.
+    // We pass --ei max_size to request native-ish resolution (long side).
+    std::string cmd = "adb -s " + adb_serial +
+        " shell am start -n com.mirage.capture/.ui.CaptureActivity"
+        " --ez auto_mirror true"
+        " --es mirror_mode tcp"
+        " --ei max_size " + std::to_string(max_side);
     execCommandHidden(cmd);
+    MLOG_INFO("tcpvideo", "Launched MirageCapture TCP mirror (serial=%s, max_size=%d)", adb_serial.c_str(), max_side);
 }
 
 TcpVideoReceiver::TcpVideoReceiver() = default;
@@ -230,17 +260,15 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
 
     int reconnect_delay_ms = RECONNECT_INIT_MS;
     int no_data_count = 0;
-    bool scrcpy_launched = false;
-    bool             forward_established = false;  // forwardが外れた可能性があるので次回再設定
+    bool forward_established = false;  // forwardが外れた可能性があるので次回再設定
     auto jittered_delay = [](int delay_ms) -> int {
         int jitter = delay_ms * (rand() % 40 - 20) / 100;
         return delay_ms + jitter;
     };
 
     while (running_.load()) {
-        // scrcpy起動後はforwardをscrcpy側が管理するので再設定しない
-                // forward_established: 成功済みなら毎回 adb forward コマンドを叩かない
-        if (!scrcpy_launched && !forward_established) {
+        // forward_established: 成功済みなら毎回 adb forward コマンドを叩かない
+        if (!forward_established) {
             if (!setupAdbForward(serial, local_port)) {
                 MLOG_WARN("tcpvideo", "ADB forward failed for %s, retry in %dms", hardware_id.c_str(), reconnect_delay_ms);
                 std::this_thread::sleep_for(std::chrono::milliseconds(jittered_delay(reconnect_delay_ms)));
@@ -302,8 +330,6 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
         MLOG_INFO("tcpvideo", "Connected to %s via TCP port %d", hardware_id.c_str(), local_port);
 
         bool got_data = false;
-        bool is_raw_h264 = false;  // auto-detected on first data
-        bool format_detected = false;
 
         std::vector<uint8_t> stream_buffer;
         std::vector<uint8_t> recv_buf(TCP_RECV_BUF_SIZE);
@@ -317,27 +343,7 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                     reconnect_delay_ms = RECONNECT_INIT_MS;
                 }
                 stream_buffer.insert(stream_buffer.end(), recv_buf.begin(), recv_buf.begin() + received);
-
-                // Auto-detect stream format on first data chunk
-                if (!format_detected && stream_buffer.size() >= 4) {
-                    if (stream_buffer[0] == 0x56 && stream_buffer[1] == 0x49 &&
-                        stream_buffer[2] == 0x44 && stream_buffer[3] == 0x30) {
-                        is_raw_h264 = false;
-                        MLOG_INFO("tcpvideo", "[%s] Detected VID0 stream format", hardware_id.c_str());
-                    } else {
-                        is_raw_h264 = true;
-                        MLOG_INFO("tcpvideo", "[%s] Detected raw H.264 stream (scrcpy mode)", hardware_id.c_str());
-                    }
-                    format_detected = true;
-                }
-
-                if (format_detected) {
-                    if (is_raw_h264) {
-                        parseRawH264Stream(hardware_id, stream_buffer);
-                    } else {
-                        parseVid0Stream(hardware_id, stream_buffer);
-                    }
-                }
+                parseVid0Stream(hardware_id, stream_buffer);
             } else if (received == 0) {
                 MLOG_WARN("tcpvideo", "recv() returned 0 (peer closed) for %s", hardware_id.c_str());
                 break;
@@ -363,20 +369,12 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                           hardware_id.c_str(), no_data_count, reconnect_delay_ms);
 
                 // ScreenCaptureServiceが停止していれば自動起動を試みる
-                if (no_data_count >= 1 && !scrcpy_launched && !isCaptureServiceRunning(serial)) {
+                if (no_data_count >= 1 && !isCaptureServiceRunning(serial)) {
                     MLOG_INFO("tcpvideo", "ScreenCaptureService not running on %s, sending auto_mirror intent", serial.c_str());
                     launchCaptureTcpMirror(serial);
                     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
                 }
 
-                // After 2 failed attempts, try launching scrcpy-server
-                if (no_data_count == 2 && !scrcpy_launched) {
-                    MLOG_INFO("tcpvideo", "[%s] APK not responding, launching scrcpy-server...", hardware_id.c_str());
-                    if (launchScrcpyServer(serial, local_port)) {
-                        scrcpy_launched = true;
-                        reconnect_delay_ms = RECONNECT_INIT_MS;  // Reset backoff after scrcpy launch
-                    }
-                }
             } else {
                 no_data_count = 0;  // Reset on successful data
                 MLOG_INFO("tcpvideo", "Reconnecting %s in %dms...", hardware_id.c_str(), reconnect_delay_ms);
@@ -419,117 +417,7 @@ void TcpVideoReceiver::parseVid0Stream(const std::string& hardware_id,
 
 
 // =============================================================================
-// scrcpy-server auto-launch (fallback when APK not running)
-// =============================================================================
-
-bool TcpVideoReceiver::launchScrcpyServer(const std::string& serial, int local_port) {
-    // Generate unique SCID for this session
-    uint32_t scid = static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count() & 0x0FFFFFFF) | 0x10000000;
-    char scid_str[16];
-    snprintf(scid_str, sizeof(scid_str), "%08x", scid);
-
-    MLOG_INFO("tcpvideo", "[scrcpy] Launching for %s (scid=%s)", serial.c_str(), scid_str);
-
-    // 既存scrcpyプロセスをkill (app_processは他のプロセスも巻き込むのでscrcpy限定)
-    std::string kill_cmd = "adb -s " + serial + " shell \"pkill -f scrcpy-server.jar 2>/dev/null || true\"";
-    execCommandHidden(kill_cmd);
-    // Wait for LocalServerSocket release after killing scrcpy
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-
-    // Remove old forward
-    std::string rm_fwd = "adb -s " + serial + " forward --remove tcp:" + std::to_string(local_port) + " 2>&1";
-    execCommandHidden(rm_fwd);
-
-    // Push scrcpy-server jar (idempotent)
-    std::string push_cmd = "adb -s " + serial + " push tools\\scrcpy-server-v3.3.4 /data/local/tmp/scrcpy-server.jar 2>&1";
-    std::string push_result = execCommandHidden(push_cmd);
-    MLOG_INFO("tcpvideo", "[scrcpy] push: %s", push_result.c_str());
-
-    // Setup forward to scrcpy abstract socket
-    std::string abstract_name = std::string("localabstract:scrcpy_") + scid_str;
-    std::string fwd_cmd = "adb -s " + serial + " forward tcp:" + std::to_string(local_port) + " " + abstract_name + " 2>&1";
-    std::string fwd_result = execCommandHidden(fwd_cmd);
-    if (fwd_result.find("error") != std::string::npos) {
-        MLOG_ERROR("tcpvideo", "[scrcpy] forward failed: %s", fwd_result.c_str());
-        return false;
-    }
-
-    // Start scrcpy-server in background (fire-and-forget via CreateProcess)
-    // NOTE: No quotes around shell command — Windows CreateProcess passes args directly
-    std::string start_cmd = "adb -s " + serial + " shell "
-        "CLASSPATH=/data/local/tmp/scrcpy-server.jar "
-        "app_process / com.genymobile.scrcpy.Server 3.3.4 "
-        "tunnel_forward=true audio=false control=false "
-        "raw_stream=true max_size=800 video_bit_rate=2000000 "
-        "max_fps=30 cleanup=false scid=" + std::string(scid_str);
-
-    // Launch async: we use CreateProcess with no-wait
-#ifdef _WIN32
-    STARTUPINFOA si = {};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {};
-    std::string cmd_line = start_cmd;
-    if (CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, nullptr, &si, &pi)) {
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        MLOG_INFO("tcpvideo", "[scrcpy] Server process launched for %s", serial.c_str());
-    } else {
-        MLOG_ERROR("tcpvideo", "[scrcpy] CreateProcess failed for %s", serial.c_str());
-        return false;
-    }
-#else
-    std::string bg_cmd = start_cmd + " &";
-    system(bg_cmd.c_str());
-#endif
-
-    // abstract socketが作成されるまでポーリングで待機 (最大10秒)
-    // blind sleepではなく実際のソケット存在確認
-    bool socket_ready = false;
-    for (int i = 0; i < 20; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        std::string check_cmd = "adb -s " + serial +
-            " shell \"cat /proc/net/unix 2>/dev/null | grep scrcpy_" + std::string(scid_str) + "\"";
-        std::string check_result = execCommandHidden(check_cmd);
-        if (!check_result.empty() && check_result.find("scrcpy_") != std::string::npos) {
-            MLOG_INFO("tcpvideo", "[scrcpy] Abstract socket ready after %dms", (i + 1) * 500);
-            socket_ready = true;
-            break;
-        }
-    }
-    if (!socket_ready) {
-        MLOG_WARN("tcpvideo", "[scrcpy] Abstract socket not found after 10s, proceeding anyway");
-    }
-
-    MLOG_INFO("tcpvideo", "[scrcpy] Ready, forward tcp:%d -> %s", local_port, abstract_name.c_str());
-    return true;
-}
 
 // =============================================================================
-// Raw H.264 stream parser (for scrcpy raw_stream=true)
-// =============================================================================
-
-void TcpVideoReceiver::parseRawH264Stream(const std::string& hardware_id,
-                                            std::vector<uint8_t>& buffer) {
-    MirrorReceiver* decoder = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(devices_mutex_);
-        auto it = devices_.find(hardware_id);
-        if (it == devices_.end() || !it->second.decoder) return;
-        decoder = it->second.decoder.get();
-    }
-
-    // raw_stream=true はsend_codec_meta=falseを含むため、
-    // codecヘッダ(12バイト)は送信されない。
-    // ストリーム先頭からいきなり生H.264 Annex Bデータ (SPS/PPS/IDR) が来る。
-
-    // Feed raw H.264 Annex B data directly to decoder's process_raw_h264
-    if (!buffer.empty()) {
-        decoder->process_raw_h264(buffer.data(), buffer.size());
-        buffer.clear();
-    }
-}
 
 } // namespace gui

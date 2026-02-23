@@ -129,7 +129,10 @@ void HybridReceiver::evaluateSourceSwitch() {
         return;
     }
 
-    bool usb_available = usb_receiver_ && usb_receiver_->connected();
+    uint64_t now_ms_eval = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+    uint64_t last_usb_ms_eval = usb_last_packet_time_.load();
+    bool usb_available = (last_usb_ms_eval > 0) && ((now_ms_eval - last_usb_ms_eval) < 500ULL);
     bool wifi_available = wifi_receiver_ && bandwidth_state_.wifi_packet_rate > 0;
 
     // Detect USB congestion
@@ -248,7 +251,10 @@ HybridReceiver::Stats HybridReceiver::getStats() const {
     stats.active_source = active_source_;
 
     // USB stats
-    stats.usb_connected = usb_receiver_ && usb_receiver_->connected();
+    uint64_t now_ms_gs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint64_t last_ms_gs = usb_last_packet_time_.load();
+    stats.usb_connected = (last_ms_gs > 0) && ((now_ms_gs - last_ms_gs) < 500ULL);
     stats.usb_packets = usb_receiver_ ? usb_receiver_->packets_received() : 0;
     stats.usb_bytes = usb_receiver_ ? usb_receiver_->bytes_received() : 0;
     stats.usb_packet_rate = bandwidth_state_.usb_packet_rate;
@@ -297,7 +303,10 @@ uint64_t HybridReceiver::frames_decoded() const {
 }
 
 bool HybridReceiver::usb_connected() const {
-    return usb_receiver_ && usb_receiver_->connected();
+    uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint64_t last_ms = usb_last_packet_time_.load();
+    return (last_ms > 0) && ((now_ms - last_ms) < 500ULL);
 }
 
 void HybridReceiver::feed_usb_data(const uint8_t* data, size_t len) {
@@ -313,16 +322,20 @@ void HybridReceiver::feed_usb_data(const uint8_t* data, size_t len) {
         ).count()
     );
 
-    // Mark USB as active source (atomic to avoid TOCTOU)
-    Source expected = Source::None;
-    if (active_source_.compare_exchange_strong(expected, Source::USB)) {
+    // Only promote to USB source if not in cooldown
+    {
         std::lock_guard<std::mutex> lock(stats_mtx_);
-        bandwidth_state_.last_switch_reason = "USB Data Received";
-    } else {
-        expected = Source::WiFi;
-        if (active_source_.compare_exchange_strong(expected, Source::USB)) {
-            std::lock_guard<std::mutex> lock(stats_mtx_);
-            bandwidth_state_.last_switch_reason = "USB Data Received";
+        auto now_feed = std::chrono::steady_clock::now();
+        auto elapsed_feed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now_feed - bandwidth_state_.last_switch_time).count();
+        bool in_cooldown = (bandwidth_state_.last_switch_time.time_since_epoch().count() > 0) &&
+                           (elapsed_feed < config_.switch_cooldown_ms);
+        if (!in_cooldown) {
+            Source cur = active_source_.load();
+            if (cur == Source::None || cur == Source::WiFi) {
+                active_source_.store(Source::USB);
+                bandwidth_state_.last_switch_reason = "USB Data Received";
+            }
         }
     }
 }

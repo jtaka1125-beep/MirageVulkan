@@ -483,6 +483,10 @@ private:
     int window_width_ = 1920;
     int window_height_ = 1080;
     std::atomic<bool> resizing_{false};  // Prevent render during resize
+    std::atomic<bool> swapchain_recreate_pending_{false};  // defer swapchain recreate to safe point
+    std::atomic<int> pending_swapchain_w_{0};
+    std::atomic<int> pending_swapchain_h_{0};
+
     bool frame_valid_{false};  // Set by vulkanBeginFrame, guards frame ops
 
 

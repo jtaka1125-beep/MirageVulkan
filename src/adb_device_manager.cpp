@@ -684,10 +684,6 @@ bool AdbDeviceManager::deleteFile(const std::string& adb_id, const std::string& 
 bool AdbDeviceManager::startScreenCapture(const std::string& adb_id, const std::string& host, int port, bool is_main) {
     MLOG_INFO("adb", "Starting screen capture on %s -> %s:%d", adb_id.c_str(), host.c_str(), port);
 
-    // Kill any lingering scrcpy-server before starting new one
-    adbCommand(adb_id, "shell pkill -f scrcpy");
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
     // Create persistent AutoSetup (must outlive this function for bridge thread)
     auto setup_ptr = std::make_shared<mirage::AutoSetup>();
     setup_ptr->set_adb_executor([this, adb_id](const std::string& cmd) -> std::string {

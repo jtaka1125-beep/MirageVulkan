@@ -1,8 +1,8 @@
 // =============================================================================
-// MirageSystem v2 - Auto Setup (scrcpy-server edition)
+// MirageSystem v2 - Auto Setup (MirageCapture edition)
 // =============================================================================
-// Uses scrcpy-server for screen mirroring - no MediaProjection dialog needed.
-// Flow: scrcpy-server (app_process) -> Unix socket -> ADB forward -> TCP -> UDP
+// Uses MirageCapture APK (ScreenCaptureService) for screen mirroring via MediaProjection.
+// Flow: MirageCapture (ScreenCaptureService) -> TcpVideoSender -> ADB forward -> TCP (VID0)
 // =============================================================================
 #pragma once
 
@@ -74,11 +74,11 @@ public:
     // port: UDP port that MirrorReceiver is listening on
     // =========================================================================
     SetupStepResult start_screen_capture(const std::string& host, int port, bool is_main = true) {
-        (void)host; // scrcpy streams to TCP, bridge sends to UDP locally
+        (void)host; // host/port kept for API compatibility (MirageCapture uses TCP directly)
         SetupStepResult result;
 
         if (progress_callback_)
-            progress_callback_("Starting scrcpy-server...", 10);
+            progress_callback_("Starting MirageCapture...", 10);
 
         if (!adb_executor_) {
             result.status = SetupStatus::FAILED;
@@ -138,7 +138,7 @@ public:
         bridge_connected_ = true;  // Mark as "connected" so complete_and_verify() succeeds
 
         result.status = SetupStatus::COMPLETED;
-        result.message = "scrcpy started";
+        result.message = "noop (MirageCapture handles capture)";
         return result;
     }
 
@@ -146,9 +146,9 @@ public:
     SetupStepResult approve_screen_share_dialog() {
         SetupStepResult result;
         result.status = SetupStatus::COMPLETED;
-        result.message = "scrcpy: no dialog needed";
+        result.message = "noop (dialog handled externally)";
         if (progress_callback_)
-            progress_callback_("No permission dialog needed (scrcpy)", 75);
+            progress_callback_("Screen share dialog (handled by autoStartCaptureService)", 75);
         return result;
     }
 

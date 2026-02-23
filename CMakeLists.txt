@@ -339,6 +339,9 @@ target_link_libraries(mirage_core PUBLIC Vulkan::Vulkan)
 # Debug version (reuses object library)
 # =============================================================================
 add_executable(mirage_vulkan_debug $<TARGET_OBJECTS:mirage_core>)
+# Avoid file lock by scheduled task: write a different debug exe name
+set_target_properties(mirage_vulkan_debug PROPERTIES OUTPUT_NAME mirage_vulkan_debug_dev)
+
 
 target_include_directories(mirage_vulkan_debug PRIVATE
     src
