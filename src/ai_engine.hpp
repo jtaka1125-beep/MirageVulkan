@@ -39,6 +39,9 @@ struct AIConfig {
     // 改善L: マルチスロット遅延ジッター
     int  jitter_max_ms    = 0;   // 0=無効, >0 で [0, jitter_max_ms] のランダム遅延
     int  jitter_min_ms    = 0;   // 最小遅延（jitter_max_ms > 0 時有効）
+    // 改善M: ホットリロード
+    bool hot_reload           = false;
+    int  hot_reload_interval_ms = 1000;
 };
 
 struct AIAction {
@@ -149,6 +152,7 @@ public:
     void setVDEConfig(const VDEConfig& cfg);
     // 改善L: ジッター設定 (0,0 で無効)
     void setJitterConfig(int min_ms, int max_ms);
+    void setHotReload(bool enable, int interval_ms = 1000);
 
     // 全デバイスの状態一覧 (device_id → VisionState as int)
     std::vector<std::pair<std::string, int>> getAllDeviceVisionStates() const;

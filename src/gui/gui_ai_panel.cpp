@@ -248,6 +248,30 @@ static void renderVisionStates() {
         if (changed) {
             g_ai_engine->setVDEConfig(vde_cfg);
         }
+
+        // 改善L: Jitter
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f,0.8f,0.4f,1.0f),"Jitter Delay (改善L)");
+        {
+            static int s_jmin=0,s_jmax=0; bool jit=false;
+            ImGui::SetNextItemWidth(130); jit|=ImGui::SliderInt("Min(ms)##jit",&s_jmin,0,1000);
+            ImGui::SetNextItemWidth(130); jit|=ImGui::SliderInt("Max(ms)##jit2",&s_jmax,0,2000);
+            s_jmax=std::max(s_jmax,s_jmin);
+            if(jit) g_ai_engine->setJitterConfig(s_jmin,s_jmax);
+            if(s_jmax>0) ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1.0f),"jitter:%d~%dms",s_jmin,s_jmax);
+        }
+        // 改善M: Hot Reload
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f,0.8f,0.4f,1.0f),"Hot Reload (改善M)");
+        {
+            static bool s_hr=false; static int s_hri=1000; bool ch2=false;
+            ch2|=ImGui::Checkbox("manifest.json 監視##hr",&s_hr);
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("変更検知してテンプレート自動再登録");
+            ImGui::SameLine(); ImGui::SetNextItemWidth(100);
+            ch2|=ImGui::SliderInt("間隔(ms)##hri",&s_hri,200,5000);
+            if(ch2) g_ai_engine->setHotReload(s_hr,s_hri);
+            if(s_hr){ImGui::SameLine();ImGui::TextColored(ImVec4(0.2f,1.0f,0.2f,1.0f),"[監視中]");}
+        }
     }
 }
 

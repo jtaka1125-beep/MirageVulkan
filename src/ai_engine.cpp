@@ -28,6 +28,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <random>
+#include <thread>
+#include <atomic>
 #include <unordered_map>
 
 namespace mirage::ai {
@@ -138,6 +140,7 @@ public:
     }
 
     void shutdown() {
+        stopHotReload();
         if (!initialized_) return;
         MLOG_INFO("ai", "AI Engine シャットダウン");
 
@@ -486,6 +489,45 @@ public:
         config_.jitter_min_ms = std::max(0, min_ms);
         config_.jitter_max_ms = std::max(0, max_ms);
         MLOG_INFO("ai", "ジッター設定: %d~%dms", min_ms, max_ms);
+    }
+
+    void startHotReload() {
+        if (hot_reload_running_.load()) return;
+        hot_reload_running_ = true;
+        manifest_last_mtime_ = {};
+        hot_reload_thread_ = std::thread([this] {
+            namespace fs = std::filesystem;
+            while (hot_reload_running_.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(config_.hot_reload_interval_ms));
+                if (!hot_reload_running_.load()) break;
+                try {
+                    fs::path manifest = fs::path(config_.templates_dir) / "manifest.json";
+                    if (!fs::exists(manifest)) continue;
+                    auto mtime = fs::last_write_time(manifest);
+                    if (mtime != manifest_last_mtime_) {
+                        manifest_last_mtime_ = mtime;
+                        MLOG_INFO("ai", "[HotReload] manifest.json変更 -> 再ロード");
+                        auto res = loadTemplatesFromDir(config_.templates_dir);
+                        if (res) MLOG_INFO("ai", "[HotReload] 完了");
+                        else     MLOG_WARN("ai", "[HotReload] 失敗: %s", res.error().message.c_str());
+                    }
+                } catch (const std::exception& e) {
+                    MLOG_WARN("ai", "[HotReload] 例外: %s", e.what());
+                }
+            }
+        });
+        MLOG_INFO("ai", "[HotReload] 監視開始 interval=%dms", config_.hot_reload_interval_ms);
+    }
+
+    void stopHotReload() {
+        hot_reload_running_ = false;
+        if (hot_reload_thread_.joinable()) hot_reload_thread_.join();
+    }
+
+    void setHotReload(bool enable, int interval_ms) {
+        config_.hot_reload_interval_ms = std::max(200, interval_ms);
+        config_.hot_reload = enable;
+        if (enable) startHotReload(); else stopHotReload();
     }
 
     // 改善L: 期限切れの保留アクションをコールバックで発火
@@ -852,6 +894,10 @@ private:
     };
     std::vector<PendingAction> pending_actions_;
     std::mt19937 rng_{std::random_device{}()};
+    std::atomic<bool> hot_reload_running_{false};
+    std::thread hot_reload_thread_;
+    std::filesystem::file_time_type manifest_last_mtime_{};
+    std::string template_dir_;  // hotReloadで使用するテンプレートディレクトリ
 
     AIConfig config_;
     bool initialized_ = false;
@@ -986,6 +1032,10 @@ void AIEngine::setJitterConfig(int min_ms, int max_ms) {
     if (impl_) impl_->setJitterConfig(min_ms, max_ms);
 }
 
+void AIEngine::setHotReload(bool enable, int interval_ms) {
+    if (impl_) impl_->setHotReload(enable, interval_ms);
+}
+
 } // namespace mirage::ai
 
 #else // !USE_AI
@@ -1033,6 +1083,7 @@ void AIEngine::resetAllVision() {}
 AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
 void AIEngine::setVDEConfig(const VDEConfig&) {}
 void AIEngine::setJitterConfig(int, int) {}
+void AIEngine::setHotReload(bool, int) {}
 std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const { return {}; }
 
 } // namespace mirage::ai
