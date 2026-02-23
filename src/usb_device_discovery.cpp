@@ -74,10 +74,18 @@ bool MultiUsbCommandSender::find_and_open_all_devices() {
     }
 
     // Open already-AOA devices with retry logic.
-    // LIBUSB_ERROR_IO on first attempt is normal when WinUSB driver is still
-    // binding after a system wake or fresh enumeration — retry up to 3x.
-    constexpr int AOA_DIRECT_OPEN_RETRIES = 3;
-    constexpr int AOA_DIRECT_OPEN_DELAY_MS = 1000;
+    // LIBUSB_ERROR_IO / ACCESS on first attempt is normal when:
+    //   - WinUSB driver is still binding after a system wake or fresh enumeration
+    //   - Previous process was killed and OS handle hasn't been released yet
+    // Initial 3s wait + up to 8 retries x 2s = max 19s before giving up.
+    constexpr int AOA_DIRECT_OPEN_RETRIES = 8;
+    constexpr int AOA_DIRECT_OPEN_DELAY_MS = 2000;
+
+    if (!aoa_devices_to_open.empty()) {
+        MLOG_INFO("multicmd", "Found %zu AOA device(s), waiting for WinUSB binding...",
+                  aoa_devices_to_open.size());
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    }
 
     for (auto& [aoa_dev, pid] : aoa_devices_to_open) {
         bool opened = false;
@@ -115,12 +123,13 @@ bool MultiUsbCommandSender::find_and_open_all_devices() {
             libusb_free_device_list(devs, 1);
             devs = nullptr;
 
-            // WinUSBバインド完了待ち + リトライ（最大5回、各1秒間隔）
-            constexpr int AOA_OPEN_MAX_RETRIES = 5;
-            constexpr int AOA_OPEN_RETRY_INTERVAL_MS = 1000;
+            // WinUSBバインド完了待ち + リトライ（最大8回、各2秒間隔）
+            // 初期3秒 + 最大8×2秒 = 最大19秒でバインド完了を待つ
+            constexpr int AOA_OPEN_MAX_RETRIES = 8;
+            constexpr int AOA_OPEN_RETRY_INTERVAL_MS = 2000;
 
             MLOG_INFO("multicmd", "Waiting for devices to re-enumerate...");
-            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
             for (int retry = 0; retry < AOA_OPEN_MAX_RETRIES; retry++) {
                 cnt = libusb_get_device_list(ctx_, &devs);
