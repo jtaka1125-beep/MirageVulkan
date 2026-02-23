@@ -1,0 +1,56 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:label="MirageCapture"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MirageCapture">
+
+        <activity
+            android:name=".ui.CaptureActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".ipc.AccessoryCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mirage.capture.ACTION_VIDEO_FPS" />
+                <action android:name="com.mirage.capture.ACTION_VIDEO_ROUTE" />
+                <action android:name="com.mirage.capture.ACTION_VIDEO_IDR" />
+                <action android:name="com.mirage.capture.ACTION_USB_CONNECTED" />
+                <action android:name="com.mirage.capture.ACTION_USB_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".capture.ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <service
+            android:name=".svc.WatchdogService"
+            android:exported="false" />
+
+        <service
+            android:name=".audio.AudioCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone" />
+
+    </application>
+</manifest>

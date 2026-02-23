@@ -27,31 +27,29 @@ CMakeFiles/
 
 # Logs
 *.log
-  
+
 # Phase 1 Migration
 android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
-android/capture/
 scripts/__pycache__/
 *.keystore
-  
-# Phase 2 Migration  
-macro_editor_venv/  
-macro_editor/__pycache__/  
-driver_installer/*.exe  
-  
-# Phase 3  
-macro_editor_venv/  
-*.pyc  
-__pycache__/  
-*.idsig  
-logs/  
-screenshots/  
-analysis/  
-  
-# One-off fix scripts  
-fix_*.py  
-*.patch  
-src/gui/gui_init_fix.py 
+
+# Phase 2 Migration
+macro_editor_venv/
+macro_editor/__pycache__/
+driver_installer/*.exe
+
+# Phase 3
+*.pyc
+__pycache__/
+*.idsig
+logs/
+screenshots/
+analysis/
+
+# One-off fix scripts
+fix_*.py
+*.patch
+src/gui/gui_init_fix.py
