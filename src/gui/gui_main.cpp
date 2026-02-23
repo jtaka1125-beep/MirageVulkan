@@ -155,8 +155,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     // By initializing AOA first, devices are already in AOA mode when capture starts.
     initializeHybridCommand();
     (void)initializeMultiReceiver();
-    // DISABLED: Using TCP direct mode via restart_as_tcp instead
-    // (void)initializeTcpReceiver();
     MLOG_INFO("gui", "Receivers initialized");
     initializeRouting();
 
