@@ -18,6 +18,7 @@
 #include "vid0_parser.hpp"
 
 #include <thread>
+#include <map>
 
 using namespace mirage::gui::state;
 using namespace mirage::gui::command;
@@ -483,6 +484,60 @@ void initializeRouting() {
     MLOG_INFO("gui", "Route evaluation started");
 }
 
+// =============================================================================
+// Device Selection Handler (extracted from initializeGUI callback)
+// =============================================================================
+// Updates RouteController main device, sends 60/30 fps commands to all devices
+// via ADB broadcast (TCP-only mode) or USB AOA (hybrid mode).
+static void onDeviceSelected(const std::string& device_id) {
+    auto gui = g_gui;
+    if (gui) gui->logInfo(u8"Selected: " + device_id);
+
+    // Update RouteController main device
+    if (g_route_controller) {
+        g_route_controller->setMainDevice(device_id);
+    }
+
+    // Update FPS: main=60fps, sub=30fps
+    if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
+        // TCP-only: ADB broadcast (async to avoid blocking GUI thread)
+        auto devices = g_adb_manager->getUniqueDevices();
+        std::string sel_id = device_id;
+        std::thread([devices, sel_id]() {
+            for (const auto& dev : devices) {
+                int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
+                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS --ei fps "
+                                  + std::to_string(target_fps);
+                if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
+                MLOG_INFO("gui", "FPS update (ADB): %s -> %d fps (%s)",
+                          dev.hardware_id.c_str(), target_fps,
+                          (dev.hardware_id == sel_id) ? "MAIN" : "sub");
+            }
+        }).detach();
+    } else if (g_hybrid_cmd) {
+        // USB AOA: build USB serial -> hardware_id map, then send via HybridCommandSender
+        std::map<std::string, std::string> usb_to_hw;
+        if (g_adb_manager) {
+            for (const auto& dev : g_adb_manager->getUniqueDevices()) {
+                for (const auto& serial : dev.usb_connections) {
+                    usb_to_hw[serial] = dev.hardware_id;
+                }
+            }
+        }
+        auto all_ids = g_hybrid_cmd->get_device_ids();
+        for (const auto& uid : all_ids) {
+            std::string hw_id = uid;
+            auto it = usb_to_hw.find(uid);
+            if (it != usb_to_hw.end()) hw_id = it->second;
+            int target_fps = (hw_id == device_id) ? 60 : 30;
+            g_hybrid_cmd->send_video_fps(uid, target_fps);
+            MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
+                      uid.c_str(), target_fps,
+                      (hw_id == device_id) ? "MAIN" : "sub");
+        }
+    }
+}
+
 void initializeGUI(HWND hwnd) {
     MLOG_INFO("gui", "=== initializeGUI called, hwnd=%p ===", (void*)hwnd);
     g_gui = std::make_shared<mirage::gui::GuiApplication>();
@@ -510,56 +565,7 @@ void initializeGUI(HWND hwnd) {
         sendSwipeCommand(device_id, x1, y1, x2, y2, duration_ms);
     });
 
-    g_gui->setDeviceSelectCallback([](const std::string& device_id) {
-        auto gui = g_gui;
-        if (gui) gui->logInfo(u8"Selected: " + device_id);
-
-        // Update RouteController main device
-        if (g_route_controller) {
-            g_route_controller->setMainDevice(device_id);
-        }
-
-        // Update FPS: main=60fps, sub=30fps
-        if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
-            // TCP-onlyモード: ADB broadcast経由でFPS送信
-            // Async: ADB broadcasts must not block GUI thread
-            auto devices = g_adb_manager->getUniqueDevices();
-            std::string sel_id = device_id;
-            std::thread([devices, sel_id]() {
-                for (const auto& dev : devices) {
-                    int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
-                    std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS --ei fps " + std::to_string(target_fps);
-                    if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
-                    MLOG_INFO("gui", "FPS update (ADB): %s -> %d fps (%s)",
-                              dev.hardware_id.c_str(), target_fps,
-                              (dev.hardware_id == sel_id) ? "MAIN" : "sub");
-                }
-            }).detach();
-        } else if (g_hybrid_cmd) {
-            // USB AOA経由でFPS送信
-            // Build USB serial -> hardware_id map from ADB manager
-            std::map<std::string, std::string> usb_to_hw;
-            if (g_adb_manager) {
-                for (const auto& dev : g_adb_manager->getUniqueDevices()) {
-                    for (const auto& serial : dev.usb_connections) {
-                        usb_to_hw[serial] = dev.hardware_id;
-                    }
-                }
-            }
-
-            auto all_ids = g_hybrid_cmd->get_device_ids();
-            for (const auto& uid : all_ids) {
-                std::string hw_id = uid;
-                auto it = usb_to_hw.find(uid);
-                if (it != usb_to_hw.end()) hw_id = it->second;
-                int target_fps = (hw_id == device_id) ? 60 : 30;
-                g_hybrid_cmd->send_video_fps(uid, target_fps);
-                MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
-                        uid.c_str(), target_fps,
-                        (hw_id == device_id) ? "MAIN" : "sub");
-            }
-        }
-    });
+    g_gui->setDeviceSelectCallback([](const std::string& device_id) { onDeviceSelected(device_id); });
 
     g_gui->setLearningDataCallback([](const mirage::gui::LearningClickData& data) {
         std::string msg = u8"Learning: (" + std::to_string(data.click_x) + "," +
