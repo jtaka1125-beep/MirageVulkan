@@ -1,5 +1,5 @@
 # MirageSystem Project State
-# Updated: 2026-02-23
+# Updated: 2026-02-24
 # Read at session start, updated at session end.
 
 ## Current Phase: Video Pipeline Audit + Dead Code Removal
@@ -23,7 +23,7 @@
   - usb_connected() legacy accessor FIXED: same time-based logic (was always false)
   - getStats().usb_connected FIXED: time-based (was always false via null usb_receiver_)
   - Removed: pkill -f scrcpy from startScreenCapture() (dead op, 500ms latency removed)
-  - Refactored: ScreenCaptureService startup deduplicated → autoStartCaptureService()
+  - Refactored: ScreenCaptureService startup deduplicated ↁEautoStartCaptureService()
   - Refactored: MediaProjection tap coordinates now dynamic (parse wm size, 0.73/0.61 ratio)
   - Cleaned: All scrcpy comments removed from active code (auto_setup, adb_device_manager,
              multi_device_receiver, mirror_receiver, gui_main, gui_init, gui_threads, gui_application)
@@ -60,15 +60,15 @@
 
 ## Next Priorities (Ordered)
 1. AOA full-path verification: UsbVideoSender (Android) <-> feed_usb_data() (PC) end-to-end
-2. Fix MCP build result detection (exe path discovery in api_gateway.py)
+2. Fix MCP build result detection -- DONE (5f1a29e)
 3. Multi-device video pipeline stress test (2x USB + 1x WiFi simultaneous)
 4. GUI refactoring (split oversized rendering/logic units)
 5. MirageComplete -> MirageVulkan migration Phase 1
 
 ## Key Decisions Log
 - 2026-02-23: scrcpy-server NOT used. Video engine is fully custom.
-- 2026-02-23: HybridReceiver USB recovery was broken (usb_receiver_ always nullptr) → FIXED.
-- 2026-02-23: g_hybrid_receiver always nullptr at runtime → TCP+USB decoder path is active.
+- 2026-02-23: HybridReceiver USB recovery was broken (usb_receiver_ always nullptr) ↁEFIXED.
+- 2026-02-23: g_hybrid_receiver always nullptr at runtime ↁETCP+USB decoder path is active.
 - 2026-02-23: startScreenCapture/AutoSetup = noop wrappers (deprecated, not called by GUI).
 - 2026-02-20: GPT as primary ops gateway via MCP (status/screenshot/build verified)
 - 2026-02-18: Multi-agent: Director(Opus) + Worker(Sonnet) + Reviewer(Sonnet)
@@ -89,3 +89,4 @@
 ## Token Budget Notes
 - Prefer cheap workers for routine ops; reserve premium model for planning/review
 - Keep CLAUDE.md under ~2K tokens
+`n- [2026-02-24] ActionMapper 14 cases (AM-1..AM-14) - 30/30 total`n- [2026-02-24] WinUsbChecker 14 cases (WUC-1..WUC-14) - 31/31 total`n- [2026-02-24] Migration Phase 1: install_android_winusb.py + wdi-simple.exe copied from MirageComplete
