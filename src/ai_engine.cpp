@@ -1,5215 +1,5215 @@
-// =============================================================================
-
-
-
-// MirageVulkan - AI Engine Implementation
-
-
-
-// =============================================================================
-
-
-
-// Vulkan一本化。VulkanTemplateMatcher + FrameAnalyzer(OCR)統合。
-
-
-
-// EventBus連携: FrameReadyEvent → processFrame → AIActionEvent発火。
-
-
-
-// =============================================================================
-
-
-
-
-
-
-
-#include "ai_engine.hpp"
-
-
-
-
-
-
-
-#ifdef USE_AI
-
-
-
-
-
-
-
-#include "vulkan/vulkan_context.hpp"
-
-
-
-#include "vulkan_compute_processor.hpp"
-
-
-
-#include "vulkan_template_matcher.hpp"
-
-
-
-#include "ai/template_store.hpp"
-
-
-
-#include "ai/template_autoscan.hpp"
-
-
-
-#include "ai/vision_decision_engine.hpp"
-
-
-
-#include "event_bus.hpp"
-
-
-
-#include "mirage_log.hpp"
-
-
-
-#include "stb_image.h"
-
-
-
-
-
-
-
-#ifdef MIRAGE_OCR_ENABLED
-
-
-
-#include "frame_analyzer.hpp"
-
-
-
-#endif
-
-
-
-
-
-
-
-#include <chrono>
-
-
-
-#include <mutex>
-
-
-
-#include <filesystem>
-
-
-
-#include <algorithm>
-
-
-
-#include <random>
-
-
-
-#include <thread>
-
-
-
-#include <atomic>
-
-
-
-#include <unordered_map>
-
-
-
-#include <queue>
-
-
-
-#include <array>
-
-
-
-#include <condition_variable>
-
-
-
-
-
-
-
-namespace mirage::ai {
-
-
-
-
-
-
-
-// =============================================================================
-
-
-
-// アクションマッパー — テンプレートIDからアクション文字列を決定
-
-
-
-// =============================================================================
-
-
-
-
-
-
-
-class ActionMapper {
-
-
-
-public:
-
-
-
-    void addTemplateAction(const std::string& template_id, const std::string& action) {
-
-
-
-        actions_[template_id] = action;
-
-
-
-    }
-
-
-
-
-
-
-
-    // テンプレート名からアクションを取得（未登録なら "tap:<name>"）
-
-
-
-    std::string getAction(const std::string& template_id) const {
-
-
-
-        auto it = actions_.find(template_id);
-
-
-
-        if (it != actions_.end()) return it->second;
-
-
-
-        return "tap:" + template_id;
-
-
-
-    }
-
-
-
-
-
-
-
-    // マッチ結果の分類（loading/errorの判定）
-
-
-
-    enum class ScreenState { NORMAL, LOADING, ERROR_POPUP };
-
-
-
-
-
-
-
-    ScreenState classifyState(const std::vector<vk::VkMatchResult>& matches,
-
-
-
-                              const std::unordered_map<int, std::string>& id_to_name) const {
-
-
-
-        for (const auto& m : matches) {
-
-
-
-            auto it = id_to_name.find(m.template_id);
-
-
-
-            if (it == id_to_name.end()) continue;
-
-
-
-            const auto& name = it->second;
-
-
-
-            if (name.find("loading") != std::string::npos ||
-
-
-
-                name.find("spinner") != std::string::npos) {
-
-
-
-                return ScreenState::LOADING;
-
-
-
-            }
-
-
-
-            if (name.find("error") != std::string::npos ||
-
-
-
-                name.find("popup") != std::string::npos) {
-
-
-
-                return ScreenState::ERROR_POPUP;
-
-
-
-            }
-
-
-
-        }
-
-
-
-        return ScreenState::NORMAL;
-
-
-
-    }
-
-
-
-
-
-
-
-    // OCRテキストベースのアクションマッピング
-
-
-
-    void registerTextAction(const std::string& keyword, const std::string& action) {
-
-
-
-        text_actions_[keyword] = action;
-
-
-
-    }
-
-
-
-
-
-
-
-    void removeTextAction(const std::string& keyword) {
-
-
-
-        text_actions_.erase(keyword);
-
-
-
-    }
-
-
-
-
-
-
-
-    bool hasTextAction(const std::string& keyword) const {
-
-
-
-        return text_actions_.find(keyword) != text_actions_.end();
-
-
-
-    }
-
-
-
-
-
-
-
-    std::string getTextAction(const std::string& keyword) const {
-
-
-
-        auto it = text_actions_.find(keyword);
-
-
-
-        return (it != text_actions_.end()) ? it->second : std::string{};
-
-
-
-    }
-
-
-
-
-
-
-
-    std::vector<std::string> getTextKeywords() const {
-
-
-
-        std::vector<std::string> keys;
-
-
-
-        keys.reserve(text_actions_.size());
-
-
-
-        for (const auto& [k, v] : text_actions_) {
-
-
-
-            keys.push_back(k);
-
-
-
-        }
-
-
-
-        return keys;
-
-
-
-    }
-
-
-
-
-
-
-
-private:
-
-
-
-    std::unordered_map<std::string, std::string> actions_;
-
-
-
-    std::unordered_map<std::string, std::string> text_actions_;
-
-
-
-};
-
-
-
-
-
-
-
-// =============================================================================
-
-
-
-// AIEngine::Impl
-
-
-
-// =============================================================================
-
-
-
-
-
-
-
-class AIEngine::Impl {
-
-
-
-public:
-
-
-
-    Impl() = default;
-
-
-
-    ~Impl() { shutdown(); }
-
-
-
-
-
-
-
-    mirage::Result<void> initialize(const AIConfig& config,
-
-
-
-                                    mirage::vk::VulkanContext* vk_ctx) {
-
-
-
-        if (!vk_ctx) {
-
-
-
-            return mirage::Err<void>("VulkanContext is required (OpenCL fallback removed)");
-
-
-
-        }
-
-
-
-
-
-
-
-        config_ = config;
-
-
-
-        vk_ctx_ = vk_ctx;
-
-
-
-
-
-
-
-        // RGBA → Gray プロセッサ
-
-
-
-        vk_processor_ = std::make_unique<mirage::vk::VulkanComputeProcessor>();
-
-
-
-        if (!vk_processor_->initialize(*vk_ctx, "shaders")) {
-
-
-
-            vk_processor_.reset();
-
-
-
-            return mirage::Err<void>("VulkanComputeProcessor 初期化失敗");
-
-
-
-        }
-
-
-
-
-
-
-
-        // テンプレートマッチャー
-
-
-
-        mirage::vk::VkMatcherConfig mc;
-
-
-
-        mc.default_threshold = config.default_threshold;
-
-
-
-        mc.enable_multi_scale = config.enable_multi_scale;
-
-
-
-
-
-
-
-        vk_matcher_ = std::make_unique<mirage::vk::VulkanTemplateMatcher>();
-
-
-
-        auto matcherResult = vk_matcher_->initialize(*vk_ctx, mc, "shaders");
-
-
-
-        if (matcherResult.is_err()) {
-
-
-
-            auto err = matcherResult.error().message;
-
-
-
-            vk_matcher_.reset();
-
-
-
-            vk_processor_.reset();
-
-
-
-            return mirage::Err<void>(err);
-
-
-
-        }
-
-
-
-
-
-
-
-        // アクションマッパー
-
-
-
-        action_mapper_ = std::make_unique<ActionMapper>();
-
-
-
-
-
-
-
-        // VisionDecisionEngine（状態遷移マシン）
-
-
-
-        VisionDecisionConfig vde_config;
-
-
-
-        vde_config.confirm_count = 3;
-
-
-
-        vde_config.cooldown_ms = 2000;
-
-
-
-        vde_config.debounce_window_ms = 500;
-
-
-
-        vision_engine_ = std::make_unique<VisionDecisionEngine>(vde_config);
-
-
-
-
-
-
-
-        // EventBus購読
-
-
-
-        if (config.subscribe_events) {
-
-
-
-            frame_sub_ = mirage::bus().subscribe<mirage::FrameReadyEvent>(
-
-
-
-                [this](const mirage::FrameReadyEvent& evt) {
-
-
-
-                    onFrameReady(evt);
-
-
-
-                });
-
-
-
-            MLOG_INFO("ai", "EventBus FrameReadyEvent 購読開始");
-
-
-
-        }
-
-
-
-
-
-
-
-        initialized_ = true;
-
-
-
-        if (config.hot_reload) startHotReload();
-
-
-
-        MLOG_INFO("ai", "AI Engine 初期化完了 (Vulkan Compute)");
-
-
-
-        return mirage::Ok();
-
-
-
-    }
-
-
-
-
-
-
-
-    void shutdown() {
-        stopAsyncWorkers();
-
-
-
-
-
-
-
-
-        stopHotReload();
-
-
-
-        if (!initialized_) return;
-
-
-
-        MLOG_INFO("ai", "AI Engine シャットダウン");
-
-
-
-
-
-
-
-        // EventBus購読解除（SubscriptionHandle RAIIで自動解除）
-
-
-
-        frame_sub_ = mirage::SubscriptionHandle();
-
-
-
-
-
-
-
-        vk_matcher_.reset();
-
-
-
-        vk_processor_.reset();
-
-
-
-        action_mapper_.reset();
-
-
-
-        vision_engine_.reset();
-
-
-
-
-
-
-
-        initialized_ = false;
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // TemplateStore接続
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    void setTemplateStore(TemplateStore* store) {
-
-
-
-        template_store_ = store;
-
-
-
-        MLOG_INFO("ai", "TemplateStore接続: %s", store ? "有効" : "null");
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // FrameAnalyzer(OCR)接続
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    void setFrameAnalyzer([[maybe_unused]] mirage::FrameAnalyzer* analyzer) {
-
-
-
-#ifdef MIRAGE_OCR_ENABLED
-
-
-
-        frame_analyzer_ = analyzer;
-
-
-
-        MLOG_INFO("ai", "FrameAnalyzer接続: %s", analyzer ? "有効" : "null");
-
-
-
-#else
-
-
-
-        MLOG_WARN("ai", "OCR未コンパイル (MIRAGE_OCR_ENABLED未定義) — FrameAnalyzer無視");
-
-
-
-#endif
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // テンプレート管理
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    mirage::Result<void> loadTemplatesFromDir(const std::string& dir) {
-
-
-
-        namespace fs = std::filesystem;
-
-
-
-        if (!fs::exists(dir)) {
-
-
-
-            return mirage::Err<void>("ディレクトリが見つかりません: " + dir);
-
-
-
-        }
-
-
-
-        if (!vk_matcher_) {
-
-
-
-            return mirage::Err<void>("VulkanTemplateMatcher未初期化");
-
-
-
-        }
-
-
-
-
-
-
-
-        // autoscan でマニフェスト同期
-
-
-
-        AutoScanConfig scan_cfg;
-
-
-
-        scan_cfg.templates_dir = dir;
-
-
-
-        scan_cfg.manifest_path = dir + "/manifest.json";
-
-
-
-        TemplateManifest manifest;
-
-
-
-        auto scan_result = syncTemplateManifest(scan_cfg, manifest);
-
-
-
-        if (!scan_result.ok) {
-
-
-
-            return mirage::Err<void>("オートスキャン失敗: " + scan_result.error);
-
-
-
-        }
-
-
-
-
-
-
-
-        MLOG_INFO("ai", "オートスキャン完了: 追加=%d 更新=%d 保持=%d 削除=%d",
-
-
-
-                  scan_result.added, scan_result.updated,
-
-
-
-                  scan_result.kept, scan_result.removed);
-
-
-
-
-
-
-
-        // マニフェストの各エントリを TemplateStore → VulkanTemplateMatcher に登録
-
-
-
-        int count = 0;
-
-
-
-        for (const auto& entry : manifest.entries) {
-
-
-
-            std::string full_path = dir + "/" + entry.file;
-
-
-
-
-
-
-
-            auto addResult = addTemplateFromFile(full_path, entry.name, entry.template_id);
-
-
-
-            if (addResult.is_ok()) {
-
-
-
-                count++;
-
-
-
-                // 改善E: マニフェストのROIをマッチャーに反映
-
-
-
-                if (entry.threshold > 0.0f && vk_matcher_) {
-
-
-
-                    vk_matcher_->setTemplateThreshold(entry.name, entry.threshold);
-
-
-
-                    MLOG_DEBUG("ai", "閾値設定: %s -> %.2f", entry.name.c_str(), entry.threshold);
-
-
-
-                }
-
-
-
-                if (entry.roi_w > 0.0f && vk_matcher_) {
-
-
-
-                    vk_matcher_->setTemplateRoiNorm(entry.name,
-
-
-
-                        entry.roi_x, entry.roi_y,
-
-
-
-                        entry.roi_w, entry.roi_h);
-
-
-
-                    MLOG_DEBUG("ai", "ROI設定: %s (%.2f,%.2f)+(%.2f x %.2f)",
-
-
-
-                               entry.name.c_str(),
-
-
-
-                               entry.roi_x, entry.roi_y,
-
-
-
-                               entry.roi_w, entry.roi_h);
-
-
-
-                }
-
-
-
-            } else {
-
-
-
-                MLOG_WARN("ai", "テンプレート読み込みスキップ: %s (%s)",
-
-
-
-                          entry.name.c_str(), addResult.error().message.c_str());
-
-
-
-            }
-
-
-
-        }
-
-
-
-
-
-
-
-        stats_.templates_loaded = count;
-
-
-
-        MLOG_INFO("ai", "テンプレート %d 個読み込み完了 (dir=%s)", count, dir.c_str());
-
-
-
-        if (count > 0) return mirage::Ok();
-
-
-
-        return mirage::Err<void>("テンプレートが1つも読み込めませんでした");
-
-
-
-    }
-
-
-
-
-
-
-
-    bool addTemplate(const std::string& name, const uint8_t* rgba, int w, int h) {
-
-
-
-        if (!vk_matcher_) return false;
-
-
-
-
-
-
-
-        // RGBA→GrayをGPUで変換
-
-
-
-        auto* gray_gpu = vk_processor_->rgbaToGrayGpu(rgba, w, h);
-
-
-
-        if (!gray_gpu) {
-
-
-
-            MLOG_WARN("ai", "RGBA→Gray変換失敗: %s", name.c_str());
-
-
-
-            return false;
-
-
-
-        }
-
-
-
-
-
-
-
-        // GPU上のGrayデータをCPUに読み戻してテンプレート登録
-
-
-
-        // VulkanTemplateMatcher::addTemplate はCPU grayデータを受け取る
-
-
-
-        std::vector<uint8_t> gray_cpu(w * h);
-
-
-
-        if (!vk_processor_->rgbaToGray(rgba, w, h, gray_cpu.data())) {
-
-
-
-            MLOG_WARN("ai", "RGBA→Gray(CPU)変換失敗: %s", name.c_str());
-
-
-
-            return false;
-
-
-
-        }
-
-
-
-
-
-
-
-        auto addResult = vk_matcher_->addTemplate(name, gray_cpu.data(), w, h, "");
-
-
-
-        if (addResult.is_err()) {
-
-
-
-            MLOG_WARN("ai", "テンプレート追加失敗: %s (%s)", name.c_str(), addResult.error().message.c_str());
-
-
-
-            return false;
-
-
-
-        }
-
-
-
-        int id = addResult.value();
-
-
-
-
-
-
-
-        // ID→名前マッピング
-
-
-
-        {
-
-
-
-            std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-            id_to_name_[id] = name;
-
-
-
-        }
-
-
-
-        action_mapper_->addTemplateAction(name, "tap:" + name);
-
-
-
-        stats_.templates_loaded++;
-
-
-
-        return true;
-
-
-
-    }
-
-
-
-
-
-
-
-    void clearTemplates() {
-
-
-
-        if (vk_matcher_) vk_matcher_->clearAll();
-
-
-
-        {
-
-
-
-            std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-            id_to_name_.clear();
-
-
-
-        }
-
-
-
-        stats_.templates_loaded = 0;
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // フレーム処理
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    AIAction processFrame(int slot, const uint8_t* rgba, int width, int height,
-
-
-
-                          bool can_send) {
-
-
-
-        auto start = std::chrono::high_resolution_clock::now();
-
-
-
-
-
-
-
-        AIAction action;
-
-
-
-        action.type = AIAction::Type::NONE;
-
-
-
-
-
-
-
-        if (!initialized_) { action.reason = "未初期化"; return action; }
-
-
-
-        if (width <= 0 || height <= 0 || width > 8192 || height > 8192) {
-
-
-
-            action.reason = "不正なフレームサイズ"; return action;
-
-
-
-        }
-
-
-
-        if (!rgba) { action.reason = "nullフレーム"; return action; }
-
-
-
-
-
-
-
-        // RGBA → Gray (GPU)
-
-
-
-        auto* gray_gpu = vk_processor_->rgbaToGrayGpu(rgba, width, height);
-
-
-
-        if (!gray_gpu) {
-
-
-
-            action.reason = "RGBA→Gray変換失敗";
-
-
-
-            MLOG_WARN("ai", "Vulkan RGBA→Gray失敗");
-
-
-
-            return action;
-
-
-
-        }
-
-
-
-
-
-
-
-        // テンプレートマッチング (GPU)
-
-
-
-        auto matchResult = vk_matcher_->matchGpu(gray_gpu, width, height);
-
-
-
-        if (matchResult.is_err()) {
-
-
-
-            action.reason = "マッチング失敗: " + matchResult.error().message;
-
-
-
-            MLOG_WARN("ai", "Vulkan match失敗: %s", matchResult.error().message.c_str());
-
-
-
-            return action;
-
-
-
-        }
-
-
-
-        auto vk_results = std::move(matchResult).value();
-
-
-
-
-
-
-
-        // マッチ結果をOverlay用にキャッシュ
-
-
-
-        // 改善Q: デバイス適応フィルタ
-
-
-
-        std::string device_id = "slot_" + std::to_string(slot); // moved up for Q
-
-
-
-        {
-
-
-
-            auto _it = device_adaptations_.find(device_id); auto adapt = (_it != device_adaptations_.end()) ? _it->second : mirage::ai::DeviceAdaptation{};
-
-
-            if (adapt.enabled && adapt.min_score > 0.0f) {
-
-
-
-                vk_results.erase(std::remove_if(vk_results.begin(), vk_results.end(),
-
-
-
-                    [&](const vk::VkMatchResult& r){ return r.score < adapt.min_score; }),
-
-
-
-                    vk_results.end());
-
-
-
-            }
-
-
-
-        }
-
-
-
-        cacheMatches(vk_results);
-
-
-
-
-
-
-
-        // VisionDecisionEngine経由で状態遷移判断
-
-
-
-        if (vision_engine_) {
-
-
-
-            // VkMatchResult → VisionMatch変換
-
-
-
-            std::unordered_map<int, std::string> names_snap;
-
-
-
-            {
-
-
-
-                std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-                names_snap = id_to_name_;
-
-
-
-            }
-
-
-
-            std::vector<VisionMatch> vision_matches;
-
-
-
-            vision_matches.reserve(vk_results.size());
-
-
-
-            for (const auto& r : vk_results) {
-
-
-
-                VisionMatch vm;
-
-
-
-                auto it = names_snap.find(r.template_id);
-
-
-
-                vm.template_id = (it != names_snap.end()) ? it->second
-
-
-
-                    : "tpl_" + std::to_string(r.template_id);
-
-
-
-                vm.x = r.x;
-
-
-
-                vm.y = r.y;
-
-
-
-                vm.score = r.score;
-
-
-
-                // errorグループ判定: テンプレート名に"error"/"popup"を含む
-
-
-
-                vm.is_error_group = (vm.template_id.find("error") != std::string::npos ||
-
-
-
-                                     vm.template_id.find("popup") != std::string::npos);
-
-
-
-                vision_matches.push_back(std::move(vm));
-
-
-
-            }
-
-
-
-
-
-
-
-            auto decision = vision_engine_->update(device_id, vision_matches);
-
-
-
-
-
-
-
-            if (decision.should_act && can_send) {
-
-
-
-                AIAction decided = decideAction(slot, vk_results, can_send);
-
-
-
-                vision_engine_->notifyActionExecuted(device_id);
-
-
-
-
-
-
-
-                // 改善L: ジッター遅延
-
-
-
-                if (config_.jitter_max_ms > 0 && decided.type != AIAction::Type::NONE) {
-
-
-
-                    int range = config_.jitter_max_ms - config_.jitter_min_ms;
-
-
-
-                    int delay_ms = config_.jitter_min_ms +
-
-
-
-                        (range > 0 ? (int)(rng_() % (unsigned)range) : 0);
-
-
-
-                    auto fire_at = std::chrono::steady_clock::now() +
-
-
-
-                        std::chrono::milliseconds(delay_ms);
-
-
-
-                    pending_actions_.push_back({slot, decided, fire_at});
-
-
-
-                    MLOG_DEBUG("ai", "ジッター保留: slot=%d delay=%dms", slot, delay_ms);
-
-
-
-                    action.type = AIAction::Type::WAIT;
-
-
-
-                    action.reason = "jitter_pending";
-
-
-
-                } else {
-
-
-
-                    action = decided;
-
-
-
-                }
-
-
-
-            } else if (!decision.should_act) {
-
-
-
-                // 未確定 or COOLDOWN中 → WAIT
-
-
-
-                if (!vk_results.empty()) {
-
-
-
-                    // 改善K: skip_count (match found but cooldown/unconfirmed)
-
-
-
-                    for (const auto& r : vk_results) {
-
-
-
-                        auto kit = names_snap.find(r.template_id);
-
-
-
-                        std::string n = (kit != names_snap.end()) ? kit->second
-
-
-
-                                        : "tpl_" + std::to_string(r.template_id);
-
-
-
-                        stats_.template_stats[n].skip_count++;
-
-
-
-                    }
-
-
-
-                    action.type = AIAction::Type::WAIT;
-
-
-
-                    action.reason = "VisionEngine: " +
-
-
-
-                        std::string(visionStateToString(decision.state));
-
-
-
-                } else {
-
-
-
-                    // マッチなし
-
-
-
-                    action.type = AIAction::Type::WAIT;
-
-
-
-                    action.reason = "マッチなし";
-
-
-
-                    idle_frames_++;
-
-
-
-                    stats_.idle_frames = idle_frames_;
-
-
-
-                }
-
-
-
-            }
-
-
-
-        } else {
-
-
-
-            // VisionDecisionEngine未初期化時はフォールバック
-
-
-
-            action = decideAction(slot, vk_results, can_send);
-
-
-
-        }
-
-
-
-
-
-
-
-        // 統計更新
-
-
-
-        auto end = std::chrono::high_resolution_clock::now();
-
-
-
-        double elapsed = std::chrono::duration<double, std::milli>(end - start).count();
-
-
-
-        stats_.frames_processed++;
-
-
-
-        stats_.avg_process_time_ms =
-
-
-
-            (stats_.avg_process_time_ms * (stats_.frames_processed - 1) + elapsed)
-
-
-
-            / stats_.frames_processed;
-
-
-
-
-
-
-
-        // MatchResultEvent をEventBus発行（マッチ結果があれば）
-
-
-
-        if (!vk_results.empty()) {
-
-
-
-            mirage::MatchResultEvent evt;
-
-
-
-            evt.device_id = device_id;
-
-
-
-            evt.frame_id = stats_.frames_processed;
-
-
-
-            evt.process_time_ms = elapsed;
-
-
-
-
-
-
-
-            std::unordered_map<int, std::string> names_for_evt;
-
-
-
-            {
-
-
-
-                std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-                names_for_evt = id_to_name_;
-
-
-
-            }
-
-
-
-            evt.matches.reserve(vk_results.size());
-
-
-
-            for (const auto& r : vk_results) {
-
-
-
-                mirage::MatchResultEvent::Match m;
-
-
-
-                auto it = names_for_evt.find(r.template_id);
-
-
-
-                m.template_name = (it != names_for_evt.end()) ? it->second
-
-
-
-                    : "tpl_" + std::to_string(r.template_id);
-
-
-
-                m.x = r.x;
-
-
-
-                m.y = r.y;
-
-
-
-                m.score = r.score;
-
-
-
-                m.template_id = r.template_id;
-
-
-
-                m.template_width  = r.template_width;
-
-
-
-                m.template_height = r.template_height;
-
-
-
-                evt.matches.push_back(std::move(m));
-
-
-
-            }
-
-
-
-            mirage::bus().publish(evt);
-
-
-
-        }
-
-
-
-
-
-
-
-        return action;
-
-
-
-    }
-
-
-
-
-
-
-
-    std::vector<AIEngine::MatchRect> getLastMatches() const {
-
-
-
-        std::lock_guard<std::mutex> lock(matches_mutex_);
-
-
-
-        return last_matches_;
-
-
-
-    }
-
-
-
-
-
-
-
-    AIStats getStats() const { return stats_; }
-
-
-
-
-
-
-
-    void resetStats() {
-
-
-
-        int tpl = stats_.templates_loaded;
-
-
-
-        stats_ = AIStats();
-
-
-
-        stats_.templates_loaded = tpl;
-
-
-
-    }
-
-
-
-
-
-
-
-    void reset() {
-
-
-
-        idle_frames_ = 0;
-
-
-
-        stats_.idle_frames = 0;
-
-
-
-        if (vision_engine_) vision_engine_->resetAll();
-
-
-
-    }
-
-
-
-
-
-
-
-    // VisionDecisionEngine GUI用アクセサ
-
-
-
-    int getDeviceVisionState(const std::string& device_id) const {
-
-
-
-        if (!vision_engine_) return 0; // IDLE
-
-
-
-        return static_cast<int>(vision_engine_->getDeviceState(device_id));
-
-
-
-    }
-
-
-
-
-
-
-
-    void resetDeviceVision(const std::string& device_id) {
-
-
-
-        if (vision_engine_) vision_engine_->resetDevice(device_id);
-
-
-
-    }
-
-
-
-
-
-
-
-    void resetAllVision() {
-
-
-
-        if (vision_engine_) vision_engine_->resetAll();
-
-
-
-    }
-
-
-
-
-
-
-
-    AIEngine::VDEConfig getVDEConfig() const {
-
-
-
-        AIEngine::VDEConfig result;
-
-
-
-        if (vision_engine_) {
-
-
-
-            auto& c = vision_engine_->config();
-
-
-
-            result.confirm_count      = c.confirm_count;
-
-
-
-            result.cooldown_ms        = c.cooldown_ms;
-
-
-
-            result.debounce_window_ms = c.debounce_window_ms;
-
-
-
-            result.error_recovery_ms  = c.error_recovery_ms;
-
-
-
-            result.enable_ewma        = c.enable_ewma;
-
-
-
-            result.ewma_alpha         = c.ewma_alpha;
-
-
-
-            result.ewma_confirm_thr   = c.ewma_confirm_thr;
-
-
-
-        }
-
-
-
-        return result;
-
-
-
-    }
-
-
-
-
-
-
-
-    void setVDEConfig(const AIEngine::VDEConfig& cfg) {
-
-
-
-        if (vision_engine_) {
-
-
-
-            mirage::ai::VisionDecisionConfig vc;
-
-
-
-            vc.confirm_count      = cfg.confirm_count;
-
-
-
-            vc.cooldown_ms        = cfg.cooldown_ms;
-
-
-
-            vc.debounce_window_ms = cfg.debounce_window_ms;
-
-
-
-            vc.error_recovery_ms  = cfg.error_recovery_ms;
-
-
-
-            vc.enable_ewma        = cfg.enable_ewma;
-
-
-
-            vc.ewma_alpha         = cfg.ewma_alpha;
-
-
-
-            vc.ewma_confirm_thr   = cfg.ewma_confirm_thr;
-
-
-
-            vision_engine_->setConfig(vc);
-
-
-
-        }
-
-
-
-    }
-
-
-
-
-
-
-
-    void setJitterConfig(int min_ms, int max_ms) {
-
-
-
-        config_.jitter_min_ms = std::max(0, min_ms);
-
-
-
-        config_.jitter_max_ms = std::max(0, max_ms);
-
-
-
-        MLOG_INFO("ai", "ジッター設定: %d~%dms", min_ms, max_ms);
-
-
-
-    }
-
-
-
-
-
-
-
-
-    // 改善N
-
-
-
-
-    void registerOcrKeyword(const std::string& kw, const std::string& act) {
-
-
-
-
-        if (action_mapper_) action_mapper_->registerTextAction(kw, act);
-
-
-
-
-    }
-
-
-
-
-
-
-
-
-    // 改善Q: デバイス適応
-
-
-
-    void setDeviceAdaptation(const std::string& id, const mirage::ai::DeviceAdaptation& a) {
-
-
-
-        std::lock_guard<std::mutex> lk(adaptation_mutex_);
-
-
-
-        device_adaptations_[id] = a;
-
-
-
-    }
-
-
-
-    mirage::ai::DeviceAdaptation getDeviceAdaptation(const std::string& id) const {
-
-
-
-        std::lock_guard<std::mutex> lk(adaptation_mutex_);
-
-
-
-        auto it = device_adaptations_.find(id);
-
-
-
-        return it != device_adaptations_.end() ? it->second : mirage::ai::DeviceAdaptation{};
-
-
-
-    }
-
-
-
-    void clearDeviceAdaptation(const std::string& id) {
-
-
-
-        std::lock_guard<std::mutex> lk(adaptation_mutex_);
-
-
-
-        device_adaptations_.erase(id);
-
-
-
-    }
-
-
-
-    void removeOcrKeyword(const std::string& kw) {
-
-
-
-
-        if (action_mapper_) action_mapper_->removeTextAction(kw);
-
-
-
-
-    }
-
-
-
-
-    std::vector<std::pair<std::string,std::string>> getOcrKeywords() const {
-
-
-
-
-        std::vector<std::pair<std::string,std::string>> r;
-
-
-
-
-        if (!action_mapper_) return r;
-
-
-
-
-        for (const auto& k : action_mapper_->getTextKeywords())
-
-
-
-
-            r.push_back({k, action_mapper_->getTextAction(k)});
-
-
-
-
-        return r;
-
-
-
-
-    }
-
-
-
-
-
-
-
-
-    void startHotReload() {
-
-
-
-        if (hot_reload_running_.load()) return;
-
-
-
-        hot_reload_running_ = true;
-
-
-
-        manifest_last_mtime_ = {};
-
-
-
-        hot_reload_thread_ = std::thread([this] {
-
-
-
-            namespace fs = std::filesystem;
-
-
-
-            while (hot_reload_running_.load()) {
-
-
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(config_.hot_reload_interval_ms));
-
-
-
-                if (!hot_reload_running_.load()) break;
-
-
-
-                try {
-
-
-
-                    fs::path manifest = fs::path(config_.templates_dir) / "manifest.json";
-
-
-
-                    if (!fs::exists(manifest)) continue;
-
-
-
-                    auto mtime = fs::last_write_time(manifest);
-
-
-
-                    if (mtime != manifest_last_mtime_) {
-
-
-
-                        manifest_last_mtime_ = mtime;
-
-
-
-                        MLOG_INFO("ai", "[HotReload] manifest.json変更 -> 再ロード");
-
-
-
-                        auto res = loadTemplatesFromDir(config_.templates_dir);
-
-
-
-                        if (res) MLOG_INFO("ai", "[HotReload] 完了");
-
-
-
-                        else     MLOG_WARN("ai", "[HotReload] 失敗: %s", res.error().message.c_str());
-
-
-
-                    }
-
-
-
-                } catch (const std::exception& e) {
-
-
-
-                    MLOG_WARN("ai", "[HotReload] 例外: %s", e.what());
-
-
-
-                }
-
-
-
-            }
-
-
-
-        });
-
-
-
-        MLOG_INFO("ai", "[HotReload] 監視開始 interval=%dms", config_.hot_reload_interval_ms);
-
-
-
-    }
-
-
-
-
-
-
-
-    void stopHotReload() {
-
-
-
-        hot_reload_running_ = false;
-
-
-
-        if (hot_reload_thread_.joinable()) hot_reload_thread_.join();
-
-
-
-    }
-
-
-
-
-
-
-
-
-
-
-
-    // 改善O: 非同期ワーカー管理
-
-
-
-    void startAsyncWorkers(std::function<void(int,const AIAction&)>* cb_ptr) {
-
-
-
-        if (async_enabled_.load()) return;
-
-
-
-        async_action_cb_ = cb_ptr;
-
-
-
-        async_enabled_ = true;
-
-
-
-        for (int s = 0; s < kMaxAsyncSlots; ++s) {
-
-
-
-            async_workers_[s] = std::thread([this, s]() {
-
-
-
-                while (async_enabled_.load()) {
-
-
-
-                    AsyncFrameJob job;
-
-
-
-                    {
-
-
-
-                        std::unique_lock<std::mutex> lk(async_q_mutexes_[s]);
-
-
-
-                        async_q_cvs_[s].wait(lk, [&]{
-
-
-
-                            return !async_queues_[s].empty() || !async_enabled_.load();
-
-
-
-                        });
-
-
-
-                        if (!async_enabled_.load()) break;
-
-
-
-                        job = std::move(async_queues_[s].front());
-
-
-
-                        async_queues_[s].pop();
-
-
-
-                    }
-
-
-
-                    auto action = processFrame(job.slot, job.rgba.data(), job.width, job.height, job.can_send);
-
-
-
-                    if (async_action_cb_ && *async_action_cb_) {
-
-
-
-                        flushPendingActions(*async_action_cb_);
-
-
-
-                        if (action.type != AIAction::Type::NONE && action.type != AIAction::Type::WAIT)
-
-
-
-                            (*async_action_cb_)(job.slot, action);
-                    // AI improvement S: EventBus dispatch
-                    if (action.type != AIAction::Type::NONE && action.type != AIAction::Type::WAIT) {
-                        auto& _abus = mirage::EventBus::instance();
-                        mirage::AIActionEvent _ae;
-                        _ae.slot = job.slot;
-                        _ae.device_id = "slot_" + std::to_string(job.slot);
-                        _ae.x = action.x; _ae.y = action.y;
-                        _ae.x2 = action.x2; _ae.y2 = action.y2;
-                        _ae.duration_ms = action.duration_ms;
-                        _ae.template_name = action.template_id;
-                        _ae.confidence = action.confidence;
-                        if (action.type == AIAction::Type::TAP) {
-                            _ae.action_type = "TAP";
-                            mirage::TapCommandEvent _t;
-                            _t.device_id = _ae.device_id; _t.x = action.x; _t.y = action.y;
-                            _abus.dispatch(_ae); _abus.dispatch(_t);
-                        } else if (action.type == AIAction::Type::SWIPE) {
-                            _ae.action_type = "SWIPE";
-                            mirage::SwipeCommandEvent _s;
-                            _s.device_id = _ae.device_id;
-                            _s.x = action.x; _s.y = action.y;
-                            _s.x2 = action.x2; _s.y2 = action.y2;
-                            _s.duration_ms = action.duration_ms;
-                            _abus.dispatch(_ae); _abus.dispatch(_s);
-                        } else if (action.type == AIAction::Type::BACK) {
-                            _ae.action_type = "BACK";
-                            mirage::KeyCommandEvent _k;
-                            _k.device_id = _ae.device_id; _k.keycode = 4;
-                            _abus.dispatch(_ae); _abus.dispatch(_k);
-                        }
-                    }
-
-
-
-                    }
-
-
-
-                }
-
-
-
-            });
-
-
-
-        }
-
-
-
-        MLOG_INFO("ai", "[AsyncO] %d slot workers started", kMaxAsyncSlots);
-
-
-
-    }
-
-
-
-
-
-
-
-    void stopAsyncWorkers() {
-
-
-
-        if (!async_enabled_.load()) return;
-
-
-
-        async_enabled_ = false;
-
-
-
-        for (int s = 0; s < kMaxAsyncSlots; ++s) async_q_cvs_[s].notify_all();
-
-
-
-        for (int s = 0; s < kMaxAsyncSlots; ++s) if (async_workers_[s].joinable()) async_workers_[s].join();
-
-
-
-        MLOG_INFO("ai", "[AsyncO] slot workers stopped");
-
-
-
-    }
-
-
-
-
-
-
-
-    bool isAsyncEnabled() const { return async_enabled_.load(); }
-
-
-
-
-
-
-
-    void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send) {
-
-
-
-        if (slot < 0 || slot >= kMaxAsyncSlots || !rgba) return;
-
-
-
-        AsyncFrameJob job;
-
-
-
-        job.slot = slot;
-
-
-
-        job.width = width; job.height = height;
-
-
-
-        job.can_send = can_send;
-
-
-
-        job.rgba.assign(rgba, rgba + (size_t)width * height * 4);
-
-
-
-        {
-
-
-
-            std::lock_guard<std::mutex> lk(async_q_mutexes_[slot]);
-
-
-
-            // Drop oldest if queue too deep (prevent unbounded memory)
-
-
-
-            while (async_queues_[slot].size() >= 2) async_queues_[slot].pop();
-
-
-
-            async_queues_[slot].push(std::move(job));
-
-
-
-        }
-
-
-
-        async_q_cvs_[slot].notify_one();
-
-
-
-    }
-
-
-
-    void setHotReload(bool enable, int interval_ms) {
-
-
-
-        config_.hot_reload_interval_ms = std::max(200, interval_ms);
-
-
-
-        config_.hot_reload = enable;
-
-
-
-        if (enable) startHotReload(); else stopHotReload();
-
-
-
-    }
-
-
-
-
-
-
-
-    // 改善L: 期限切れの保留アクションをコールバックで発火
-
-
-
-    void flushPendingActions(const ActionCallback& cb) {
-
-
-
-        if (!cb) return;
-
-
-
-        auto now = std::chrono::steady_clock::now();
-
-
-
-        for (auto it = pending_actions_.begin(); it != pending_actions_.end(); ) {
-
-
-
-            if (it->fire_at <= now) {
-
-
-
-                MLOG_DEBUG("ai", "ジッター発火: slot=%d", it->slot);
-
-
-
-                cb(it->slot, it->action);
-
-
-
-                it = pending_actions_.erase(it);
-
-
-
-            } else { ++it; }
-
-
-
-        }
-
-
-
-    }
-
-
-
-
-
-
-
-    std::vector<std::pair<std::string, int>> getAllDeviceVisionStates() const {
-
-
-
-        std::vector<std::pair<std::string, int>> result;
-
-
-
-        if (!vision_engine_) return result;
-
-
-
-        // device_states_はprivate — getDeviceStateを各既知デバイスに対して呼ぶ
-
-
-
-        // GUIからはslot_0〜slot_9の固定range
-
-
-
-        for (int i = 0; i < 10; ++i) {
-
-
-
-            std::string dev = "slot_" + std::to_string(i);
-
-
-
-            auto state = vision_engine_->getDeviceState(dev);
-
-
-
-            if (state != VisionState::IDLE) {
-
-
-
-                result.emplace_back(dev, static_cast<int>(state));
-
-
-
-            }
-
-
-
-        }
-
-
-
-        return result;
-
-
-
-    }
-
-
-
-
-
-
-
-private:
-
-
-
-    // 改善O: 非同期フレーム処理インフラ
-
-
-
-    static constexpr int kMaxAsyncSlots = 4;
-
-
-
-    struct AsyncFrameJob {
-
-
-
-        int slot;
-
-
-
-        std::vector<uint8_t> rgba;
-
-
-
-        int width, height;
-
-
-
-        bool can_send;
-
-
-
-    };
-
-
-
-    std::array<std::queue<AsyncFrameJob>, kMaxAsyncSlots> async_queues_;
-
-
-
-    std::array<std::mutex, kMaxAsyncSlots>              async_q_mutexes_;
-
-
-
-    std::array<std::condition_variable, kMaxAsyncSlots> async_q_cvs_;
-
-
-
-    std::array<std::thread, kMaxAsyncSlots>             async_workers_;
-
-
-
-    std::atomic<bool>                                   async_enabled_{false};
-
-
-
-    std::function<void(int,const AIAction&)>*           async_action_cb_ = nullptr;
-
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // EventBus FrameReady ハンドラ
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    void onFrameReady(const mirage::FrameReadyEvent& evt) {
-
-
-
-        if (!initialized_) return;
-
-
-
-
-
-
-
-        // device_id から slot番号を推定（"slot_N" 形式）
-
-
-
-        int slot = 0;
-
-
-
-        if (evt.device_id.substr(0, 5) == "slot_") {
-
-
-
-            try { slot = std::stoi(evt.device_id.substr(5)); } catch (...) {}
-
-
-
-        }
-
-
-
-        (void)slot;  // 将来のパイプライン統合用
-
-
-
-
-
-
-
-        // processFrameは外部（gui_threads.cpp）から直接呼ばれるため、
-
-
-
-        // EventBus経由では重複呼び出しを避ける。
-
-
-
-        // EventBus購読は将来のパイプライン統合用に準備のみ。
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // アクション決定ロジック
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    AIAction decideAction(int slot,
-
-
-
-                          const std::vector<mirage::vk::VkMatchResult>& results,
-
-
-
-                          bool can_send) {
-
-
-
-        AIAction action;
-
-
-
-
-
-
-
-        std::unordered_map<int, std::string> names;
-
-
-
-        {
-
-
-
-            std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-            names = id_to_name_;
-
-
-
-        }
-
-
-
-
-
-
-
-        if (results.empty()) {
-
-
-
-            // テンプレートマッチ失敗 → OCRフォールバック
-
-
-
-#ifdef MIRAGE_OCR_ENABLED
-
-
-
-            if (frame_analyzer_ && frame_analyzer_->isInitialized()) {
-
-
-
-                std::string device_id = "slot_" + std::to_string(slot);
-
-
-
-                auto ocr_action = tryOcrFallback(slot, device_id, can_send);
-
-
-
-                if (ocr_action.type != AIAction::Type::NONE) {
-
-
-
-                    return ocr_action;
-
-
-
-                }
-
-
-
-            }
-
-
-
-#endif
-
-
-
-            idle_frames_++;
-
-
-
-            stats_.idle_frames = idle_frames_;
-
-
-
-            action.type = AIAction::Type::WAIT;
-
-
-
-            action.reason = "マッチなし (idle=" + std::to_string(idle_frames_) + ")";
-
-
-
-            return action;
-
-
-
-        }
-
-
-
-
-
-
-
-        // 画面状態判定
-
-
-
-        auto state = action_mapper_->classifyState(results, names);
-
-
-
-        if (state == ActionMapper::ScreenState::LOADING) {
-
-
-
-            action.type = AIAction::Type::WAIT;
-
-
-
-            action.reason = "ローディング検出 — 待機";
-
-
-
-            return action;
-
-
-
-        }
-
-
-
-
-
-
-
-        // ベストマッチを選択
-
-
-
-        const auto& best = *std::max_element(results.begin(), results.end(),
-
-
-
-            [](const auto& a, const auto& b) { return a.score < b.score; });
-
-
-
-
-
-
-
-        // 送信可能チェック
-
-
-
-        if (!can_send) {
-
-
-
-            action.type = AIAction::Type::WAIT;
-
-
-
-            action.reason = "送信不可 — 待機";
-
-
-
-            return action;
-
-
-
-        }
-
-
-
-
-
-
-
-        // テンプレート名取得
-
-
-
-        std::string tpl_name;
-
-
-
-        auto it = names.find(best.template_id);
-
-
-
-        if (it != names.end()) tpl_name = it->second;
-
-
-
-        else tpl_name = "tpl_" + std::to_string(best.template_id);
-
-
-
-
-
-
-
-        // 改善K: テンプレート検出カウント
-
-
-
-        stats_.template_stats[tpl_name].detect_count++;
-
-
-
-
-
-
-
-        // アクション文字列を取得
-
-
-
-        std::string action_str = action_mapper_->getAction(tpl_name);
-
-
-
-
-
-
-
-        if (action_str.substr(0, 4) == "tap:") {
-
-
-
-            action.type = AIAction::Type::TAP;
-
-
-
-            action.template_id = action_str.substr(4);
-
-
-
-            // center座標でタップ（left-top + size/2）
-
-
-
-            action.x = best.center_x;
-
-
-
-            action.y = best.center_y;
-
-
-
-            action.confidence = best.score;
-
-
-
-        } else if (action_str == "back") {
-
-
-
-            action.type = AIAction::Type::BACK;
-
-
-
-        }
-
-
-
-
-
-
-
-        action.reason = "match=" + tpl_name + " score=" +
-
-
-
-                        std::to_string(best.score);
-
-
-
-        idle_frames_ = 0;
-
-
-
-        stats_.idle_frames = 0;
-
-
-
-        stats_.actions_executed++;
-
-
-
-        if (!tpl_name.empty()) stats_.template_stats[tpl_name].action_count++;
-
-
-
-
-
-
-
-        // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
-
-
-
-        std::string device_id = "slot_" + std::to_string(slot);
-
-
-
-        if (action.type == AIAction::Type::TAP) {
-
-
-
-            mirage::TapCommandEvent evt;
-
-
-
-            evt.device_id = device_id;
-
-
-
-            evt.x = action.x;
-
-
-
-            evt.y = action.y;
-
-
-
-            evt.source = mirage::CommandSource::AI;
-
-
-
-            mirage::bus().publish(evt);
-
-
-
-            MLOG_DEBUG("ai", "EventBus TapCommand発行: device=%s (%d,%d) tpl=%s",
-
-
-
-                       device_id.c_str(), action.x, action.y, tpl_name.c_str());
-
-
-
-        } else if (action.type == AIAction::Type::BACK) {
-
-
-
-            mirage::KeyCommandEvent evt;
-
-
-
-            evt.device_id = device_id;
-
-
-
-            evt.keycode = 4;  // KEYCODE_BACK
-
-
-
-            evt.source = mirage::CommandSource::AI;
-
-
-
-            mirage::bus().publish(evt);
-
-
-
-            MLOG_DEBUG("ai", "EventBus KeyCommand(BACK)発行: device=%s", device_id.c_str());
-
-
-
-        }
-
-
-
-
-
-
-
-        return action;
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // OCRフォールバック — テンプレートマッチ失敗時にOCRでアクション決定
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-#ifdef MIRAGE_OCR_ENABLED
-
-
-
-    AIAction tryOcrFallback(int slot, const std::string& device_id, bool can_send) {
-
-
-
-        AIAction action;
-
-
-
-        action.type = AIAction::Type::NONE;
-
-
-
-
-
-
-
-        if (!can_send) {
-
-
-
-            action.type = AIAction::Type::WAIT;
-
-
-
-            action.reason = "OCRフォールバック: 送信不可 — 待機";
-
-
-
-            return action;
-
-
-
-        }
-
-
-
-
-
-
-
-        // 登録済みテキストキーワードを順に検索
-
-
-
-        auto keywords = action_mapper_->getTextKeywords();
-
-
-
-        if (keywords.empty()) {
-
-
-
-            return action; // テキストアクション未登録 → NONE
-
-
-
-        }
-
-
-
-
-
-
-
-        for (const auto& keyword : keywords) {
-
-
-
-            int cx = 0, cy = 0;
-
-
-
-            if (frame_analyzer_->getTextCenter(device_id, keyword, cx, cy)) {
-
-
-
-                std::string action_str = action_mapper_->getTextAction(keyword);
-
-
-
-
-
-
-
-                if (action_str.substr(0, 4) == "tap:") {
-
-
-
-                    action.type = AIAction::Type::TAP;
-
-
-
-                    action.template_id = action_str.substr(4);
-
-
-
-                    action.x = cx;
-
-
-
-                    action.y = cy;
-
-
-
-                } else if (action_str == "back") {
-
-
-
-                    action.type = AIAction::Type::BACK;
-
-
-
-                }
-
-
-
-
-
-
-
-                action.reason = "OCR match=\"" + keyword + "\" action=" + action_str;
-
-
-
-                idle_frames_ = 0;
-
-
-
-                stats_.idle_frames = 0;
-
-
-
-                stats_.actions_executed++;
-
-
-
-                if (action.template_id.empty() && !tpl_name.empty())
-
-
-
-                    stats_.template_stats[tpl_name].action_count++;
-
-
-
-
-
-
-
-                // OcrMatchResult イベント発行
-
-
-
-                mirage::OcrMatchResult ocr_evt;
-
-
-
-                ocr_evt.device_id = device_id;
-
-
-
-                ocr_evt.text = keyword;
-
-
-
-                ocr_evt.x = cx;
-
-
-
-                ocr_evt.y = cy;
-
-
-
-                // confidence は getTextCenter では取得不可なので 0 (将来拡張用)
-
-
-
-                mirage::bus().publish(ocr_evt);
-
-
-
-
-
-
-
-                // コマンドイベント発行
-
-
-
-                if (action.type == AIAction::Type::TAP) {
-
-
-
-                    mirage::TapCommandEvent evt;
-
-
-
-                    evt.device_id = device_id;
-
-
-
-                    evt.x = action.x;
-
-
-
-                    evt.y = action.y;
-
-
-
-                    evt.source = mirage::CommandSource::AI;
-
-
-
-                    mirage::bus().publish(evt);
-
-
-
-                    MLOG_INFO("ai", "OCRフォールバック TapCommand: device=%s (%d,%d) text=\"%s\"",
-
-
-
-                              device_id.c_str(), cx, cy, keyword.c_str());
-
-
-
-                } else if (action.type == AIAction::Type::BACK) {
-
-
-
-                    mirage::KeyCommandEvent evt;
-
-
-
-                    evt.device_id = device_id;
-
-
-
-                    evt.keycode = 4;  // KEYCODE_BACK
-
-
-
-                    evt.source = mirage::CommandSource::AI;
-
-
-
-                    mirage::bus().publish(evt);
-
-
-
-                    MLOG_INFO("ai", "OCRフォールバック KeyCommand(BACK): device=%s text=\"%s\"",
-
-
-
-                              device_id.c_str(), keyword.c_str());
-
-
-
-                }
-
-
-
-
-
-
-
-                return action;
-
-
-
-            }
-
-
-
-        }
-
-
-
-
-
-
-
-        return action; // キーワード未検出 → NONE
-
-
-
-    }
-
-
-
-#endif
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // マッチ結果キャッシュ（オーバーレイ描画用）
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    void cacheMatches(const std::vector<mirage::vk::VkMatchResult>& vk_results) {
-
-
-
-        std::unordered_map<int, std::string> names;
-
-
-
-        {
-
-
-
-            std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-            names = id_to_name_;
-
-
-
-        }
-
-
-
-
-
-
-
-        std::vector<AIEngine::MatchRect> rects;
-
-
-
-        rects.reserve(vk_results.size());
-
-
-
-        for (const auto& r : vk_results) {
-
-
-
-            AIEngine::MatchRect rect;
-
-
-
-            auto it = names.find(r.template_id);
-
-
-
-            rect.template_id = (it != names.end()) ? it->second
-
-
-
-                : "tpl_" + std::to_string(r.template_id);
-
-
-
-            rect.label = rect.template_id;
-
-
-
-            rect.x = r.x;
-
-
-
-            rect.y = r.y;
-
-
-
-            rect.w = r.template_width;
-
-
-
-            rect.h = r.template_height;
-
-
-
-            rect.center_x = r.center_x;
-
-
-
-            rect.center_y = r.center_y;
-
-
-
-            rect.score = r.score;
-
-
-
-            rects.push_back(rect);
-
-
-
-        }
-
-
-
-
-
-
-
-        std::lock_guard<std::mutex> lock(matches_mutex_);
-
-
-
-        last_matches_ = std::move(rects);
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // ファイルからテンプレート読み込み（TemplateStore経由 stb_image使用）
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    mirage::Result<void> addTemplateFromFile(const std::string& path, const std::string& name,
-
-
-
-                                              int template_id) {
-
-
-
-        if (!vk_matcher_) {
-
-
-
-            return mirage::Err<void>("VulkanTemplateMatcher未初期化");
-
-
-
-        }
-
-
-
-
-
-
-
-        // TemplateStore経由: stb_imageでデコード → Gray8変換 → 内部保持
-
-
-
-        if (template_store_) {
-
-
-
-            auto loadResult = template_store_->loadFromFile(template_id, path);
-
-
-
-            if (loadResult.is_err()) {
-
-
-
-                return mirage::Err<void>("TemplateStore読込失敗: " + loadResult.error().message);
-
-
-
-            }
-
-
-
-
-
-
-
-            // TemplateStoreから取得してMatcherに登録
-
-
-
-            auto* th = template_store_->get(template_id);
-
-
-
-            if (!th || th->gray_data.empty()) {
-
-
-
-                return mirage::Err<void>("Store内データが空");
-
-
-
-            }
-
-
-
-
-
-
-
-            auto addResult = vk_matcher_->addTemplate(
-
-
-
-                name, th->gray_data.data(), th->w, th->h, "");
-
-
-
-            if (addResult.is_err()) {
-
-
-
-                return mirage::Err<void>("Matcher登録失敗: " + addResult.error().message);
-
-
-
-            }
-
-
-
-            int matcher_id = addResult.value();
-
-
-
-
-
-
-
-            // matcher_idをTemplateHandleに記録（将来の参照用）
-
-
-
-            // NOTE: TemplateHandle::matcher_idは直接書き込み不可（const get）
-
-
-
-            // id_to_name_マッピングで管理
-
-
-
-
-
-
-
-            {
-
-
-
-                std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-                id_to_name_[matcher_id] = name;
-
-
-
-            }
-
-
-
-            action_mapper_->addTemplateAction(name, "tap:" + name);
-
-
-
-
-
-
-
-            MLOG_DEBUG("ai", "テンプレート登録: name=%s store_id=%d matcher_id=%d %s",
-
-
-
-                       name.c_str(), template_id, matcher_id, path.c_str());
-
-
-
-            return mirage::Ok();
-
-
-
-        }
-
-
-
-
-
-
-
-        // TemplateStore未接続時: 直接stb_imageでデコード（フォールバック）
-
-
-
-        int w = 0, h = 0, channels = 0;
-
-
-
-        unsigned char* img = stbi_load(path.c_str(), &w, &h, &channels, 1);
-
-
-
-        if (!img) {
-
-
-
-            // RGBA → Gray フォールバック
-
-
-
-            img = stbi_load(path.c_str(), &w, &h, &channels, 4);
-
-
-
-            if (!img) {
-
-
-
-                return mirage::Err<void>("stbi_load失敗: " + path);
-
-
-
-            }
-
-
-
-            // RGBA → Gray8 変換
-
-
-
-            std::vector<uint8_t> gray((size_t)w * h);
-
-
-
-            for (int i = 0; i < w * h; i++) {
-
-
-
-                int y = (77 * img[i * 4 + 0] + 150 * img[i * 4 + 1]
-
-
-
-                         + 29 * img[i * 4 + 2] + 128) >> 8;
-
-
-
-                gray[i] = (uint8_t)std::clamp(y, 0, 255);
-
-
-
-            }
-
-
-
-            stbi_image_free(img);
-
-
-
-
-
-
-
-            auto addResult = vk_matcher_->addTemplate(name, gray.data(), w, h, "");
-
-
-
-            if (addResult.is_err()) {
-
-
-
-                return mirage::Err<void>("Matcher登録失敗: " + addResult.error().message);
-
-
-
-            }
-
-
-
-            int matcher_id = addResult.value();
-
-
-
-            {
-
-
-
-                std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-                id_to_name_[matcher_id] = name;
-
-
-
-            }
-
-
-
-            action_mapper_->addTemplateAction(name, "tap:" + name);
-
-
-
-            return mirage::Ok();
-
-
-
-        }
-
-
-
-
-
-
-
-        // Gray8直接読込成功
-
-
-
-        auto addResult = vk_matcher_->addTemplate(name, img, w, h, "");
-
-
-
-        stbi_image_free(img);
-
-
-
-        if (addResult.is_err()) {
-
-
-
-            return mirage::Err<void>("Matcher登録失敗: " + addResult.error().message);
-
-
-
-        }
-
-
-
-        int matcher_id = addResult.value();
-
-
-
-        {
-
-
-
-            std::lock_guard<std::mutex> lock(names_mutex_);
-
-
-
-            id_to_name_[matcher_id] = name;
-
-
-
-        }
-
-
-
-        action_mapper_->addTemplateAction(name, "tap:" + name);
-
-
-
-        return mirage::Ok();
-
-
-
-    }
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // メンバ変数
-
-
-
-    // =========================================================================
-
-
-
-
-
-
-
-    // =========================================================================
-
-
-
-    // 改善L: 遅延ジッター用 保留アクション
-
-
-
-    // =========================================================================
-
-
-
-    struct PendingAction {
-
-
-
-        int slot;
-
-
-
-        AIAction action;
-
-
-
-        std::chrono::steady_clock::time_point fire_at;
-
-
-
-    };
-
-
-
-    std::vector<PendingAction> pending_actions_;
-
-
-
-    std::mt19937 rng_{std::random_device{}()};
-
-
-
-    std::atomic<bool> hot_reload_running_{false};
-
-
-
-    std::thread hot_reload_thread_;
-
-
-
-    std::filesystem::file_time_type manifest_last_mtime_{};
-
-
-
-    std::string template_dir_;  // hotReloadで使用するテンプレートディレクトリ
-
-
-
-
-
-
-
-    AIConfig config_;
-
-
-
-    bool initialized_ = false;
-
-
-
-
-
-
-
-    // TemplateStore（外部所有、non-owning）
-
-
-
-    TemplateStore* template_store_ = nullptr;
-
-
-
-
-
-
-
-    // FrameAnalyzer(OCR)（外部所有、non-owning）
-
-
-
-#ifdef MIRAGE_OCR_ENABLED
-
-
-
-    mirage::FrameAnalyzer* frame_analyzer_ = nullptr;
-
-
-
-#endif
-
-
-
-
-
-
-
-    // Vulkanバックエンド
-
-
-
-    mirage::vk::VulkanContext* vk_ctx_ = nullptr;
-
-
-
-    std::unique_ptr<mirage::vk::VulkanComputeProcessor> vk_processor_;
-
-
-
-    std::unique_ptr<mirage::vk::VulkanTemplateMatcher> vk_matcher_;
-
-
-
-
-
-
-
-    // アクション決定
-
-
-
-    std::unique_ptr<ActionMapper> action_mapper_;
-
-
-
-    std::unique_ptr<VisionDecisionEngine> vision_engine_;
-
-
-
-    int idle_frames_ = 0;
-
-
-
-
-
-
-
-    // テンプレートID→名前マッピング
-
-
-
-    std::mutex names_mutex_;
-
-
-
-    std::unordered_map<int, std::string> id_to_name_;
-
-
-
-
-
-
-
-    // オーバーレイ用マッチ結果キャッシュ
-
-
-
-    mutable std::mutex matches_mutex_;
-
-
-
-    std::vector<AIEngine::MatchRect> last_matches_;
-
-
-
-    // 改善Q
-
-
-
-    std::unordered_map<std::string, mirage::ai::DeviceAdaptation> device_adaptations_;
-
-
-
-    mutable std::mutex adaptation_mutex_;
-
-
-
-
-
-
-
-    // EventBus購読ハンドル
-
-
-
-    mirage::SubscriptionHandle frame_sub_;
-
-
-
-
-
-
-
-    // 統計
-
-
-
-    AIStats stats_;
-
-
-
-};
-
-
-
-
-
-
-
-// =============================================================================
-
-
-
-// AIEngine メソッド委譲
-
-
-
-// =============================================================================
-
-
-
-
-
-
-
-AIEngine::AIEngine() : impl_(std::make_unique<Impl>()) {}
-
-
-
-AIEngine::~AIEngine() = default;
-
-
-
-
-
-
-
-mirage::Result<void> AIEngine::initialize(const AIConfig& config,
-
-
-
-                                          mirage::vk::VulkanContext* vk_ctx) {
-
-
-
-    return impl_->initialize(config, vk_ctx);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::shutdown() { impl_->shutdown(); }
-
-
-
-
-
-
-
-void AIEngine::setTemplateStore(TemplateStore* store) {
-
-
-
-    impl_->setTemplateStore(store);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::setFrameAnalyzer(mirage::FrameAnalyzer* analyzer) {
-
-
-
-    impl_->setFrameAnalyzer(analyzer);
-
-
-
-}
-
-
-
-
-
-
-
-mirage::Result<void> AIEngine::loadTemplatesFromDir(const std::string& dir) {
-
-
-
-    return impl_->loadTemplatesFromDir(dir);
-
-
-
-}
-
-
-
-
-
-
-
-bool AIEngine::addTemplate(const std::string& name, const uint8_t* rgba, int w, int h) {
-
-
-
-    return impl_->addTemplate(name, rgba, w, h);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::clearTemplates() { impl_->clearTemplates(); }
-
-
-
-
-
-
-
-AIAction AIEngine::processFrame(int slot, const uint8_t* rgba, int width, int height) {
-
-
-
-    if (!enabled_) {
-
-
-
-        AIAction action;
-
-
-
-        action.type = AIAction::Type::NONE;
-
-
-
-        action.reason = "AI無効";
-
-
-
-        return action;
-
-
-
-    }
-
-
-
-
-
-
-
-    bool can_send = can_send_callback_ ? can_send_callback_() : true;
-
-
-
-    auto action = impl_->processFrame(slot, rgba, width, height, can_send);
-
-
-
-
-
-
-
-    // 改善L: 保留ジッターアクションをフラッシュ
-
-
-
-    if (impl_) impl_->flushPendingActions(action_callback_);  // ジッターアクションもここで処理
-
-
-
-
-
-
-
-    // 改善L: 保留ジッターアクションのフラッシュ
-
-
-
-    // アクション実行コールバック呼び出し
-
-
-
-    if (action.type != AIAction::Type::NONE &&
-
-
-
-        action.type != AIAction::Type::WAIT &&
-
-
-
-        action_callback_) {
-
-
-
-        action_callback_(slot, action);
-
-
-
-    }
-
-
-
-
-
-
-
-    return action;
-
-
-
-}
-
-
-
-
-
-
-
-std::vector<AIEngine::MatchRect> AIEngine::getLastMatches() const {
-
-
-
-    if (!impl_) return {};
-
-
-
-    return impl_->getLastMatches();
-
-
-
-}
-
-
-
-
-
-
-
-AIStats AIEngine::getStats() const { return impl_->getStats(); }
-
-
-
-void AIEngine::resetStats() { impl_->resetStats(); }
-
-
-
-void AIEngine::reset() { impl_->reset(); }
-
-
-
-
-
-
-
-int AIEngine::getDeviceVisionState(const std::string& device_id) const {
-
-
-
-    if (!impl_) return 0;
-
-
-
-    return impl_->getDeviceVisionState(device_id);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::resetDeviceVision(const std::string& device_id) {
-
-
-
-    if (impl_) impl_->resetDeviceVision(device_id);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::resetAllVision() {
-
-
-
-    if (impl_) impl_->resetAllVision();
-
-
-
-}
-
-
-
-
-
-
-
-AIEngine::VDEConfig AIEngine::getVDEConfig() const {
-
-
-
-    if (!impl_) return {};
-
-
-
-    return impl_->getVDEConfig();
-
-
-
-}
-
-
-
-
-
-
-
-std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const {
-
-
-
-    if (!impl_) return {};
-
-
-
-    return impl_->getAllDeviceVisionStates();
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::setVDEConfig(const VDEConfig& cfg) {
-
-
-
-    if (impl_) impl_->setVDEConfig(cfg);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::setJitterConfig(int min_ms, int max_ms) {
-
-
-
-    if (impl_) impl_->setJitterConfig(min_ms, max_ms);
-
-
-
-}
-
-
-
-
-
-
-
-
-void AIEngine::registerOcrKeyword(const std::string& kw, const std::string& act) {
-
-
-
-
-    if (impl_) impl_->registerOcrKeyword(kw, act);
-
-
-
-
-}
-
-
-
-
-void AIEngine::removeOcrKeyword(const std::string& kw) {
-
-
-
-
-    if (impl_) impl_->removeOcrKeyword(kw);
-
-
-
-
-}
-
-
-
-
-std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const {
-
-
-
-
-    if (!impl_) return {};
-
-
-
-
-    return impl_->getOcrKeywords();
-
-
-
-
-}
-
-
-
-
-
-
-
-
-void AIEngine::setHotReload(bool enable, int interval_ms) {
-
-
-
-    if (impl_) impl_->setHotReload(enable, interval_ms);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::processFrameAsync(int slot, const uint8_t* rgba, int width, int height) {
-
-
-
-    if (!enabled_ || !impl_) return;
-
-
-
-    bool can_send = can_send_callback_ ? can_send_callback_() : true;
-
-
-
-    impl_->enqueueAsyncFrame(slot, rgba, width, height, can_send);
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::setAsyncMode(bool enable) {
-
-
-
-    if (impl_) {
-
-
-
-        if (enable) impl_->startAsyncWorkers(&action_callback_);
-
-
-
-        else        impl_->stopAsyncWorkers();
-
-
-
-    }
-
-
-
-}
-
-
-
-
-
-
-
-bool AIEngine::isAsyncMode() const {
-
-
-
-    return impl_ && impl_->isAsyncEnabled();
-
-
-
-}
-
-
-
-
-
-
-
-} // namespace mirage::ai
-
-
-
-
-
-
-
-#else // !USE_AI
-
-
-
-
-
-
-
-#include "mirage_log.hpp"
-
-
-
-
-
-
-
-namespace mirage::ai {
-
-
-
-
-
-
-
-class AIEngine::Impl {};
-
-
-
-
-
-
-
-AIEngine::AIEngine() {}
-
-
-
-AIEngine::~AIEngine() = default;
-
-
-
-
-
-
-
-mirage::Result<void> AIEngine::initialize(const AIConfig&, mirage::vk::VulkanContext*) {
-
-
-
-    return mirage::Err<void>("AI未コンパイル (USE_AI未定義)");
-
-
-
-}
-
-
-
-
-
-
-
-void AIEngine::shutdown() {}
-
-
-
-
-
-
-
-void AIEngine::setTemplateStore(TemplateStore*) {}
-
-
-
-void AIEngine::setFrameAnalyzer(mirage::FrameAnalyzer*) {}
-
-
-
-
-
-
-
-mirage::Result<void> AIEngine::loadTemplatesFromDir(const std::string&) {
-
-
-
-    return mirage::Err<void>("AI未コンパイル");
-
-
-
-}
-
-
-
-
-
-
-
-bool AIEngine::addTemplate(const std::string&, const uint8_t*, int, int) { return false; }
-
-
-
-void AIEngine::clearTemplates() {}
-
-
-
-
-
-
-
-AIAction AIEngine::processFrame(int, const uint8_t*, int, int) {
-
-
-
-    AIAction action;
-
-
-
-    action.type = AIAction::Type::NONE;
-
-
-
-    action.reason = "AI未コンパイル";
-
-
-
-    return action;
-
-
-
-}
-
-
-
-
-
-
-
-std::vector<AIEngine::MatchRect> AIEngine::getLastMatches() const { return {}; }
-
-
-
-AIStats AIEngine::getStats() const { return AIStats(); }
-
-
-
-void AIEngine::resetStats() {}
-
-
-
-void AIEngine::reset() {}
-
-
-
-
-
-
-
-int AIEngine::getDeviceVisionState(const std::string&) const { return 0; }
-
-
-
-void AIEngine::resetDeviceVision(const std::string&) {}
-
-
-
-void AIEngine::resetAllVision() {}
-
-
-
-AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
-
-
-
-void AIEngine::setVDEConfig(const VDEConfig&) {}
-
-
-
-void AIEngine::setJitterConfig(int, int) {}
-
-
-
-void AIEngine::processFrameAsync(int, const uint8_t*, int, int) {}
-
-
-
-void AIEngine::setAsyncMode(bool) {}
-
-
-
-bool AIEngine::isAsyncMode() const { return false; }
-
-
-
-void AIEngine::setDeviceAdaptation(const std::string&, const DeviceAdaptation&) {}
-
-
-
-DeviceAdaptation AIEngine::getDeviceAdaptation(const std::string&) const { return {}; }
-
-
-
-void AIEngine::clearDeviceAdaptation(const std::string&) {}
-
-
-
-
-
-
-
-
-void AIEngine::registerOcrKeyword(const std::string&, const std::string&) {}
-
-
-
-
-void AIEngine::removeOcrKeyword(const std::string&) {}
-
-
-
-
-std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const { return {}; }
-
-
-
-
-void AIEngine::setHotReload(bool, int) {}
-
-
-
-std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const { return {}; }
-
-
-
-
-
-
-
-} // namespace mirage::ai
-
-
-
-
-
-
-
-#endif // USE_AI
-
-
-
+// =============================================================================
+
+
+
+// MirageVulkan - AI Engine Implementation
+
+
+
+// =============================================================================
+
+
+
+// Vulkan一本化。VulkanTemplateMatcher + FrameAnalyzer(OCR)統合。
+
+
+
+// EventBus連携: FrameReadyEvent → processFrame → AIActionEvent発火。
+
+
+
+// =============================================================================
+
+
+
+
+
+
+
+#include "ai_engine.hpp"
+
+
+
+
+
+
+
+#ifdef USE_AI
+
+
+
+
+
+
+
+#include "vulkan/vulkan_context.hpp"
+
+
+
+#include "vulkan_compute_processor.hpp"
+
+
+
+#include "vulkan_template_matcher.hpp"
+
+
+
+#include "ai/template_store.hpp"
+
+
+
+#include "ai/template_autoscan.hpp"
+
+
+
+#include "ai/vision_decision_engine.hpp"
+
+
+
+#include "event_bus.hpp"
+
+
+
+#include "mirage_log.hpp"
+
+
+
+#include "stb_image.h"
+
+
+
+
+
+
+
+#ifdef MIRAGE_OCR_ENABLED
+
+
+
+#include "frame_analyzer.hpp"
+
+
+
+#endif
+
+
+
+
+
+
+
+#include <chrono>
+
+
+
+#include <mutex>
+
+
+
+#include <filesystem>
+
+
+
+#include <algorithm>
+
+
+
+#include <random>
+
+
+
+#include <thread>
+
+
+
+#include <atomic>
+
+
+
+#include <unordered_map>
+
+
+
+#include <queue>
+
+
+
+#include <array>
+
+
+
+#include <condition_variable>
+
+
+
+
+
+
+
+namespace mirage::ai {
+
+
+
+
+
+
+
+// =============================================================================
+
+
+
+// アクションマッパー — テンプレートIDからアクション文字列を決定
+
+
+
+// =============================================================================
+
+
+
+
+
+
+
+class ActionMapper {
+
+
+
+public:
+
+
+
+    void addTemplateAction(const std::string& template_id, const std::string& action) {
+
+
+
+        actions_[template_id] = action;
+
+
+
+    }
+
+
+
+
+
+
+
+    // テンプレート名からアクションを取得（未登録なら "tap:<name>"）
+
+
+
+    std::string getAction(const std::string& template_id) const {
+
+
+
+        auto it = actions_.find(template_id);
+
+
+
+        if (it != actions_.end()) return it->second;
+
+
+
+        return "tap:" + template_id;
+
+
+
+    }
+
+
+
+
+
+
+
+    // マッチ結果の分類（loading/errorの判定）
+
+
+
+    enum class ScreenState { NORMAL, LOADING, ERROR_POPUP };
+
+
+
+
+
+
+
+    ScreenState classifyState(const std::vector<vk::VkMatchResult>& matches,
+
+
+
+                              const std::unordered_map<int, std::string>& id_to_name) const {
+
+
+
+        for (const auto& m : matches) {
+
+
+
+            auto it = id_to_name.find(m.template_id);
+
+
+
+            if (it == id_to_name.end()) continue;
+
+
+
+            const auto& name = it->second;
+
+
+
+            if (name.find("loading") != std::string::npos ||
+
+
+
+                name.find("spinner") != std::string::npos) {
+
+
+
+                return ScreenState::LOADING;
+
+
+
+            }
+
+
+
+            if (name.find("error") != std::string::npos ||
+
+
+
+                name.find("popup") != std::string::npos) {
+
+
+
+                return ScreenState::ERROR_POPUP;
+
+
+
+            }
+
+
+
+        }
+
+
+
+        return ScreenState::NORMAL;
+
+
+
+    }
+
+
+
+
+
+
+
+    // OCRテキストベースのアクションマッピング
+
+
+
+    void registerTextAction(const std::string& keyword, const std::string& action) {
+
+
+
+        text_actions_[keyword] = action;
+
+
+
+    }
+
+
+
+
+
+
+
+    void removeTextAction(const std::string& keyword) {
+
+
+
+        text_actions_.erase(keyword);
+
+
+
+    }
+
+
+
+
+
+
+
+    bool hasTextAction(const std::string& keyword) const {
+
+
+
+        return text_actions_.find(keyword) != text_actions_.end();
+
+
+
+    }
+
+
+
+
+
+
+
+    std::string getTextAction(const std::string& keyword) const {
+
+
+
+        auto it = text_actions_.find(keyword);
+
+
+
+        return (it != text_actions_.end()) ? it->second : std::string{};
+
+
+
+    }
+
+
+
+
+
+
+
+    std::vector<std::string> getTextKeywords() const {
+
+
+
+        std::vector<std::string> keys;
+
+
+
+        keys.reserve(text_actions_.size());
+
+
+
+        for (const auto& [k, v] : text_actions_) {
+
+
+
+            keys.push_back(k);
+
+
+
+        }
+
+
+
+        return keys;
+
+
+
+    }
+
+
+
+
+
+
+
+private:
+
+
+
+    std::unordered_map<std::string, std::string> actions_;
+
+
+
+    std::unordered_map<std::string, std::string> text_actions_;
+
+
+
+};
+
+
+
+
+
+
+
+// =============================================================================
+
+
+
+// AIEngine::Impl
+
+
+
+// =============================================================================
+
+
+
+
+
+
+
+class AIEngine::Impl {
+
+
+
+public:
+
+
+
+    Impl() = default;
+
+
+
+    ~Impl() { shutdown(); }
+
+
+
+
+
+
+
+    mirage::Result<void> initialize(const AIConfig& config,
+
+
+
+                                    mirage::vk::VulkanContext* vk_ctx) {
+
+
+
+        if (!vk_ctx) {
+
+
+
+            return mirage::Err<void>("VulkanContext is required (OpenCL fallback removed)");
+
+
+
+        }
+
+
+
+
+
+
+
+        config_ = config;
+
+
+
+        vk_ctx_ = vk_ctx;
+
+
+
+
+
+
+
+        // RGBA → Gray プロセッサ
+
+
+
+        vk_processor_ = std::make_unique<mirage::vk::VulkanComputeProcessor>();
+
+
+
+        if (!vk_processor_->initialize(*vk_ctx, "shaders")) {
+
+
+
+            vk_processor_.reset();
+
+
+
+            return mirage::Err<void>("VulkanComputeProcessor 初期化失敗");
+
+
+
+        }
+
+
+
+
+
+
+
+        // テンプレートマッチャー
+
+
+
+        mirage::vk::VkMatcherConfig mc;
+
+
+
+        mc.default_threshold = config.default_threshold;
+
+
+
+        mc.enable_multi_scale = config.enable_multi_scale;
+
+
+
+
+
+
+
+        vk_matcher_ = std::make_unique<mirage::vk::VulkanTemplateMatcher>();
+
+
+
+        auto matcherResult = vk_matcher_->initialize(*vk_ctx, mc, "shaders");
+
+
+
+        if (matcherResult.is_err()) {
+
+
+
+            auto err = matcherResult.error().message;
+
+
+
+            vk_matcher_.reset();
+
+
+
+            vk_processor_.reset();
+
+
+
+            return mirage::Err<void>(err);
+
+
+
+        }
+
+
+
+
+
+
+
+        // アクションマッパー
+
+
+
+        action_mapper_ = std::make_unique<ActionMapper>();
+
+
+
+
+
+
+
+        // VisionDecisionEngine（状態遷移マシン）
+
+
+
+        VisionDecisionConfig vde_config;
+
+
+
+        vde_config.confirm_count = 3;
+
+
+
+        vde_config.cooldown_ms = 2000;
+
+
+
+        vde_config.debounce_window_ms = 500;
+
+
+
+        vision_engine_ = std::make_unique<VisionDecisionEngine>(vde_config);
+
+
+
+
+
+
+
+        // EventBus購読
+
+
+
+        if (config.subscribe_events) {
+
+
+
+            frame_sub_ = mirage::bus().subscribe<mirage::FrameReadyEvent>(
+
+
+
+                [this](const mirage::FrameReadyEvent& evt) {
+
+
+
+                    onFrameReady(evt);
+
+
+
+                });
+
+
+
+            MLOG_INFO("ai", "EventBus FrameReadyEvent 購読開始");
+
+
+
+        }
+
+
+
+
+
+
+
+        initialized_ = true;
+
+
+
+        if (config.hot_reload) startHotReload();
+
+
+
+        MLOG_INFO("ai", "AI Engine 初期化完了 (Vulkan Compute)");
+
+
+
+        return mirage::Ok();
+
+
+
+    }
+
+
+
+
+
+
+
+    void shutdown() {
+        stopAsyncWorkers();
+
+
+
+
+
+
+
+
+        stopHotReload();
+
+
+
+        if (!initialized_) return;
+
+
+
+        MLOG_INFO("ai", "AI Engine シャットダウン");
+
+
+
+
+
+
+
+        // EventBus購読解除（SubscriptionHandle RAIIで自動解除）
+
+
+
+        frame_sub_ = mirage::SubscriptionHandle();
+
+
+
+
+
+
+
+        vk_matcher_.reset();
+
+
+
+        vk_processor_.reset();
+
+
+
+        action_mapper_.reset();
+
+
+
+        vision_engine_.reset();
+
+
+
+
+
+
+
+        initialized_ = false;
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // TemplateStore接続
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    void setTemplateStore(TemplateStore* store) {
+
+
+
+        template_store_ = store;
+
+
+
+        MLOG_INFO("ai", "TemplateStore接続: %s", store ? "有効" : "null");
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // FrameAnalyzer(OCR)接続
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    void setFrameAnalyzer([[maybe_unused]] mirage::FrameAnalyzer* analyzer) {
+
+
+
+#ifdef MIRAGE_OCR_ENABLED
+
+
+
+        frame_analyzer_ = analyzer;
+
+
+
+        MLOG_INFO("ai", "FrameAnalyzer接続: %s", analyzer ? "有効" : "null");
+
+
+
+#else
+
+
+
+        MLOG_WARN("ai", "OCR未コンパイル (MIRAGE_OCR_ENABLED未定義) — FrameAnalyzer無視");
+
+
+
+#endif
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // テンプレート管理
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    mirage::Result<void> loadTemplatesFromDir(const std::string& dir) {
+
+
+
+        namespace fs = std::filesystem;
+
+
+
+        if (!fs::exists(dir)) {
+
+
+
+            return mirage::Err<void>("ディレクトリが見つかりません: " + dir);
+
+
+
+        }
+
+
+
+        if (!vk_matcher_) {
+
+
+
+            return mirage::Err<void>("VulkanTemplateMatcher未初期化");
+
+
+
+        }
+
+
+
+
+
+
+
+        // autoscan でマニフェスト同期
+
+
+
+        AutoScanConfig scan_cfg;
+
+
+
+        scan_cfg.templates_dir = dir;
+
+
+
+        scan_cfg.manifest_path = dir + "/manifest.json";
+
+
+
+        TemplateManifest manifest;
+
+
+
+        auto scan_result = syncTemplateManifest(scan_cfg, manifest);
+
+
+
+        if (!scan_result.ok) {
+
+
+
+            return mirage::Err<void>("オートスキャン失敗: " + scan_result.error);
+
+
+
+        }
+
+
+
+
+
+
+
+        MLOG_INFO("ai", "オートスキャン完了: 追加=%d 更新=%d 保持=%d 削除=%d",
+
+
+
+                  scan_result.added, scan_result.updated,
+
+
+
+                  scan_result.kept, scan_result.removed);
+
+
+
+
+
+
+
+        // マニフェストの各エントリを TemplateStore → VulkanTemplateMatcher に登録
+
+
+
+        int count = 0;
+
+
+
+        for (const auto& entry : manifest.entries) {
+
+
+
+            std::string full_path = dir + "/" + entry.file;
+
+
+
+
+
+
+
+            auto addResult = addTemplateFromFile(full_path, entry.name, entry.template_id);
+
+
+
+            if (addResult.is_ok()) {
+
+
+
+                count++;
+
+
+
+                // 改善E: マニフェストのROIをマッチャーに反映
+
+
+
+                if (entry.threshold > 0.0f && vk_matcher_) {
+
+
+
+                    vk_matcher_->setTemplateThreshold(entry.name, entry.threshold);
+
+
+
+                    MLOG_DEBUG("ai", "閾値設定: %s -> %.2f", entry.name.c_str(), entry.threshold);
+
+
+
+                }
+
+
+
+                if (entry.roi_w > 0.0f && vk_matcher_) {
+
+
+
+                    vk_matcher_->setTemplateRoiNorm(entry.name,
+
+
+
+                        entry.roi_x, entry.roi_y,
+
+
+
+                        entry.roi_w, entry.roi_h);
+
+
+
+                    MLOG_DEBUG("ai", "ROI設定: %s (%.2f,%.2f)+(%.2f x %.2f)",
+
+
+
+                               entry.name.c_str(),
+
+
+
+                               entry.roi_x, entry.roi_y,
+
+
+
+                               entry.roi_w, entry.roi_h);
+
+
+
+                }
+
+
+
+            } else {
+
+
+
+                MLOG_WARN("ai", "テンプレート読み込みスキップ: %s (%s)",
+
+
+
+                          entry.name.c_str(), addResult.error().message.c_str());
+
+
+
+            }
+
+
+
+        }
+
+
+
+
+
+
+
+        stats_.templates_loaded = count;
+
+
+
+        MLOG_INFO("ai", "テンプレート %d 個読み込み完了 (dir=%s)", count, dir.c_str());
+
+
+
+        if (count > 0) return mirage::Ok();
+
+
+
+        return mirage::Err<void>("テンプレートが1つも読み込めませんでした");
+
+
+
+    }
+
+
+
+
+
+
+
+    bool addTemplate(const std::string& name, const uint8_t* rgba, int w, int h) {
+
+
+
+        if (!vk_matcher_) return false;
+
+
+
+
+
+
+
+        // RGBA→GrayをGPUで変換
+
+
+
+        auto* gray_gpu = vk_processor_->rgbaToGrayGpu(rgba, w, h);
+
+
+
+        if (!gray_gpu) {
+
+
+
+            MLOG_WARN("ai", "RGBA→Gray変換失敗: %s", name.c_str());
+
+
+
+            return false;
+
+
+
+        }
+
+
+
+
+
+
+
+        // GPU上のGrayデータをCPUに読み戻してテンプレート登録
+
+
+
+        // VulkanTemplateMatcher::addTemplate はCPU grayデータを受け取る
+
+
+
+        std::vector<uint8_t> gray_cpu(w * h);
+
+
+
+        if (!vk_processor_->rgbaToGray(rgba, w, h, gray_cpu.data())) {
+
+
+
+            MLOG_WARN("ai", "RGBA→Gray(CPU)変換失敗: %s", name.c_str());
+
+
+
+            return false;
+
+
+
+        }
+
+
+
+
+
+
+
+        auto addResult = vk_matcher_->addTemplate(name, gray_cpu.data(), w, h, "");
+
+
+
+        if (addResult.is_err()) {
+
+
+
+            MLOG_WARN("ai", "テンプレート追加失敗: %s (%s)", name.c_str(), addResult.error().message.c_str());
+
+
+
+            return false;
+
+
+
+        }
+
+
+
+        int id = addResult.value();
+
+
+
+
+
+
+
+        // ID→名前マッピング
+
+
+
+        {
+
+
+
+            std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+            id_to_name_[id] = name;
+
+
+
+        }
+
+
+
+        action_mapper_->addTemplateAction(name, "tap:" + name);
+
+
+
+        stats_.templates_loaded++;
+
+
+
+        return true;
+
+
+
+    }
+
+
+
+
+
+
+
+    void clearTemplates() {
+
+
+
+        if (vk_matcher_) vk_matcher_->clearAll();
+
+
+
+        {
+
+
+
+            std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+            id_to_name_.clear();
+
+
+
+        }
+
+
+
+        stats_.templates_loaded = 0;
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // フレーム処理
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    AIAction processFrame(int slot, const uint8_t* rgba, int width, int height,
+
+
+
+                          bool can_send) {
+
+
+
+        auto start = std::chrono::high_resolution_clock::now();
+
+
+
+
+
+
+
+        AIAction action;
+
+
+
+        action.type = AIAction::Type::NONE;
+
+
+
+
+
+
+
+        if (!initialized_) { action.reason = "未初期化"; return action; }
+
+
+
+        if (width <= 0 || height <= 0 || width > 8192 || height > 8192) {
+
+
+
+            action.reason = "不正なフレームサイズ"; return action;
+
+
+
+        }
+
+
+
+        if (!rgba) { action.reason = "nullフレーム"; return action; }
+
+
+
+
+
+
+
+        // RGBA → Gray (GPU)
+
+
+
+        auto* gray_gpu = vk_processor_->rgbaToGrayGpu(rgba, width, height);
+
+
+
+        if (!gray_gpu) {
+
+
+
+            action.reason = "RGBA→Gray変換失敗";
+
+
+
+            MLOG_WARN("ai", "Vulkan RGBA→Gray失敗");
+
+
+
+            return action;
+
+
+
+        }
+
+
+
+
+
+
+
+        // テンプレートマッチング (GPU)
+
+
+
+        auto matchResult = vk_matcher_->matchGpu(gray_gpu, width, height);
+
+
+
+        if (matchResult.is_err()) {
+
+
+
+            action.reason = "マッチング失敗: " + matchResult.error().message;
+
+
+
+            MLOG_WARN("ai", "Vulkan match失敗: %s", matchResult.error().message.c_str());
+
+
+
+            return action;
+
+
+
+        }
+
+
+
+        auto vk_results = std::move(matchResult).value();
+
+
+
+
+
+
+
+        // マッチ結果をOverlay用にキャッシュ
+
+
+
+        // 改善Q: デバイス適応フィルタ
+
+
+
+        std::string device_id = "slot_" + std::to_string(slot); // moved up for Q
+
+
+
+        {
+
+
+
+            auto _it = device_adaptations_.find(device_id); auto adapt = (_it != device_adaptations_.end()) ? _it->second : mirage::ai::DeviceAdaptation{};
+
+
+            if (adapt.enabled && adapt.min_score > 0.0f) {
+
+
+
+                vk_results.erase(std::remove_if(vk_results.begin(), vk_results.end(),
+
+
+
+                    [&](const vk::VkMatchResult& r){ return r.score < adapt.min_score; }),
+
+
+
+                    vk_results.end());
+
+
+
+            }
+
+
+
+        }
+
+
+
+        cacheMatches(vk_results);
+
+
+
+
+
+
+
+        // VisionDecisionEngine経由で状態遷移判断
+
+
+
+        if (vision_engine_) {
+
+
+
+            // VkMatchResult → VisionMatch変換
+
+
+
+            std::unordered_map<int, std::string> names_snap;
+
+
+
+            {
+
+
+
+                std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+                names_snap = id_to_name_;
+
+
+
+            }
+
+
+
+            std::vector<VisionMatch> vision_matches;
+
+
+
+            vision_matches.reserve(vk_results.size());
+
+
+
+            for (const auto& r : vk_results) {
+
+
+
+                VisionMatch vm;
+
+
+
+                auto it = names_snap.find(r.template_id);
+
+
+
+                vm.template_id = (it != names_snap.end()) ? it->second
+
+
+
+                    : "tpl_" + std::to_string(r.template_id);
+
+
+
+                vm.x = r.x;
+
+
+
+                vm.y = r.y;
+
+
+
+                vm.score = r.score;
+
+
+
+                // errorグループ判定: テンプレート名に"error"/"popup"を含む
+
+
+
+                vm.is_error_group = (vm.template_id.find("error") != std::string::npos ||
+
+
+
+                                     vm.template_id.find("popup") != std::string::npos);
+
+
+
+                vision_matches.push_back(std::move(vm));
+
+
+
+            }
+
+
+
+
+
+
+
+            auto decision = vision_engine_->update(device_id, vision_matches);
+
+
+
+
+
+
+
+            if (decision.should_act && can_send) {
+
+
+
+                AIAction decided = decideAction(slot, vk_results, can_send);
+
+
+
+                vision_engine_->notifyActionExecuted(device_id);
+
+
+
+
+
+
+
+                // 改善L: ジッター遅延
+
+
+
+                if (config_.jitter_max_ms > 0 && decided.type != AIAction::Type::NONE) {
+
+
+
+                    int range = config_.jitter_max_ms - config_.jitter_min_ms;
+
+
+
+                    int delay_ms = config_.jitter_min_ms +
+
+
+
+                        (range > 0 ? (int)(rng_() % (unsigned)range) : 0);
+
+
+
+                    auto fire_at = std::chrono::steady_clock::now() +
+
+
+
+                        std::chrono::milliseconds(delay_ms);
+
+
+
+                    pending_actions_.push_back({slot, decided, fire_at});
+
+
+
+                    MLOG_DEBUG("ai", "ジッター保留: slot=%d delay=%dms", slot, delay_ms);
+
+
+
+                    action.type = AIAction::Type::WAIT;
+
+
+
+                    action.reason = "jitter_pending";
+
+
+
+                } else {
+
+
+
+                    action = decided;
+
+
+
+                }
+
+
+
+            } else if (!decision.should_act) {
+
+
+
+                // 未確定 or COOLDOWN中 → WAIT
+
+
+
+                if (!vk_results.empty()) {
+
+
+
+                    // 改善K: skip_count (match found but cooldown/unconfirmed)
+
+
+
+                    for (const auto& r : vk_results) {
+
+
+
+                        auto kit = names_snap.find(r.template_id);
+
+
+
+                        std::string n = (kit != names_snap.end()) ? kit->second
+
+
+
+                                        : "tpl_" + std::to_string(r.template_id);
+
+
+
+                        stats_.template_stats[n].skip_count++;
+
+
+
+                    }
+
+
+
+                    action.type = AIAction::Type::WAIT;
+
+
+
+                    action.reason = "VisionEngine: " +
+
+
+
+                        std::string(visionStateToString(decision.state));
+
+
+
+                } else {
+
+
+
+                    // マッチなし
+
+
+
+                    action.type = AIAction::Type::WAIT;
+
+
+
+                    action.reason = "マッチなし";
+
+
+
+                    idle_frames_++;
+
+
+
+                    stats_.idle_frames = idle_frames_;
+
+
+
+                }
+
+
+
+            }
+
+
+
+        } else {
+
+
+
+            // VisionDecisionEngine未初期化時はフォールバック
+
+
+
+            action = decideAction(slot, vk_results, can_send);
+
+
+
+        }
+
+
+
+
+
+
+
+        // 統計更新
+
+
+
+        auto end = std::chrono::high_resolution_clock::now();
+
+
+
+        double elapsed = std::chrono::duration<double, std::milli>(end - start).count();
+
+
+
+        stats_.frames_processed++;
+
+
+
+        stats_.avg_process_time_ms =
+
+
+
+            (stats_.avg_process_time_ms * (stats_.frames_processed - 1) + elapsed)
+
+
+
+            / stats_.frames_processed;
+
+
+
+
+
+
+
+        // MatchResultEvent をEventBus発行（マッチ結果があれば）
+
+
+
+        if (!vk_results.empty()) {
+
+
+
+            mirage::MatchResultEvent evt;
+
+
+
+            evt.device_id = device_id;
+
+
+
+            evt.frame_id = stats_.frames_processed;
+
+
+
+            evt.process_time_ms = elapsed;
+
+
+
+
+
+
+
+            std::unordered_map<int, std::string> names_for_evt;
+
+
+
+            {
+
+
+
+                std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+                names_for_evt = id_to_name_;
+
+
+
+            }
+
+
+
+            evt.matches.reserve(vk_results.size());
+
+
+
+            for (const auto& r : vk_results) {
+
+
+
+                mirage::MatchResultEvent::Match m;
+
+
+
+                auto it = names_for_evt.find(r.template_id);
+
+
+
+                m.template_name = (it != names_for_evt.end()) ? it->second
+
+
+
+                    : "tpl_" + std::to_string(r.template_id);
+
+
+
+                m.x = r.x;
+
+
+
+                m.y = r.y;
+
+
+
+                m.score = r.score;
+
+
+
+                m.template_id = r.template_id;
+
+
+
+                m.template_width  = r.template_width;
+
+
+
+                m.template_height = r.template_height;
+
+
+
+                evt.matches.push_back(std::move(m));
+
+
+
+            }
+
+
+
+            mirage::bus().publish(evt);
+
+
+
+        }
+
+
+
+
+
+
+
+        return action;
+
+
+
+    }
+
+
+
+
+
+
+
+    std::vector<AIEngine::MatchRect> getLastMatches() const {
+
+
+
+        std::lock_guard<std::mutex> lock(matches_mutex_);
+
+
+
+        return last_matches_;
+
+
+
+    }
+
+
+
+
+
+
+
+    AIStats getStats() const { return stats_; }
+
+
+
+
+
+
+
+    void resetStats() {
+
+
+
+        int tpl = stats_.templates_loaded;
+
+
+
+        stats_ = AIStats();
+
+
+
+        stats_.templates_loaded = tpl;
+
+
+
+    }
+
+
+
+
+
+
+
+    void reset() {
+
+
+
+        idle_frames_ = 0;
+
+
+
+        stats_.idle_frames = 0;
+
+
+
+        if (vision_engine_) vision_engine_->resetAll();
+
+
+
+    }
+
+
+
+
+
+
+
+    // VisionDecisionEngine GUI用アクセサ
+
+
+
+    int getDeviceVisionState(const std::string& device_id) const {
+
+
+
+        if (!vision_engine_) return 0; // IDLE
+
+
+
+        return static_cast<int>(vision_engine_->getDeviceState(device_id));
+
+
+
+    }
+
+
+
+
+
+
+
+    void resetDeviceVision(const std::string& device_id) {
+
+
+
+        if (vision_engine_) vision_engine_->resetDevice(device_id);
+
+
+
+    }
+
+
+
+
+
+
+
+    void resetAllVision() {
+
+
+
+        if (vision_engine_) vision_engine_->resetAll();
+
+
+
+    }
+
+
+
+
+
+
+
+    AIEngine::VDEConfig getVDEConfig() const {
+
+
+
+        AIEngine::VDEConfig result;
+
+
+
+        if (vision_engine_) {
+
+
+
+            auto& c = vision_engine_->config();
+
+
+
+            result.confirm_count      = c.confirm_count;
+
+
+
+            result.cooldown_ms        = c.cooldown_ms;
+
+
+
+            result.debounce_window_ms = c.debounce_window_ms;
+
+
+
+            result.error_recovery_ms  = c.error_recovery_ms;
+
+
+
+            result.enable_ewma        = c.enable_ewma;
+
+
+
+            result.ewma_alpha         = c.ewma_alpha;
+
+
+
+            result.ewma_confirm_thr   = c.ewma_confirm_thr;
+
+
+
+        }
+
+
+
+        return result;
+
+
+
+    }
+
+
+
+
+
+
+
+    void setVDEConfig(const AIEngine::VDEConfig& cfg) {
+
+
+
+        if (vision_engine_) {
+
+
+
+            mirage::ai::VisionDecisionConfig vc;
+
+
+
+            vc.confirm_count      = cfg.confirm_count;
+
+
+
+            vc.cooldown_ms        = cfg.cooldown_ms;
+
+
+
+            vc.debounce_window_ms = cfg.debounce_window_ms;
+
+
+
+            vc.error_recovery_ms  = cfg.error_recovery_ms;
+
+
+
+            vc.enable_ewma        = cfg.enable_ewma;
+
+
+
+            vc.ewma_alpha         = cfg.ewma_alpha;
+
+
+
+            vc.ewma_confirm_thr   = cfg.ewma_confirm_thr;
+
+
+
+            vision_engine_->setConfig(vc);
+
+
+
+        }
+
+
+
+    }
+
+
+
+
+
+
+
+    void setJitterConfig(int min_ms, int max_ms) {
+
+
+
+        config_.jitter_min_ms = std::max(0, min_ms);
+
+
+
+        config_.jitter_max_ms = std::max(0, max_ms);
+
+
+
+        MLOG_INFO("ai", "ジッター設定: %d~%dms", min_ms, max_ms);
+
+
+
+    }
+
+
+
+
+
+
+
+
+    // 改善N
+
+
+
+
+    void registerOcrKeyword(const std::string& kw, const std::string& act) {
+
+
+
+
+        if (action_mapper_) action_mapper_->registerTextAction(kw, act);
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+    // 改善Q: デバイス適応
+
+
+
+    void setDeviceAdaptation(const std::string& id, const mirage::ai::DeviceAdaptation& a) {
+
+
+
+        std::lock_guard<std::mutex> lk(adaptation_mutex_);
+
+
+
+        device_adaptations_[id] = a;
+
+
+
+    }
+
+
+
+    mirage::ai::DeviceAdaptation getDeviceAdaptation(const std::string& id) const {
+
+
+
+        std::lock_guard<std::mutex> lk(adaptation_mutex_);
+
+
+
+        auto it = device_adaptations_.find(id);
+
+
+
+        return it != device_adaptations_.end() ? it->second : mirage::ai::DeviceAdaptation{};
+
+
+
+    }
+
+
+
+    void clearDeviceAdaptation(const std::string& id) {
+
+
+
+        std::lock_guard<std::mutex> lk(adaptation_mutex_);
+
+
+
+        device_adaptations_.erase(id);
+
+
+
+    }
+
+
+
+    void removeOcrKeyword(const std::string& kw) {
+
+
+
+
+        if (action_mapper_) action_mapper_->removeTextAction(kw);
+
+
+
+
+    }
+
+
+
+
+    std::vector<std::pair<std::string,std::string>> getOcrKeywords() const {
+
+
+
+
+        std::vector<std::pair<std::string,std::string>> r;
+
+
+
+
+        if (!action_mapper_) return r;
+
+
+
+
+        for (const auto& k : action_mapper_->getTextKeywords())
+
+
+
+
+            r.push_back({k, action_mapper_->getTextAction(k)});
+
+
+
+
+        return r;
+
+
+
+
+    }
+
+
+
+
+
+
+
+
+    void startHotReload() {
+
+
+
+        if (hot_reload_running_.load()) return;
+
+
+
+        hot_reload_running_ = true;
+
+
+
+        manifest_last_mtime_ = {};
+
+
+
+        hot_reload_thread_ = std::thread([this] {
+
+
+
+            namespace fs = std::filesystem;
+
+
+
+            while (hot_reload_running_.load()) {
+
+
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(config_.hot_reload_interval_ms));
+
+
+
+                if (!hot_reload_running_.load()) break;
+
+
+
+                try {
+
+
+
+                    fs::path manifest = fs::path(config_.templates_dir) / "manifest.json";
+
+
+
+                    if (!fs::exists(manifest)) continue;
+
+
+
+                    auto mtime = fs::last_write_time(manifest);
+
+
+
+                    if (mtime != manifest_last_mtime_) {
+
+
+
+                        manifest_last_mtime_ = mtime;
+
+
+
+                        MLOG_INFO("ai", "[HotReload] manifest.json変更 -> 再ロード");
+
+
+
+                        auto res = loadTemplatesFromDir(config_.templates_dir);
+
+
+
+                        if (res) MLOG_INFO("ai", "[HotReload] 完了");
+
+
+
+                        else     MLOG_WARN("ai", "[HotReload] 失敗: %s", res.error().message.c_str());
+
+
+
+                    }
+
+
+
+                } catch (const std::exception& e) {
+
+
+
+                    MLOG_WARN("ai", "[HotReload] 例外: %s", e.what());
+
+
+
+                }
+
+
+
+            }
+
+
+
+        });
+
+
+
+        MLOG_INFO("ai", "[HotReload] 監視開始 interval=%dms", config_.hot_reload_interval_ms);
+
+
+
+    }
+
+
+
+
+
+
+
+    void stopHotReload() {
+
+
+
+        hot_reload_running_ = false;
+
+
+
+        if (hot_reload_thread_.joinable()) hot_reload_thread_.join();
+
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+    // 改善O: 非同期ワーカー管理
+
+
+
+    void startAsyncWorkers(std::function<void(int,const AIAction&)>* cb_ptr) {
+
+
+
+        if (async_enabled_.load()) return;
+
+
+
+        async_action_cb_ = cb_ptr;
+
+
+
+        async_enabled_ = true;
+
+
+
+        for (int s = 0; s < kMaxAsyncSlots; ++s) {
+
+
+
+            async_workers_[s] = std::thread([this, s]() {
+
+
+
+                while (async_enabled_.load()) {
+
+
+
+                    AsyncFrameJob job;
+
+
+
+                    {
+
+
+
+                        std::unique_lock<std::mutex> lk(async_q_mutexes_[s]);
+
+
+
+                        async_q_cvs_[s].wait(lk, [&]{
+
+
+
+                            return !async_queues_[s].empty() || !async_enabled_.load();
+
+
+
+                        });
+
+
+
+                        if (!async_enabled_.load()) break;
+
+
+
+                        job = std::move(async_queues_[s].front());
+
+
+
+                        async_queues_[s].pop();
+
+
+
+                    }
+
+
+
+                    auto action = processFrame(job.slot, job.rgba.data(), job.width, job.height, job.can_send);
+
+
+
+                    if (async_action_cb_ && *async_action_cb_) {
+
+
+
+                        flushPendingActions(*async_action_cb_);
+
+
+
+                        if (action.type != AIAction::Type::NONE && action.type != AIAction::Type::WAIT)
+
+
+
+                            (*async_action_cb_)(job.slot, action);
+                    // AI improvement S: EventBus dispatch
+                    if (action.type != AIAction::Type::NONE && action.type != AIAction::Type::WAIT) {
+                        auto& _abus = mirage::bus();
+                        mirage::AIActionEvent _ae;
+                        _ae.slot = job.slot;
+                        _ae.device_id = "slot_" + std::to_string(job.slot);
+                        _ae.x = action.x; _ae.y = action.y;
+                        _ae.x2 = action.x2; _ae.y2 = action.y2;
+                        _ae.duration_ms = action.duration_ms;
+                        _ae.template_name = action.template_id;
+                        _ae.confidence = action.confidence;
+                        if (action.type == AIAction::Type::TAP) {
+                            _ae.action_type = "TAP";
+                            mirage::TapCommandEvent _t;
+                            _t.device_id = _ae.device_id; _t.x = action.x; _t.y = action.y;
+                            _abus.publish(_ae); _abus.publish(_t);
+                        } else if (action.type == AIAction::Type::SWIPE) {
+                            _ae.action_type = "SWIPE";
+                            mirage::SwipeCommandEvent _s;
+                            _s.device_id = _ae.device_id;
+                            _s.x1 = action.x; _s.y1 = action.y;
+                            _s.x2 = action.x2; _s.y2 = action.y2;
+                            _s.duration_ms = action.duration_ms;
+                            _abus.publish(_ae); _abus.publish(_s);
+                        } else if (action.type == AIAction::Type::BACK) {
+                            _ae.action_type = "BACK";
+                            mirage::KeyCommandEvent _k;
+                            _k.device_id = _ae.device_id; _k.keycode = 4;
+                            _abus.publish(_ae); _abus.publish(_k);
+                        }
+                    }
+
+
+
+                    }
+
+
+
+                }
+
+
+
+            });
+
+
+
+        }
+
+
+
+        MLOG_INFO("ai", "[AsyncO] %d slot workers started", kMaxAsyncSlots);
+
+
+
+    }
+
+
+
+
+
+
+
+    void stopAsyncWorkers() {
+
+
+
+        if (!async_enabled_.load()) return;
+
+
+
+        async_enabled_ = false;
+
+
+
+        for (int s = 0; s < kMaxAsyncSlots; ++s) async_q_cvs_[s].notify_all();
+
+
+
+        for (int s = 0; s < kMaxAsyncSlots; ++s) if (async_workers_[s].joinable()) async_workers_[s].join();
+
+
+
+        MLOG_INFO("ai", "[AsyncO] slot workers stopped");
+
+
+
+    }
+
+
+
+
+
+
+
+    bool isAsyncEnabled() const { return async_enabled_.load(); }
+
+
+
+
+
+
+
+    void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send) {
+
+
+
+        if (slot < 0 || slot >= kMaxAsyncSlots || !rgba) return;
+
+
+
+        AsyncFrameJob job;
+
+
+
+        job.slot = slot;
+
+
+
+        job.width = width; job.height = height;
+
+
+
+        job.can_send = can_send;
+
+
+
+        job.rgba.assign(rgba, rgba + (size_t)width * height * 4);
+
+
+
+        {
+
+
+
+            std::lock_guard<std::mutex> lk(async_q_mutexes_[slot]);
+
+
+
+            // Drop oldest if queue too deep (prevent unbounded memory)
+
+
+
+            while (async_queues_[slot].size() >= 2) async_queues_[slot].pop();
+
+
+
+            async_queues_[slot].push(std::move(job));
+
+
+
+        }
+
+
+
+        async_q_cvs_[slot].notify_one();
+
+
+
+    }
+
+
+
+    void setHotReload(bool enable, int interval_ms) {
+
+
+
+        config_.hot_reload_interval_ms = std::max(200, interval_ms);
+
+
+
+        config_.hot_reload = enable;
+
+
+
+        if (enable) startHotReload(); else stopHotReload();
+
+
+
+    }
+
+
+
+
+
+
+
+    // 改善L: 期限切れの保留アクションをコールバックで発火
+
+
+
+    void flushPendingActions(const ActionCallback& cb) {
+
+
+
+        if (!cb) return;
+
+
+
+        auto now = std::chrono::steady_clock::now();
+
+
+
+        for (auto it = pending_actions_.begin(); it != pending_actions_.end(); ) {
+
+
+
+            if (it->fire_at <= now) {
+
+
+
+                MLOG_DEBUG("ai", "ジッター発火: slot=%d", it->slot);
+
+
+
+                cb(it->slot, it->action);
+
+
+
+                it = pending_actions_.erase(it);
+
+
+
+            } else { ++it; }
+
+
+
+        }
+
+
+
+    }
+
+
+
+
+
+
+
+    std::vector<std::pair<std::string, int>> getAllDeviceVisionStates() const {
+
+
+
+        std::vector<std::pair<std::string, int>> result;
+
+
+
+        if (!vision_engine_) return result;
+
+
+
+        // device_states_はprivate — getDeviceStateを各既知デバイスに対して呼ぶ
+
+
+
+        // GUIからはslot_0〜slot_9の固定range
+
+
+
+        for (int i = 0; i < 10; ++i) {
+
+
+
+            std::string dev = "slot_" + std::to_string(i);
+
+
+
+            auto state = vision_engine_->getDeviceState(dev);
+
+
+
+            if (state != VisionState::IDLE) {
+
+
+
+                result.emplace_back(dev, static_cast<int>(state));
+
+
+
+            }
+
+
+
+        }
+
+
+
+        return result;
+
+
+
+    }
+
+
+
+
+
+
+
+private:
+
+
+
+    // 改善O: 非同期フレーム処理インフラ
+
+
+
+    static constexpr int kMaxAsyncSlots = 4;
+
+
+
+    struct AsyncFrameJob {
+
+
+
+        int slot;
+
+
+
+        std::vector<uint8_t> rgba;
+
+
+
+        int width, height;
+
+
+
+        bool can_send;
+
+
+
+    };
+
+
+
+    std::array<std::queue<AsyncFrameJob>, kMaxAsyncSlots> async_queues_;
+
+
+
+    std::array<std::mutex, kMaxAsyncSlots>              async_q_mutexes_;
+
+
+
+    std::array<std::condition_variable, kMaxAsyncSlots> async_q_cvs_;
+
+
+
+    std::array<std::thread, kMaxAsyncSlots>             async_workers_;
+
+
+
+    std::atomic<bool>                                   async_enabled_{false};
+
+
+
+    std::function<void(int,const AIAction&)>*           async_action_cb_ = nullptr;
+
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // EventBus FrameReady ハンドラ
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    void onFrameReady(const mirage::FrameReadyEvent& evt) {
+
+
+
+        if (!initialized_) return;
+
+
+
+
+
+
+
+        // device_id から slot番号を推定（"slot_N" 形式）
+
+
+
+        int slot = 0;
+
+
+
+        if (evt.device_id.substr(0, 5) == "slot_") {
+
+
+
+            try { slot = std::stoi(evt.device_id.substr(5)); } catch (...) {}
+
+
+
+        }
+
+
+
+        (void)slot;  // 将来のパイプライン統合用
+
+
+
+
+
+
+
+        // processFrameは外部（gui_threads.cpp）から直接呼ばれるため、
+
+
+
+        // EventBus経由では重複呼び出しを避ける。
+
+
+
+        // EventBus購読は将来のパイプライン統合用に準備のみ。
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // アクション決定ロジック
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    AIAction decideAction(int slot,
+
+
+
+                          const std::vector<mirage::vk::VkMatchResult>& results,
+
+
+
+                          bool can_send) {
+
+
+
+        AIAction action;
+
+
+
+
+
+
+
+        std::unordered_map<int, std::string> names;
+
+
+
+        {
+
+
+
+            std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+            names = id_to_name_;
+
+
+
+        }
+
+
+
+
+
+
+
+        if (results.empty()) {
+
+
+
+            // テンプレートマッチ失敗 → OCRフォールバック
+
+
+
+#ifdef MIRAGE_OCR_ENABLED
+
+
+
+            if (frame_analyzer_ && frame_analyzer_->isInitialized()) {
+
+
+
+                std::string device_id = "slot_" + std::to_string(slot);
+
+
+
+                auto ocr_action = tryOcrFallback(slot, device_id, can_send);
+
+
+
+                if (ocr_action.type != AIAction::Type::NONE) {
+
+
+
+                    return ocr_action;
+
+
+
+                }
+
+
+
+            }
+
+
+
+#endif
+
+
+
+            idle_frames_++;
+
+
+
+            stats_.idle_frames = idle_frames_;
+
+
+
+            action.type = AIAction::Type::WAIT;
+
+
+
+            action.reason = "マッチなし (idle=" + std::to_string(idle_frames_) + ")";
+
+
+
+            return action;
+
+
+
+        }
+
+
+
+
+
+
+
+        // 画面状態判定
+
+
+
+        auto state = action_mapper_->classifyState(results, names);
+
+
+
+        if (state == ActionMapper::ScreenState::LOADING) {
+
+
+
+            action.type = AIAction::Type::WAIT;
+
+
+
+            action.reason = "ローディング検出 — 待機";
+
+
+
+            return action;
+
+
+
+        }
+
+
+
+
+
+
+
+        // ベストマッチを選択
+
+
+
+        const auto& best = *std::max_element(results.begin(), results.end(),
+
+
+
+            [](const auto& a, const auto& b) { return a.score < b.score; });
+
+
+
+
+
+
+
+        // 送信可能チェック
+
+
+
+        if (!can_send) {
+
+
+
+            action.type = AIAction::Type::WAIT;
+
+
+
+            action.reason = "送信不可 — 待機";
+
+
+
+            return action;
+
+
+
+        }
+
+
+
+
+
+
+
+        // テンプレート名取得
+
+
+
+        std::string tpl_name;
+
+
+
+        auto it = names.find(best.template_id);
+
+
+
+        if (it != names.end()) tpl_name = it->second;
+
+
+
+        else tpl_name = "tpl_" + std::to_string(best.template_id);
+
+
+
+
+
+
+
+        // 改善K: テンプレート検出カウント
+
+
+
+        stats_.template_stats[tpl_name].detect_count++;
+
+
+
+
+
+
+
+        // アクション文字列を取得
+
+
+
+        std::string action_str = action_mapper_->getAction(tpl_name);
+
+
+
+
+
+
+
+        if (action_str.substr(0, 4) == "tap:") {
+
+
+
+            action.type = AIAction::Type::TAP;
+
+
+
+            action.template_id = action_str.substr(4);
+
+
+
+            // center座標でタップ（left-top + size/2）
+
+
+
+            action.x = best.center_x;
+
+
+
+            action.y = best.center_y;
+
+
+
+            action.confidence = best.score;
+
+
+
+        } else if (action_str == "back") {
+
+
+
+            action.type = AIAction::Type::BACK;
+
+
+
+        }
+
+
+
+
+
+
+
+        action.reason = "match=" + tpl_name + " score=" +
+
+
+
+                        std::to_string(best.score);
+
+
+
+        idle_frames_ = 0;
+
+
+
+        stats_.idle_frames = 0;
+
+
+
+        stats_.actions_executed++;
+
+
+
+        if (!tpl_name.empty()) stats_.template_stats[tpl_name].action_count++;
+
+
+
+
+
+
+
+        // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
+
+
+
+        std::string device_id = "slot_" + std::to_string(slot);
+
+
+
+        if (action.type == AIAction::Type::TAP) {
+
+
+
+            mirage::TapCommandEvent evt;
+
+
+
+            evt.device_id = device_id;
+
+
+
+            evt.x = action.x;
+
+
+
+            evt.y = action.y;
+
+
+
+            evt.source = mirage::CommandSource::AI;
+
+
+
+            mirage::bus().publish(evt);
+
+
+
+            MLOG_DEBUG("ai", "EventBus TapCommand発行: device=%s (%d,%d) tpl=%s",
+
+
+
+                       device_id.c_str(), action.x, action.y, tpl_name.c_str());
+
+
+
+        } else if (action.type == AIAction::Type::BACK) {
+
+
+
+            mirage::KeyCommandEvent evt;
+
+
+
+            evt.device_id = device_id;
+
+
+
+            evt.keycode = 4;  // KEYCODE_BACK
+
+
+
+            evt.source = mirage::CommandSource::AI;
+
+
+
+            mirage::bus().publish(evt);
+
+
+
+            MLOG_DEBUG("ai", "EventBus KeyCommand(BACK)発行: device=%s", device_id.c_str());
+
+
+
+        }
+
+
+
+
+
+
+
+        return action;
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // OCRフォールバック — テンプレートマッチ失敗時にOCRでアクション決定
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+#ifdef MIRAGE_OCR_ENABLED
+
+
+
+    AIAction tryOcrFallback(int slot, const std::string& device_id, bool can_send) {
+
+
+
+        AIAction action;
+
+
+
+        action.type = AIAction::Type::NONE;
+
+
+
+
+
+
+
+        if (!can_send) {
+
+
+
+            action.type = AIAction::Type::WAIT;
+
+
+
+            action.reason = "OCRフォールバック: 送信不可 — 待機";
+
+
+
+            return action;
+
+
+
+        }
+
+
+
+
+
+
+
+        // 登録済みテキストキーワードを順に検索
+
+
+
+        auto keywords = action_mapper_->getTextKeywords();
+
+
+
+        if (keywords.empty()) {
+
+
+
+            return action; // テキストアクション未登録 → NONE
+
+
+
+        }
+
+
+
+
+
+
+
+        for (const auto& keyword : keywords) {
+
+
+
+            int cx = 0, cy = 0;
+
+
+
+            if (frame_analyzer_->getTextCenter(device_id, keyword, cx, cy)) {
+
+
+
+                std::string action_str = action_mapper_->getTextAction(keyword);
+
+
+
+
+
+
+
+                if (action_str.substr(0, 4) == "tap:") {
+
+
+
+                    action.type = AIAction::Type::TAP;
+
+
+
+                    action.template_id = action_str.substr(4);
+
+
+
+                    action.x = cx;
+
+
+
+                    action.y = cy;
+
+
+
+                } else if (action_str == "back") {
+
+
+
+                    action.type = AIAction::Type::BACK;
+
+
+
+                }
+
+
+
+
+
+
+
+                action.reason = "OCR match=\"" + keyword + "\" action=" + action_str;
+
+
+
+                idle_frames_ = 0;
+
+
+
+                stats_.idle_frames = 0;
+
+
+
+                stats_.actions_executed++;
+
+
+
+                if (action.template_id.empty() && !tpl_name.empty())
+
+
+
+                    stats_.template_stats[tpl_name].action_count++;
+
+
+
+
+
+
+
+                // OcrMatchResult イベント発行
+
+
+
+                mirage::OcrMatchResult ocr_evt;
+
+
+
+                ocr_evt.device_id = device_id;
+
+
+
+                ocr_evt.text = keyword;
+
+
+
+                ocr_evt.x = cx;
+
+
+
+                ocr_evt.y = cy;
+
+
+
+                // confidence は getTextCenter では取得不可なので 0 (将来拡張用)
+
+
+
+                mirage::bus().publish(ocr_evt);
+
+
+
+
+
+
+
+                // コマンドイベント発行
+
+
+
+                if (action.type == AIAction::Type::TAP) {
+
+
+
+                    mirage::TapCommandEvent evt;
+
+
+
+                    evt.device_id = device_id;
+
+
+
+                    evt.x = action.x;
+
+
+
+                    evt.y = action.y;
+
+
+
+                    evt.source = mirage::CommandSource::AI;
+
+
+
+                    mirage::bus().publish(evt);
+
+
+
+                    MLOG_INFO("ai", "OCRフォールバック TapCommand: device=%s (%d,%d) text=\"%s\"",
+
+
+
+                              device_id.c_str(), cx, cy, keyword.c_str());
+
+
+
+                } else if (action.type == AIAction::Type::BACK) {
+
+
+
+                    mirage::KeyCommandEvent evt;
+
+
+
+                    evt.device_id = device_id;
+
+
+
+                    evt.keycode = 4;  // KEYCODE_BACK
+
+
+
+                    evt.source = mirage::CommandSource::AI;
+
+
+
+                    mirage::bus().publish(evt);
+
+
+
+                    MLOG_INFO("ai", "OCRフォールバック KeyCommand(BACK): device=%s text=\"%s\"",
+
+
+
+                              device_id.c_str(), keyword.c_str());
+
+
+
+                }
+
+
+
+
+
+
+
+                return action;
+
+
+
+            }
+
+
+
+        }
+
+
+
+
+
+
+
+        return action; // キーワード未検出 → NONE
+
+
+
+    }
+
+
+
+#endif
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // マッチ結果キャッシュ（オーバーレイ描画用）
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    void cacheMatches(const std::vector<mirage::vk::VkMatchResult>& vk_results) {
+
+
+
+        std::unordered_map<int, std::string> names;
+
+
+
+        {
+
+
+
+            std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+            names = id_to_name_;
+
+
+
+        }
+
+
+
+
+
+
+
+        std::vector<AIEngine::MatchRect> rects;
+
+
+
+        rects.reserve(vk_results.size());
+
+
+
+        for (const auto& r : vk_results) {
+
+
+
+            AIEngine::MatchRect rect;
+
+
+
+            auto it = names.find(r.template_id);
+
+
+
+            rect.template_id = (it != names.end()) ? it->second
+
+
+
+                : "tpl_" + std::to_string(r.template_id);
+
+
+
+            rect.label = rect.template_id;
+
+
+
+            rect.x = r.x;
+
+
+
+            rect.y = r.y;
+
+
+
+            rect.w = r.template_width;
+
+
+
+            rect.h = r.template_height;
+
+
+
+            rect.center_x = r.center_x;
+
+
+
+            rect.center_y = r.center_y;
+
+
+
+            rect.score = r.score;
+
+
+
+            rects.push_back(rect);
+
+
+
+        }
+
+
+
+
+
+
+
+        std::lock_guard<std::mutex> lock(matches_mutex_);
+
+
+
+        last_matches_ = std::move(rects);
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // ファイルからテンプレート読み込み（TemplateStore経由 stb_image使用）
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    mirage::Result<void> addTemplateFromFile(const std::string& path, const std::string& name,
+
+
+
+                                              int template_id) {
+
+
+
+        if (!vk_matcher_) {
+
+
+
+            return mirage::Err<void>("VulkanTemplateMatcher未初期化");
+
+
+
+        }
+
+
+
+
+
+
+
+        // TemplateStore経由: stb_imageでデコード → Gray8変換 → 内部保持
+
+
+
+        if (template_store_) {
+
+
+
+            auto loadResult = template_store_->loadFromFile(template_id, path);
+
+
+
+            if (loadResult.is_err()) {
+
+
+
+                return mirage::Err<void>("TemplateStore読込失敗: " + loadResult.error().message);
+
+
+
+            }
+
+
+
+
+
+
+
+            // TemplateStoreから取得してMatcherに登録
+
+
+
+            auto* th = template_store_->get(template_id);
+
+
+
+            if (!th || th->gray_data.empty()) {
+
+
+
+                return mirage::Err<void>("Store内データが空");
+
+
+
+            }
+
+
+
+
+
+
+
+            auto addResult = vk_matcher_->addTemplate(
+
+
+
+                name, th->gray_data.data(), th->w, th->h, "");
+
+
+
+            if (addResult.is_err()) {
+
+
+
+                return mirage::Err<void>("Matcher登録失敗: " + addResult.error().message);
+
+
+
+            }
+
+
+
+            int matcher_id = addResult.value();
+
+
+
+
+
+
+
+            // matcher_idをTemplateHandleに記録（将来の参照用）
+
+
+
+            // NOTE: TemplateHandle::matcher_idは直接書き込み不可（const get）
+
+
+
+            // id_to_name_マッピングで管理
+
+
+
+
+
+
+
+            {
+
+
+
+                std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+                id_to_name_[matcher_id] = name;
+
+
+
+            }
+
+
+
+            action_mapper_->addTemplateAction(name, "tap:" + name);
+
+
+
+
+
+
+
+            MLOG_DEBUG("ai", "テンプレート登録: name=%s store_id=%d matcher_id=%d %s",
+
+
+
+                       name.c_str(), template_id, matcher_id, path.c_str());
+
+
+
+            return mirage::Ok();
+
+
+
+        }
+
+
+
+
+
+
+
+        // TemplateStore未接続時: 直接stb_imageでデコード（フォールバック）
+
+
+
+        int w = 0, h = 0, channels = 0;
+
+
+
+        unsigned char* img = stbi_load(path.c_str(), &w, &h, &channels, 1);
+
+
+
+        if (!img) {
+
+
+
+            // RGBA → Gray フォールバック
+
+
+
+            img = stbi_load(path.c_str(), &w, &h, &channels, 4);
+
+
+
+            if (!img) {
+
+
+
+                return mirage::Err<void>("stbi_load失敗: " + path);
+
+
+
+            }
+
+
+
+            // RGBA → Gray8 変換
+
+
+
+            std::vector<uint8_t> gray((size_t)w * h);
+
+
+
+            for (int i = 0; i < w * h; i++) {
+
+
+
+                int y = (77 * img[i * 4 + 0] + 150 * img[i * 4 + 1]
+
+
+
+                         + 29 * img[i * 4 + 2] + 128) >> 8;
+
+
+
+                gray[i] = (uint8_t)std::clamp(y, 0, 255);
+
+
+
+            }
+
+
+
+            stbi_image_free(img);
+
+
+
+
+
+
+
+            auto addResult = vk_matcher_->addTemplate(name, gray.data(), w, h, "");
+
+
+
+            if (addResult.is_err()) {
+
+
+
+                return mirage::Err<void>("Matcher登録失敗: " + addResult.error().message);
+
+
+
+            }
+
+
+
+            int matcher_id = addResult.value();
+
+
+
+            {
+
+
+
+                std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+                id_to_name_[matcher_id] = name;
+
+
+
+            }
+
+
+
+            action_mapper_->addTemplateAction(name, "tap:" + name);
+
+
+
+            return mirage::Ok();
+
+
+
+        }
+
+
+
+
+
+
+
+        // Gray8直接読込成功
+
+
+
+        auto addResult = vk_matcher_->addTemplate(name, img, w, h, "");
+
+
+
+        stbi_image_free(img);
+
+
+
+        if (addResult.is_err()) {
+
+
+
+            return mirage::Err<void>("Matcher登録失敗: " + addResult.error().message);
+
+
+
+        }
+
+
+
+        int matcher_id = addResult.value();
+
+
+
+        {
+
+
+
+            std::lock_guard<std::mutex> lock(names_mutex_);
+
+
+
+            id_to_name_[matcher_id] = name;
+
+
+
+        }
+
+
+
+        action_mapper_->addTemplateAction(name, "tap:" + name);
+
+
+
+        return mirage::Ok();
+
+
+
+    }
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // メンバ変数
+
+
+
+    // =========================================================================
+
+
+
+
+
+
+
+    // =========================================================================
+
+
+
+    // 改善L: 遅延ジッター用 保留アクション
+
+
+
+    // =========================================================================
+
+
+
+    struct PendingAction {
+
+
+
+        int slot;
+
+
+
+        AIAction action;
+
+
+
+        std::chrono::steady_clock::time_point fire_at;
+
+
+
+    };
+
+
+
+    std::vector<PendingAction> pending_actions_;
+
+
+
+    std::mt19937 rng_{std::random_device{}()};
+
+
+
+    std::atomic<bool> hot_reload_running_{false};
+
+
+
+    std::thread hot_reload_thread_;
+
+
+
+    std::filesystem::file_time_type manifest_last_mtime_{};
+
+
+
+    std::string template_dir_;  // hotReloadで使用するテンプレートディレクトリ
+
+
+
+
+
+
+
+    AIConfig config_;
+
+
+
+    bool initialized_ = false;
+
+
+
+
+
+
+
+    // TemplateStore（外部所有、non-owning）
+
+
+
+    TemplateStore* template_store_ = nullptr;
+
+
+
+
+
+
+
+    // FrameAnalyzer(OCR)（外部所有、non-owning）
+
+
+
+#ifdef MIRAGE_OCR_ENABLED
+
+
+
+    mirage::FrameAnalyzer* frame_analyzer_ = nullptr;
+
+
+
+#endif
+
+
+
+
+
+
+
+    // Vulkanバックエンド
+
+
+
+    mirage::vk::VulkanContext* vk_ctx_ = nullptr;
+
+
+
+    std::unique_ptr<mirage::vk::VulkanComputeProcessor> vk_processor_;
+
+
+
+    std::unique_ptr<mirage::vk::VulkanTemplateMatcher> vk_matcher_;
+
+
+
+
+
+
+
+    // アクション決定
+
+
+
+    std::unique_ptr<ActionMapper> action_mapper_;
+
+
+
+    std::unique_ptr<VisionDecisionEngine> vision_engine_;
+
+
+
+    int idle_frames_ = 0;
+
+
+
+
+
+
+
+    // テンプレートID→名前マッピング
+
+
+
+    std::mutex names_mutex_;
+
+
+
+    std::unordered_map<int, std::string> id_to_name_;
+
+
+
+
+
+
+
+    // オーバーレイ用マッチ結果キャッシュ
+
+
+
+    mutable std::mutex matches_mutex_;
+
+
+
+    std::vector<AIEngine::MatchRect> last_matches_;
+
+
+
+    // 改善Q
+
+
+
+    std::unordered_map<std::string, mirage::ai::DeviceAdaptation> device_adaptations_;
+
+
+
+    mutable std::mutex adaptation_mutex_;
+
+
+
+
+
+
+
+    // EventBus購読ハンドル
+
+
+
+    mirage::SubscriptionHandle frame_sub_;
+
+
+
+
+
+
+
+    // 統計
+
+
+
+    AIStats stats_;
+
+
+
+};
+
+
+
+
+
+
+
+// =============================================================================
+
+
+
+// AIEngine メソッド委譲
+
+
+
+// =============================================================================
+
+
+
+
+
+
+
+AIEngine::AIEngine() : impl_(std::make_unique<Impl>()) {}
+
+
+
+AIEngine::~AIEngine() = default;
+
+
+
+
+
+
+
+mirage::Result<void> AIEngine::initialize(const AIConfig& config,
+
+
+
+                                          mirage::vk::VulkanContext* vk_ctx) {
+
+
+
+    return impl_->initialize(config, vk_ctx);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::shutdown() { impl_->shutdown(); }
+
+
+
+
+
+
+
+void AIEngine::setTemplateStore(TemplateStore* store) {
+
+
+
+    impl_->setTemplateStore(store);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::setFrameAnalyzer(mirage::FrameAnalyzer* analyzer) {
+
+
+
+    impl_->setFrameAnalyzer(analyzer);
+
+
+
+}
+
+
+
+
+
+
+
+mirage::Result<void> AIEngine::loadTemplatesFromDir(const std::string& dir) {
+
+
+
+    return impl_->loadTemplatesFromDir(dir);
+
+
+
+}
+
+
+
+
+
+
+
+bool AIEngine::addTemplate(const std::string& name, const uint8_t* rgba, int w, int h) {
+
+
+
+    return impl_->addTemplate(name, rgba, w, h);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::clearTemplates() { impl_->clearTemplates(); }
+
+
+
+
+
+
+
+AIAction AIEngine::processFrame(int slot, const uint8_t* rgba, int width, int height) {
+
+
+
+    if (!enabled_) {
+
+
+
+        AIAction action;
+
+
+
+        action.type = AIAction::Type::NONE;
+
+
+
+        action.reason = "AI無効";
+
+
+
+        return action;
+
+
+
+    }
+
+
+
+
+
+
+
+    bool can_send = can_send_callback_ ? can_send_callback_() : true;
+
+
+
+    auto action = impl_->processFrame(slot, rgba, width, height, can_send);
+
+
+
+
+
+
+
+    // 改善L: 保留ジッターアクションをフラッシュ
+
+
+
+    if (impl_) impl_->flushPendingActions(action_callback_);  // ジッターアクションもここで処理
+
+
+
+
+
+
+
+    // 改善L: 保留ジッターアクションのフラッシュ
+
+
+
+    // アクション実行コールバック呼び出し
+
+
+
+    if (action.type != AIAction::Type::NONE &&
+
+
+
+        action.type != AIAction::Type::WAIT &&
+
+
+
+        action_callback_) {
+
+
+
+        action_callback_(slot, action);
+
+
+
+    }
+
+
+
+
+
+
+
+    return action;
+
+
+
+}
+
+
+
+
+
+
+
+std::vector<AIEngine::MatchRect> AIEngine::getLastMatches() const {
+
+
+
+    if (!impl_) return {};
+
+
+
+    return impl_->getLastMatches();
+
+
+
+}
+
+
+
+
+
+
+
+AIStats AIEngine::getStats() const { return impl_->getStats(); }
+
+
+
+void AIEngine::resetStats() { impl_->resetStats(); }
+
+
+
+void AIEngine::reset() { impl_->reset(); }
+
+
+
+
+
+
+
+int AIEngine::getDeviceVisionState(const std::string& device_id) const {
+
+
+
+    if (!impl_) return 0;
+
+
+
+    return impl_->getDeviceVisionState(device_id);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::resetDeviceVision(const std::string& device_id) {
+
+
+
+    if (impl_) impl_->resetDeviceVision(device_id);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::resetAllVision() {
+
+
+
+    if (impl_) impl_->resetAllVision();
+
+
+
+}
+
+
+
+
+
+
+
+AIEngine::VDEConfig AIEngine::getVDEConfig() const {
+
+
+
+    if (!impl_) return {};
+
+
+
+    return impl_->getVDEConfig();
+
+
+
+}
+
+
+
+
+
+
+
+std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const {
+
+
+
+    if (!impl_) return {};
+
+
+
+    return impl_->getAllDeviceVisionStates();
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::setVDEConfig(const VDEConfig& cfg) {
+
+
+
+    if (impl_) impl_->setVDEConfig(cfg);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::setJitterConfig(int min_ms, int max_ms) {
+
+
+
+    if (impl_) impl_->setJitterConfig(min_ms, max_ms);
+
+
+
+}
+
+
+
+
+
+
+
+
+void AIEngine::registerOcrKeyword(const std::string& kw, const std::string& act) {
+
+
+
+
+    if (impl_) impl_->registerOcrKeyword(kw, act);
+
+
+
+
+}
+
+
+
+
+void AIEngine::removeOcrKeyword(const std::string& kw) {
+
+
+
+
+    if (impl_) impl_->removeOcrKeyword(kw);
+
+
+
+
+}
+
+
+
+
+std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const {
+
+
+
+
+    if (!impl_) return {};
+
+
+
+
+    return impl_->getOcrKeywords();
+
+
+
+
+}
+
+
+
+
+
+
+
+
+void AIEngine::setHotReload(bool enable, int interval_ms) {
+
+
+
+    if (impl_) impl_->setHotReload(enable, interval_ms);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::processFrameAsync(int slot, const uint8_t* rgba, int width, int height) {
+
+
+
+    if (!enabled_ || !impl_) return;
+
+
+
+    bool can_send = can_send_callback_ ? can_send_callback_() : true;
+
+
+
+    impl_->enqueueAsyncFrame(slot, rgba, width, height, can_send);
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::setAsyncMode(bool enable) {
+
+
+
+    if (impl_) {
+
+
+
+        if (enable) impl_->startAsyncWorkers(&action_callback_);
+
+
+
+        else        impl_->stopAsyncWorkers();
+
+
+
+    }
+
+
+
+}
+
+
+
+
+
+
+
+bool AIEngine::isAsyncMode() const {
+
+
+
+    return impl_ && impl_->isAsyncEnabled();
+
+
+
+}
+
+
+
+
+
+
+
+} // namespace mirage::ai
+
+
+
+
+
+
+
+#else // !USE_AI
+
+
+
+
+
+
+
+#include "mirage_log.hpp"
+
+
+
+
+
+
+
+namespace mirage::ai {
+
+
+
+
+
+
+
+class AIEngine::Impl {};
+
+
+
+
+
+
+
+AIEngine::AIEngine() {}
+
+
+
+AIEngine::~AIEngine() = default;
+
+
+
+
+
+
+
+mirage::Result<void> AIEngine::initialize(const AIConfig&, mirage::vk::VulkanContext*) {
+
+
+
+    return mirage::Err<void>("AI未コンパイル (USE_AI未定義)");
+
+
+
+}
+
+
+
+
+
+
+
+void AIEngine::shutdown() {}
+
+
+
+
+
+
+
+void AIEngine::setTemplateStore(TemplateStore*) {}
+
+
+
+void AIEngine::setFrameAnalyzer(mirage::FrameAnalyzer*) {}
+
+
+
+
+
+
+
+mirage::Result<void> AIEngine::loadTemplatesFromDir(const std::string&) {
+
+
+
+    return mirage::Err<void>("AI未コンパイル");
+
+
+
+}
+
+
+
+
+
+
+
+bool AIEngine::addTemplate(const std::string&, const uint8_t*, int, int) { return false; }
+
+
+
+void AIEngine::clearTemplates() {}
+
+
+
+
+
+
+
+AIAction AIEngine::processFrame(int, const uint8_t*, int, int) {
+
+
+
+    AIAction action;
+
+
+
+    action.type = AIAction::Type::NONE;
+
+
+
+    action.reason = "AI未コンパイル";
+
+
+
+    return action;
+
+
+
+}
+
+
+
+
+
+
+
+std::vector<AIEngine::MatchRect> AIEngine::getLastMatches() const { return {}; }
+
+
+
+AIStats AIEngine::getStats() const { return AIStats(); }
+
+
+
+void AIEngine::resetStats() {}
+
+
+
+void AIEngine::reset() {}
+
+
+
+
+
+
+
+int AIEngine::getDeviceVisionState(const std::string&) const { return 0; }
+
+
+
+void AIEngine::resetDeviceVision(const std::string&) {}
+
+
+
+void AIEngine::resetAllVision() {}
+
+
+
+AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
+
+
+
+void AIEngine::setVDEConfig(const VDEConfig&) {}
+
+
+
+void AIEngine::setJitterConfig(int, int) {}
+
+
+
+void AIEngine::processFrameAsync(int, const uint8_t*, int, int) {}
+
+
+
+void AIEngine::setAsyncMode(bool) {}
+
+
+
+bool AIEngine::isAsyncMode() const { return false; }
+
+
+
+void AIEngine::setDeviceAdaptation(const std::string&, const DeviceAdaptation&) {}
+
+
+
+DeviceAdaptation AIEngine::getDeviceAdaptation(const std::string&) const { return {}; }
+
+
+
+void AIEngine::clearDeviceAdaptation(const std::string&) {}
+
+
+
+
+
+
+
+
+void AIEngine::registerOcrKeyword(const std::string&, const std::string&) {}
+
+
+
+
+void AIEngine::removeOcrKeyword(const std::string&) {}
+
+
+
+
+std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const { return {}; }
+
+
+
+
+void AIEngine::setHotReload(bool, int) {}
+
+
+
+std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const { return {}; }
+
+
+
+
+
+
+
+} // namespace mirage::ai
+
+
+
+
+
+
+
+#endif // USE_AI
+
+
+
