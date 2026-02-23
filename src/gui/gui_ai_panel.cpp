@@ -191,7 +191,7 @@ static void renderEngineControl() {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Template Hit Rate (改善K)");
         if (ImGui::BeginTable("tpl_stats", 4,
-                ImGui::TableFlags_Borders | ImGui::TableFlags_RowBg | ImGui::TableFlags_ScrollY,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
                 ImVec2(0, 120))) {
             ImGui::TableSetupColumn("Template",    ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Detect",      ImGuiTableColumnFlags_WidthFixed, 60);

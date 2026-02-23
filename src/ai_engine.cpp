@@ -135,6 +135,7 @@ public:
         }
 
         initialized_ = true;
+        if (config.hot_reload) startHotReload();
         MLOG_INFO("ai", "AI Engine 初期化完了 (Vulkan Compute)");
         return mirage::Ok();
     }
