@@ -97,7 +97,7 @@ object Protocol {
         data class Back(override val seq: Int) : Command()
         data class Key(override val seq: Int, val keycode: Int) : Command()
         data class Swipe(override val seq: Int, val startX: Int, val startY: Int, val endX: Int, val endY: Int, val durationMs: Int) : Command()
-        data class Pinch(override val seq: Int, val centerX: Int, val centerY: Int, val startDistance: Int, val endDistance: Int, val durationMs: Int, val angle: Int) : Command()
+        data class Pinch(override val seq: Int, val centerX: Int, val centerY: Int, val startDistance: Int, val endDistance: Int, val durationMs: Int, val angleDeg100: Int) : Command()
         data class LongPress(override val seq: Int, val x: Int, val y: Int, val durationMs: Int) : Command()
         data class Config(override val seq: Int, val payload: ByteArray) : Command()           // 設定変更
         data class ClickId(override val seq: Int, val resourceId: String) : Command()           // リソースID指定タップ
@@ -158,7 +158,7 @@ object Protocol {
             }
 
             CMD_SWIPE -> {
-                if (payloadData == null || header.payloadLen < 24) return null
+                if (payloadData == null || header.payloadLen < 20) return null
                 Command.Swipe(
                     seq = header.seq,
                     startX = payloadData.int,
@@ -170,15 +170,15 @@ object Protocol {
             }
 
             CMD_PINCH -> {
-                if (payloadData == null || header.payloadLen < 28) return null
+                if (payloadData == null || header.payloadLen < 24) return null
                 val centerX = payloadData.int
                 val centerY = payloadData.int
                 val startDist = payloadData.int
                 val endDist = payloadData.int
                 val durMs = payloadData.int
-                @Suppress("UNUSED_VARIABLE") val flags = payloadData.int  // reserved
-                val angle = payloadData.int
-                Command.Pinch(header.seq, centerX, centerY, startDist, endDist, durMs, angle)
+                // (reserved field removed FIX-B: payload now 24 bytes, 6 ints)
+                val angleDeg100 = payloadData.int
+                Command.Pinch(header.seq, centerX, centerY, startDist, endDist, durMs, angleDeg100)
             }
 
             CMD_LONGPRESS -> {

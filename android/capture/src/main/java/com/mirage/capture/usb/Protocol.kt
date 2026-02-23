@@ -29,6 +29,8 @@ object Protocol {
     const val CMD_CLICK_ID: Byte = 0x05    // リソースID指定タップ: PC -> Android
     const val CMD_CLICK_TEXT: Byte = 0x06  // テキスト指定タップ: PC -> Android
     const val CMD_SWIPE: Byte = 0x07       // スワイプ: PC -> Android
+    const val CMD_PINCH: Byte = 0x08       // ピンチ: PC -> Android  // FIX-B
+    const val CMD_LONGPRESS: Byte = 0x09   // ロングプレス: PC -> Android  // FIX-B
     const val CMD_AUDIO_FRAME: Byte = 0x10  // Audio frame: Android -> PC
     const val CMD_VIDEO_FPS: Byte = 0x24    // FPS change command: PC -> Android
     const val CMD_VIDEO_ROUTE: Byte = 0x25  // Video route switch: PC -> Android
@@ -88,6 +90,11 @@ object Protocol {
         data class ClickId(override val seq: Int, val resourceId: String) : Command()           // リソースID指定タップ
         data class ClickText(override val seq: Int, val text: String) : Command()               // テキスト指定タップ
         data class Swipe(override val seq: Int, val startX: Int, val startY: Int, val endX: Int, val endY: Int, val durationMs: Int) : Command()
+        // FIX-B
+        data class Pinch(override val seq: Int, val centerX: Int, val centerY: Int,
+                         val startDistance: Int, val endDistance: Int,
+                         val durationMs: Int, val angleDeg100: Int) : Command()
+        data class LongPress(override val seq: Int, val x: Int, val y: Int, val durationMs: Int) : Command()
         data class VideoFps(override val seq: Int, val targetFps: Int) : Command()
         data class VideoRoute(override val seq: Int, val mode: Int, val host: String, val port: Int) : Command()
         data class VideoIdr(override val seq: Int) : Command()
@@ -184,6 +191,32 @@ object Protocol {
                     startY = payloadData.int,
                     endX = payloadData.int,
                     endY = payloadData.int,
+                    durationMs = payloadData.int
+                )
+            }
+
+            // FIX-B
+            CMD_PINCH -> {
+                // ピンチ: center(4+4)+dist(4+4)+dur(4)+angle(4) = 24 bytes
+                if (payloadData == null || header.payloadLen < 24) return null
+                Command.Pinch(
+                    seq          = header.seq,
+                    centerX      = payloadData.int,
+                    centerY      = payloadData.int,
+                    startDistance= payloadData.int,
+                    endDistance  = payloadData.int,
+                    durationMs   = payloadData.int,
+                    angleDeg100  = payloadData.int
+                )
+            }
+
+            CMD_LONGPRESS -> {
+                // ロングプレス: x(4)+y(4)+dur(4) = 12 bytes
+                if (payloadData == null || header.payloadLen < 12) return null
+                Command.LongPress(
+                    seq        = header.seq,
+                    x          = payloadData.int,
+                    y          = payloadData.int,
                     durationMs = payloadData.int
                 )
             }

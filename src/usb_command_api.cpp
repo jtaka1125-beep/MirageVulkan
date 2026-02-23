@@ -124,23 +124,75 @@ uint32_t MultiUsbCommandSender::send_key(const std::string& usb_id, int keycode)
 }
 
 uint32_t MultiUsbCommandSender::send_click_id(const std::string& usb_id, const std::string& resource_id) {
-    std::vector<uint8_t> payload(2 + resource_id.size());
-    uint16_t len = (uint16_t)resource_id.size();
-    payload[0] = len & 0xFF;
-    payload[1] = (len >> 8) & 0xFF;
-    memcpy(payload.data() + 2, resource_id.c_str(), resource_id.size());
-
-    return queue_command(usb_id, CMD_CLICK_ID, payload.data(), payload.size());
+    // FIX-C: payload_len in MIRA header already encodes length. No len prefix needed.
+    // Android parser reads payloadLen bytes directly as UTF-8 (trimEnd null).
+    uint32_t seq = queue_command(usb_id, CMD_CLICK_ID,
+        reinterpret_cast<const uint8_t*>(resource_id.c_str()), resource_id.size());
+    if (seq) {
+        MLOG_INFO("multicmd", "Queued CLICK_ID(%.64s) to %s seq=%u",
+            resource_id.c_str(), usb_id.c_str(), seq);
+    }
+    return seq;
 }
 
-uint32_t MultiUsbCommandSender::send_click_text(const std::string& usb_id, const std::string& text) {
-    std::vector<uint8_t> payload(2 + text.size());
-    uint16_t len = (uint16_t)text.size();
-    payload[0] = len & 0xFF;
-    payload[1] = (len >> 8) & 0xFF;
-    memcpy(payload.data() + 2, text.c_str(), text.size());
 
-    return queue_command(usb_id, CMD_CLICK_TEXT, payload.data(), payload.size());
+uint32_t MultiUsbCommandSender::send_click_text(const std::string& usb_id, const std::string& text) {
+    // FIX-C: payload_len in MIRA header already encodes length. No len prefix needed.
+    // Android parser reads payloadLen bytes directly as UTF-8 (trimEnd null).
+    uint32_t seq = queue_command(usb_id, CMD_CLICK_TEXT,
+        reinterpret_cast<const uint8_t*>(text.c_str()), text.size());
+    if (seq) {
+        MLOG_INFO("multicmd", "Queued CLICK_TEXT(%.64s) to %s seq=%u",
+            text.c_str(), usb_id.c_str(), seq);
+    }
+    return seq;
+}
+
+
+// =============================================================================
+// FIX-B: Pinch and LongPress commands
+// =============================================================================
+
+uint32_t MultiUsbCommandSender::send_pinch(
+        const std::string& usb_id,
+        int cx, int cy, int start_dist, int end_dist,
+        int duration_ms, int angle_deg100) {
+    // Payload: cx(4)+cy(4)+start_dist(4)+end_dist(4)+dur_ms(4)+angle_deg100(4) = 24 bytes
+    // angle_deg100: angle in degrees * 100 (e.g. 4500 = 45.00 deg)
+    uint8_t payload[24];
+    auto w32 = [](uint8_t* b, int32_t v) {
+        b[0]=v&0xFF; b[1]=(v>>8)&0xFF; b[2]=(v>>16)&0xFF; b[3]=(v>>24)&0xFF;
+    };
+    w32(payload+0,  cx);
+    w32(payload+4,  cy);
+    w32(payload+8,  start_dist);
+    w32(payload+12, end_dist);
+    w32(payload+16, duration_ms);
+    w32(payload+20, angle_deg100);
+    uint32_t seq = queue_command(usb_id, CMD_PINCH, payload, sizeof(payload));
+    if (seq) {
+        MLOG_INFO("multicmd", "Queued PINCH center=(%d,%d) dist=%d->%d dur=%d to %s seq=%u",
+            cx, cy, start_dist, end_dist, duration_ms, usb_id.c_str(), seq);
+    }
+    return seq;
+}
+
+uint32_t MultiUsbCommandSender::send_longpress(
+        const std::string& usb_id, int x, int y, int duration_ms) {
+    // Payload: x(4)+y(4)+dur_ms(4) = 12 bytes
+    uint8_t payload[12];
+    auto w32 = [](uint8_t* b, int32_t v) {
+        b[0]=v&0xFF; b[1]=(v>>8)&0xFF; b[2]=(v>>16)&0xFF; b[3]=(v>>24)&0xFF;
+    };
+    w32(payload+0, x);
+    w32(payload+4, y);
+    w32(payload+8, duration_ms);
+    uint32_t seq = queue_command(usb_id, CMD_LONGPRESS, payload, sizeof(payload));
+    if (seq) {
+        MLOG_INFO("multicmd", "Queued LONGPRESS(%d,%d) dur=%d to %s seq=%u",
+            x, y, duration_ms, usb_id.c_str(), seq);
+    }
+    return seq;
 }
 
 // =============================================================================
@@ -198,10 +250,22 @@ uint32_t MultiUsbCommandSender::send_video_fps(const std::string& usb_id, int fp
 
 uint32_t MultiUsbCommandSender::send_video_route(const std::string& usb_id, uint8_t mode,
                                                    const std::string& host, int port) {
+    // Payload format matches Android Protocol.kt CMD_VIDEO_ROUTE parser:
+    //   mode: int32 LE (0=USB, 1=WiFi)  — Android reads payloadData.int (4 bytes)
+    //   port: int32 LE                  — Android reads payloadData.int (4 bytes)
+    //   host: UTF-8 string + null terminator
+    // Previously was: mode(1B) + port(2B LE) which caused mode=garbage on Android side.
     std::vector<uint8_t> payload;
-    payload.push_back(mode);  // 0=USB, 1=WiFi
-    payload.push_back(port & 0xFF);
-    payload.push_back((port >> 8) & 0xFF);
+    int32_t mode32 = static_cast<int32_t>(mode);
+    int32_t port32 = port;
+    payload.push_back(mode32 & 0xFF);
+    payload.push_back((mode32 >> 8) & 0xFF);
+    payload.push_back((mode32 >> 16) & 0xFF);
+    payload.push_back((mode32 >> 24) & 0xFF);
+    payload.push_back(port32 & 0xFF);
+    payload.push_back((port32 >> 8) & 0xFF);
+    payload.push_back((port32 >> 16) & 0xFF);
+    payload.push_back((port32 >> 24) & 0xFF);
     for (char c : host) {
         payload.push_back(static_cast<uint8_t>(c));
     }

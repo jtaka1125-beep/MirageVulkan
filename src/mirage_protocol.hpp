@@ -33,6 +33,8 @@ static constexpr uint8_t CMD_CONFIG     = 0x04;
 static constexpr uint8_t CMD_CLICK_ID   = 0x05;
 static constexpr uint8_t CMD_CLICK_TEXT = 0x06;
 static constexpr uint8_t CMD_SWIPE      = 0x07;
+static constexpr uint8_t CMD_PINCH      = 0x08;  // FIX-B: pinch operation PC->Android
+static constexpr uint8_t CMD_LONGPRESS  = 0x09;  // FIX-B: long press PC->Android
 
 // Video control commands (PC -> Android)
 static constexpr uint8_t CMD_VIDEO_FPS   = 0x24;
@@ -178,6 +180,8 @@ inline const char* cmd_name(uint8_t cmd) {
         case CMD_CLICK_ID:    return "CLICK_ID";
         case CMD_CLICK_TEXT:  return "CLICK_TEXT";
         case CMD_SWIPE:       return "SWIPE";
+        case CMD_PINCH:        return "PINCH";
+        case CMD_LONGPRESS:    return "LONGPRESS";
         case CMD_VIDEO_FPS:   return "VIDEO_FPS";
         case CMD_VIDEO_ROUTE: return "VIDEO_ROUTE";
         case CMD_VIDEO_IDR:   return "VIDEO_IDR";
