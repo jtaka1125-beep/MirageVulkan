@@ -676,6 +676,16 @@ if(BUILD_TESTS)
         target_compile_definitions(test_bandwidth_monitor PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_test(NAME BandwidthMonitorTest COMMAND test_bandwidth_monitor)
 
+        # DeviceTransform coordinate transform tests
+        add_executable(test_device_transform
+            tests/test_device_transform.cpp
+            src/device_transform.cpp
+        )
+        target_include_directories(test_device_transform PRIVATE src)
+        target_link_libraries(test_device_transform PRIVATE gtest)
+        target_compile_definitions(test_device_transform PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME DeviceTransformTest COMMAND test_device_transform)
+
         # Frame Analyzer OCR test
         if(USE_OCR)
             add_executable(test_frame_analyzer
