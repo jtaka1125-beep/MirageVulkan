@@ -75,7 +75,7 @@ private:
     static constexpr float WIFI_LOSS_THRESHOLD = 0.1f;  // 10%
 
     // WiFi/USB は瞬断しがちなので少し長め（特に WiFi 側）
-    static constexpr int ALIVE_TIMEOUT_MS = 5000;
+    static constexpr int ALIVE_TIMEOUT_MS = 30000;  // 30s grace
 };
 
 } // namespace gui
