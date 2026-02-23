@@ -411,6 +411,7 @@ class AccessoryIoService : Service() {
                         if (n == 0) continue
 
                         outputStream?.write(buf, 0, n)
+                        outputStream?.flush()  // ISSUE-11: prevent buffering delay
 
                         totalBytes += n
 

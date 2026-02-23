@@ -35,6 +35,13 @@ class MirageAccessibilityService : AccessibilityService() {
             "oppo",                  // OPPO / Realme
             "oneplus",               // OnePlus OxygenOS
         )
+
+        // ISSUE-8: MediaProjection固有キーワード (他権限ダイアログとの誤認防止)
+        private val MEDIA_PROJECTION_HINTS = listOf(
+            "Screen capture", "Screen Cast", "画面のキャスト", "画面録画",
+            "Cast screen", "MediaProjection", "casting", "screen sharing",
+            "MirageCapture", "mirage.capture",
+        )
     }
 
     private val udpSender = UdpSender()
@@ -53,7 +60,24 @@ class MirageAccessibilityService : AccessibilityService() {
         val isSystemOverlay = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             && SYSTEM_DIALOG_PACKAGES.any { pkg.contains(it, ignoreCase = true) }
         if (isSystemOverlay) {
-            handleMediaProjectionDialog()
+            // ISSUE-8: MediaProjectionダイアログか確認してから自動承認
+            val root = rootInActiveWindow
+            if (root != null && isMediaProjectionDialog(root)) {
+                handleMediaProjectionDialog()
+            }
+        }
+    }
+
+    /**
+     * ISSUE-8: 画面がMediaProjectionダイアログかどうかをヒューリスティックで判定。
+     * カメラ/マイク等の他の権限ダイアログを誤クリックしないための防護壁。
+     */
+    private fun isMediaProjectionDialog(root: android.view.accessibility.AccessibilityNodeInfo): Boolean {
+        return MEDIA_PROJECTION_HINTS.any { hint ->
+            root.findAccessibilityNodeInfosByText(hint).isNotEmpty()
+        } || run {
+            val pkg = root.packageName?.toString() ?: ""
+            pkg.contains("mirage", ignoreCase = true) || pkg.contains("capture", ignoreCase = true)
         }
     }
 
