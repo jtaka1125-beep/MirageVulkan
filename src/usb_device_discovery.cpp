@@ -18,7 +18,7 @@ bool MultiUsbCommandSender::find_and_open_all_devices() {
         return false;
     }
 
-    // First pass: find and open existing AOA devices
+    // First pass: collect existing AOA devices and potential Android devices
     uint16_t aoa_pids[] = {
         AOA_PID_ACCESSORY,
         AOA_PID_ACCESSORY_ADB,
@@ -28,19 +28,19 @@ bool MultiUsbCommandSender::find_and_open_all_devices() {
 
     bool found_any = false;
     std::vector<libusb_device*> android_devices;
+    // AOA devices collected for retry-open (IO error may be WinUSB not fully ready)
+    std::vector<std::pair<libusb_device*, uint16_t>> aoa_devices_to_open;
 
     for (ssize_t i = 0; i < cnt; i++) {
         libusb_device* dev = devs[i];
         struct libusb_device_descriptor desc;
         if (libusb_get_device_descriptor(dev, &desc) != 0) continue;
 
-        // Check if AOA device
+        // Check if already-enumerated AOA device
         if (desc.idVendor == AOA_VID) {
             for (uint16_t pid : aoa_pids) {
                 if (desc.idProduct == pid) {
-                    if (open_aoa_device(dev, pid)) {
-                        found_any = true;
-                    }
+                    aoa_devices_to_open.push_back({dev, pid});
                     break;
                 }
             }
@@ -70,6 +70,32 @@ bool MultiUsbCommandSender::find_and_open_all_devices() {
 
         if (is_android) {
             android_devices.push_back(dev);
+        }
+    }
+
+    // Open already-AOA devices with retry logic.
+    // LIBUSB_ERROR_IO on first attempt is normal when WinUSB driver is still
+    // binding after a system wake or fresh enumeration — retry up to 3x.
+    constexpr int AOA_DIRECT_OPEN_RETRIES = 3;
+    constexpr int AOA_DIRECT_OPEN_DELAY_MS = 1000;
+
+    for (auto& [aoa_dev, pid] : aoa_devices_to_open) {
+        bool opened = false;
+        for (int retry = 0; retry <= AOA_DIRECT_OPEN_RETRIES; retry++) {
+            if (retry > 0) {
+                MLOG_INFO("multicmd", "AOA open retry %d/%d (WinUSB may not be ready)...",
+                          retry, AOA_DIRECT_OPEN_RETRIES);
+                std::this_thread::sleep_for(std::chrono::milliseconds(AOA_DIRECT_OPEN_DELAY_MS));
+            }
+            if (open_aoa_device(aoa_dev, pid)) {
+                found_any = true;
+                opened = true;
+                break;
+            }
+        }
+        if (!opened) {
+            MLOG_WARN("multicmd", "Failed to open AOA device after %d retries. "
+                      "Try replugging the USB cable.", AOA_DIRECT_OPEN_RETRIES);
         }
     }
 

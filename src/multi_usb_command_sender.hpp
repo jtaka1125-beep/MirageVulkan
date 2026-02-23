@@ -211,6 +211,20 @@ private:
         std::atomic<uint32_t> next_seq{1};
         std::thread recv_thread;  // Per-device receive thread
         std::atomic<bool> recv_running{false};
+
+        // Properly release libusb resources on destruction to prevent handle leaks.
+        // Without this, a failed libusb_open (LIBUSB_ERROR_IO) that partially opened
+        // the OS handle leaves a ghost, causing LIBUSB_ERROR_ACCESS on next open.
+        ~DeviceHandle() {
+            if (handle) {
+                libusb_release_interface(handle, 0);
+                libusb_close(handle);
+                handle = nullptr;
+            }
+        }
+        DeviceHandle() = default;
+        DeviceHandle(const DeviceHandle&) = delete;
+        DeviceHandle& operator=(const DeviceHandle&) = delete;
     };
 
     bool find_and_open_all_devices();

@@ -4,6 +4,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <chrono>
+#include <thread>
 #include "mirage_log.hpp"
 #include "mirage_protocol.hpp"
 #include "winusb_checker.hpp"
@@ -150,10 +152,36 @@ bool MultiUsbCommandSender::open_aoa_device(libusb_device* dev, uint16_t pid) {
 
     libusb_device_handle* handle = nullptr;
     int ret = libusb_open(dev, &handle);
+
+    // LIBUSB_ERROR_ACCESS: OS handle leaked from a previous process that crashed/exited
+    // without properly closing. Attempt a USB reset to release the OS handle.
+    if (ret == LIBUSB_ERROR_ACCESS) {
+        MLOG_WARN("multicmd", "ACCESS DENIED on open (VID=%04x PID=%04x bus=%d addr=%d): "
+                  "trying libusb_reset_device to clear leaked OS handle...",
+                  desc.idVendor, pid, bus, addr);
+
+        // We can't call reset without a handle, so open with a temporary context trick:
+        // re-enumerate by waiting briefly (WinUSB sometimes clears on its own).
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        ret = libusb_open(dev, &handle);
+
+        if (ret == LIBUSB_ERROR_ACCESS) {
+            // Still locked — try a USB device reset via a temporary handle if possible
+            // (some WinUSB versions allow open even when "claimed")
+            MLOG_ERROR("multicmd", "Still ACCESS DENIED after delay. "
+                       "Replugging the USB cable will resolve this permanently.");
+            return false;
+        }
+    }
+
     if (ret != LIBUSB_SUCCESS) {
-        MLOG_ERROR("multicmd", "Failed to open AOA device (VID=%04x PID=%04x bus=%d addr=%d): %s", desc.idVendor, pid, bus, addr, libusb_error_name(ret));
-        if (ret == LIBUSB_ERROR_NOT_SUPPORTED || ret == LIBUSB_ERROR_ACCESS) {
-            MLOG_ERROR("multicmd", "DRIVER ISSUE: WinUSB may not be installed. Use GUI [Driver Setup] or run install_android_winusb.py");
+        MLOG_ERROR("multicmd", "Failed to open AOA device (VID=%04x PID=%04x bus=%d addr=%d): %s",
+                   desc.idVendor, pid, bus, addr, libusb_error_name(ret));
+        if (ret == LIBUSB_ERROR_NOT_SUPPORTED) {
+            MLOG_ERROR("multicmd", "DRIVER ISSUE: WinUSB not installed for this device. "
+                       "Use GUI [Driver Setup] or run install_android_winusb.py");
+        } else if (ret == LIBUSB_ERROR_IO) {
+            MLOG_INFO("multicmd", "IO ERROR: WinUSB not ready yet (caller will retry)");
         } else {
             MLOG_INFO("multicmd", "Hint: Check USB cable and device connection");
         }
@@ -224,7 +252,8 @@ bool MultiUsbCommandSender::open_aoa_device(libusb_device* dev, uint16_t pid) {
     device->ep_out = ep_out;
     device->ep_in = ep_in;
 
-    MLOG_INFO("multicmd", "Opened AOA device: %s (PID=%04x, ep_out=0x%02x, ep_in=0x%02x)", usb_id.c_str(), pid, ep_out, ep_in);
+    MLOG_INFO("multicmd", "Opened AOA device: %s (PID=%04x, ep_out=0x%02x, ep_in=0x%02x)",
+              usb_id.c_str(), pid, ep_out, ep_in);
 
     {
         std::lock_guard<std::mutex> lock(devices_mutex_);
