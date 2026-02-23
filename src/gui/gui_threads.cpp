@@ -11,6 +11,7 @@
 #include <chrono>
 #include <thread>
 #include <cstdio>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -440,8 +441,26 @@ void deviceUpdateThread() {
                         g_main_device_set = true;
                     }
                 }
-                float fps = static_cast<float>(update.frames_decoded) /
-                            (static_cast<float>(update.packets_received) / 30.0f + 0.001f);
+                // スライディングウィンドウFPS計算（1秒間隔で更新）
+                float fps = 0.0f;
+                {
+                    struct FpsState {
+                        uint64_t prev_frames = 0;
+                        std::chrono::steady_clock::time_point prev_time = std::chrono::steady_clock::now();
+                        float last_fps = 0.0f;
+                    };
+                    static std::unordered_map<std::string, FpsState> fps_tracker;
+                    auto& st = fps_tracker[update.device_id];
+                    auto now_fps = std::chrono::steady_clock::now();
+                    double elapsed_sec = std::chrono::duration<double>(now_fps - st.prev_time).count();
+                    if (elapsed_sec >= 1.0) {
+                        uint64_t delta_frames = update.frames_decoded - st.prev_frames;
+                        st.last_fps = static_cast<float>(delta_frames / elapsed_sec);
+                        st.prev_frames = update.frames_decoded;
+                        st.prev_time = now_fps;
+                    }
+                    fps = st.last_fps;
+                }
                 mirage::dispatcher().dispatchFrame(resolved_id, update.frame.rgba.data(), update.frame.width, update.frame.height, update.frame.frame_id);
                 mirage::dispatcher().dispatchStatus(resolved_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive), fps, 0, 0);
             }
@@ -476,15 +495,15 @@ void deviceUpdateThread() {
 
             auto device_ids = g_multi_receiver->getDeviceIds();
 
-            // メイン=毎回(60fps)、サブ=4回に1回(~15fps)
+            // メイン=毎回(60fps)、サブ=2回に1回(~30fps)
             static int sub_frame_counter = 0;
             sub_frame_counter++;
-            bool process_sub = (sub_frame_counter % 4 == 0);
+            bool process_sub = (sub_frame_counter % 2 == 0);
 
             for (const auto& hw_id : device_ids) {
                 bool is_main = (hw_id == main_id);
 
-                // サブデバイスはスキップ (4回に1回だけ処理)
+                // サブデバイスはスキップ (2回に1回だけ処理)
                 if (!is_main && !process_sub) continue;
 
                 ::gui::MirrorFrame frame;

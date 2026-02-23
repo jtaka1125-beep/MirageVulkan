@@ -307,6 +307,11 @@ std::string MultiUsbCommandSender::get_first_device_id() const {
 void MultiUsbCommandSender::send_thread() {
     MLOG_INFO("multicmd", "Send thread started");
 
+    // デバイス0台時の自動リスキャン用カウンタ (30秒間隔)
+    constexpr int RESCAN_INTERVAL_MS = 30000;
+    constexpr int IDLE_SLEEP_MS = 1;
+    int rescan_counter = 0;
+
     while (running_.load()) {
         bool sent_any = false;
 
@@ -335,7 +340,23 @@ void MultiUsbCommandSender::send_thread() {
         }
 
         if (!sent_any) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(IDLE_SLEEP_MS));
+
+            // デバイス0台なら30秒ごとに自動リスキャン
+            if (device_count() == 0) {
+                rescan_counter += IDLE_SLEEP_MS;
+                if (rescan_counter >= RESCAN_INTERVAL_MS) {
+                    rescan_counter = 0;
+                    MLOG_INFO("multicmd", "デバイス0台 — 自動リスキャン実行");
+                    find_and_open_all_devices();
+                    int count = device_count();
+                    if (count > 0) {
+                        MLOG_INFO("multicmd", "自動リスキャンで %d 台発見", count);
+                    }
+                }
+            } else {
+                rescan_counter = 0;
+            }
         }
     }
 
