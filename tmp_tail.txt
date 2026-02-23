@@ -1,0 +1,21 @@
+4: bgogICAgICAgICAgICBDT01QUkVQTFlbaSsrXT0iJDIkeCQ0IjsKICAgICAgICBmaTsKICAgIGRv: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1087: X2ZpbmRfcmVwb19wYXRoIHx8IHJldHVybiAxOwogICAgICAgIGVjaG8gIiRfX2dpdF9yZXBvX3Bh: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1088: dGgiOwogICAgZWxzZQogICAgICAgIGlmIFsgLWQgIiQxLy5naXQiIF07IHRoZW4KICAgICAgICAg: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1089: ICAgZWNobyAiJDEvLmdpdCI7CiAgICAgICAgZWxzZQogICAgICAgICAgICBlY2hvICIkMSI7CiAg: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1092: ICBsb2NhbCBfX2dpdF9yZXBvX3BhdGg7CiAgICBfX2dpdF9maW5kX3JlcG9fcGF0aDsKICAgIGxv: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1093: Y2FsIG1lcmdlPSIiOwogICAgaWYgX19naXRfcHNldWRvcmVmX2V4aXN0cyBNRVJHRV9IRUFEOyB0: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1094: aGVuCiAgICAgICAgbWVyZ2U9Ii0tbWVyZ2UiOwogICAgZmk7CiAgICBjYXNlICIkY3VyIiBpbiAK: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1095: ICAgICAgICAtLSopCiAgICAgICAgICAgIF9fZ2l0Y29tcCAiCgkJCSRfX2dpdF9sb2dfY29tbW9u: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1096: X29wdGlvbnMKCQkJJF9fZ2l0X2xvZ19naXRrX29wdGlvbnMKCQkJJG1lcmdlCgkJCSI7CiAgICAg: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1097: ICAgICAgIHJldHVybgogICAgICAgIDs7CiAgICBlc2FjOwogICAgX19naXRfY29tcGxldGVfcmV2: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1100: dCBMQ19DT0xMQVRFPUM7IGVjaG8gL2V0Yy9wcm9maWxlLmQvKi4kMSk7CiAgICBkbwogICAgICAg: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1101: IFsgLWUgIiR7ZmlsZX0iIF0gJiYgLiAiJHtmaWxlfSI7CiAgICBkb25lOwogICAgaWYgWyAtbiAi: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1102: JHtNSU5HV19NT1VOVF9QT0lOVH0iIF07IHRoZW4KICAgICAgICBmb3IgZmlsZSBpbiAkKGV4cG9y: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1103: dCBMQ19DT0xMQVRFPUM7IGVjaG8gJHtNSU5HV19NT1VOVF9QT0lOVH0vZXRjL3Byb2ZpbGUuZC8q: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1104: LiQxKTsKICAgICAgICBkbwogICAgICAgICAgICBbIC1lICIke2ZpbGV9IiBdICYmIC4gIiR7Zmls: command not found
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1112: syntax error near unexpected token `fi'
+/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771879208023-mugzb9.sh: line 1112: `fi'
+Microsoft Windows [Version 10.0.26200.7840]
+(c) Microsoft Corporation. All rights reserved.
+
+C:\MirageWork\MirageVulkan>

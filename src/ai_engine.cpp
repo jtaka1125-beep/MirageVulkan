@@ -3293,52 +3293,51 @@ private:
 
 
 
-        // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
-
-
-
+        // 改善S: EventBus経由でAIActionEvent + コマンド発行
         std::string device_id = "slot_" + std::to_string(slot);
+        if (action.type != AIAction::Type::NONE && action.type != AIAction::Type::WAIT) {
+            mirage::AIActionEvent ai_evt;
+            ai_evt.slot = slot;
+            ai_evt.device_id = device_id;
+            ai_evt.x = action.x; ai_evt.y = action.y;
+            ai_evt.x2 = action.x2; ai_evt.y2 = action.y2;
+            ai_evt.duration_ms = action.duration_ms;
+            ai_evt.template_name = tpl_name;
+            ai_evt.confidence = action.confidence;
 
-
-
-        if (action.type == AIAction::Type::TAP) {
-
-
-
-            mirage::TapCommandEvent evt;
-
-
-
-            evt.device_id = device_id;
-
-
-
-            evt.x = action.x;
-
-
-
-            evt.y = action.y;
-
-
-
-            evt.source = mirage::CommandSource::AI;
-
-
-
-            mirage::bus().publish(evt);
-
-
-
-            MLOG_DEBUG("ai", "EventBus TapCommand発行: device=%s (%d,%d) tpl=%s",
-
-
-
-                       device_id.c_str(), action.x, action.y, tpl_name.c_str());
-
-
-
-        } else if (action.type == AIAction::Type::BACK) {
-
+            if (action.type == AIAction::Type::TAP) {
+                ai_evt.action_type = "TAP";
+                mirage::TapCommandEvent tap;
+                tap.device_id = device_id;
+                tap.x = action.x; tap.y = action.y;
+                tap.source = mirage::CommandSource::AI;
+                mirage::bus().publish(ai_evt);
+                mirage::bus().publish(tap);
+                MLOG_DEBUG("ai", "EventBus AIAction+TapCommand発行: device=%s (%d,%d) tpl=%s",
+                           device_id.c_str(), action.x, action.y, tpl_name.c_str());
+            } else if (action.type == AIAction::Type::SWIPE) {
+                ai_evt.action_type = "SWIPE";
+                mirage::SwipeCommandEvent sw;
+                sw.device_id = device_id;
+                sw.x1 = action.x; sw.y1 = action.y;
+                sw.x2 = action.x2; sw.y2 = action.y2;
+                sw.duration_ms = action.duration_ms;
+                sw.source = mirage::CommandSource::AI;
+                mirage::bus().publish(ai_evt);
+                mirage::bus().publish(sw);
+                MLOG_DEBUG("ai", "EventBus AIAction+SwipeCommand発行: device=%s (%d,%d)->(%d,%d)",
+                           device_id.c_str(), action.x, action.y, action.x2, action.y2);
+            } else if (action.type == AIAction::Type::BACK) {
+                ai_evt.action_type = "BACK";
+                mirage::KeyCommandEvent key;
+                key.device_id = device_id;
+                key.keycode = 4;  // KEYCODE_BACK
+                key.source = mirage::CommandSource::AI;
+                mirage::bus().publish(ai_evt);
+                mirage::bus().publish(key);
+                MLOG_DEBUG("ai", "EventBus AIAction+KeyCommand(BACK)発行: device=%s", device_id.c_str());
+            }
+        }
 
 
             mirage::KeyCommandEvent evt;

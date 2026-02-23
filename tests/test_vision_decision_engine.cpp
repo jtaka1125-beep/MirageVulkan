@@ -887,3 +887,120 @@ TEST_F(VisionEdgeCaseTest, DefaultConfig) {
     EXPECT_EQ(c.debounce_window_ms, 500);
     EXPECT_EQ(c.error_recovery_ms, 3000);
 }
+
+// ===========================================================================
+// 改善D: EWMA スムージングテスト
+// ===========================================================================
+
+class EwmaTest : public ::testing::Test {
+protected:
+    VisionDecisionConfig makeEwmaCfg(float alpha = 0.5f, float thr = 0.7f) {
+        VisionDecisionConfig c;
+        c.confirm_count      = 1;    // すぐ CONFIRMED
+        c.cooldown_ms        = 500;
+        c.debounce_window_ms = 0;
+        c.enable_ewma        = true;
+        c.ewma_alpha         = alpha;
+        c.ewma_confirm_thr   = thr;
+        return c;
+    }
+    VisionMatch match(const std::string& id, float score) {
+        VisionMatch m; m.template_id = id; m.score = score;
+        return m;
+    }
+    std::chrono::steady_clock::time_point T(int ms) {
+        return std::chrono::steady_clock::time_point() + std::chrono::milliseconds(ms);
+    }
+};
+
+// E-1: EWMA が thr に到達するまで CONFIRMED にならない
+TEST_F(EwmaTest, ConfirmedOnlyAfterEwmaReachesThreshold) {
+    auto cfg = makeEwmaCfg(0.5f, 0.7f);
+    VisionDecisionEngine engine(cfg);
+    const std::string dev = "d";
+    std::vector<VisionMatch> ms = { match("btn", 0.95f) };
+
+    // frame 1: ewma = 0.5*1 + 0.5*0 = 0.5  < 0.7 → NOT confirmed
+    auto r1 = engine.update(dev, ms, T(100));
+    EXPECT_FALSE(r1.should_act);
+
+    // frame 2: ewma = 0.5*1 + 0.5*0.5 = 0.75 >= 0.7 → confirmed
+    auto r2 = engine.update(dev, ms, T(200));
+    EXPECT_TRUE(r2.should_act);
+}
+
+// E-2: EWMA が thr 以上でも高 alpha=1.0 なら初回から通過
+TEST_F(EwmaTest, AlphaOneConfirmsImmediately) {
+    auto cfg = makeEwmaCfg(1.0f, 0.7f);
+    VisionDecisionEngine engine(cfg);
+    const std::string dev = "d";
+    std::vector<VisionMatch> ms = { match("btn", 0.95f) };
+
+    // alpha=1.0: frame1 IDLE->DETECTED (ewma=1.0, count=1)
+    auto r1 = engine.update(dev, ms, T(100));
+    EXPECT_FALSE(r1.should_act);
+    // frame2: DETECTED->CONFIRMED (ewma=1.0 >= 0.7, count=2 >= 1)
+    auto r2 = engine.update(dev, ms, T(200));
+    EXPECT_TRUE(r2.should_act);
+}
+
+// E-3: マッチなしでEWMAが減衰する
+TEST_F(EwmaTest, EwmaDecaysOnNoMatch) {
+    auto cfg = makeEwmaCfg(1.0f, 0.1f);  // low thr to start confirmed
+    VisionDecisionEngine engine(cfg);
+    const std::string dev = "d";
+    std::vector<VisionMatch> ms  = { match("btn", 0.95f) };
+    std::vector<VisionMatch> none;
+
+    engine.update(dev, ms, T(100));    // ewma=1.0, confirmed
+    engine.notifyActionExecuted(dev, T(110));
+
+    // cooldown passes (500ms)
+    engine.update(dev, none, T(700));  // no match: ewma decays
+    engine.update(dev, none, T(800));
+
+    // After multiple no-match frames, ewma should be below 0.1
+    // (1.0 * (0.5)^N → 0). Confirm idle.
+    for (int i = 0; i < 20; i++)
+        engine.update(dev, none, T(900 + i*100));
+    EXPECT_EQ(engine.getDeviceState(dev), VisionState::IDLE);
+}
+
+// E-4: テンプレート切り替えでEWMAリセット
+TEST_F(EwmaTest, EwmaResetsOnTemplateSwitch) {
+    auto cfg = makeEwmaCfg(0.5f, 0.7f);
+    VisionDecisionEngine engine(cfg);
+    const std::string dev = "d";
+    std::vector<VisionMatch> ms1 = { match("btn_a", 0.95f) };
+    std::vector<VisionMatch> ms2 = { match("btn_b", 0.95f) };
+
+    engine.update(dev, ms1, T(100));  // ewma_a=0.5
+    engine.update(dev, ms1, T(200));  // ewma_a=0.75 → confirmed
+    engine.notifyActionExecuted(dev, T(210));
+
+    // cooldown passes, then switch template
+    engine.update(dev, ms2, T(800));  // ewma resets to 0, new template
+    auto r = engine.update(dev, ms2, T(900));
+    // After reset: frame1=0.5, frame2=0.75 → confirmed
+    EXPECT_TRUE(r.should_act);
+}
+
+// E-5: enable_ewma=false はEWMAゲートをスキップ
+TEST_F(EwmaTest, DisabledEwmaSkipsGate) {
+    VisionDecisionConfig cfg;
+    cfg.confirm_count      = 1;
+    cfg.cooldown_ms        = 500;
+    cfg.debounce_window_ms = 0;
+    cfg.enable_ewma        = false;   // DISABLED
+    cfg.ewma_confirm_thr   = 0.99f;   // impossible if ewma was active
+    VisionDecisionEngine engine(cfg);
+    const std::string dev = "d";
+    std::vector<VisionMatch> ms = { match("btn", 0.95f) };
+
+    // frame1: IDLE->DETECTED (no ewma gate)
+    auto r1 = engine.update(dev, ms, T(100));
+    EXPECT_FALSE(r1.should_act);
+    // frame2: DETECTED->CONFIRMED (count=2>=1, ewma_ok=true)
+    auto r2 = engine.update(dev, ms, T(200));
+    EXPECT_TRUE(r2.should_act);
+}

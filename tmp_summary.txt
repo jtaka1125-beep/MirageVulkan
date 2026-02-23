@@ -1,0 +1,11 @@
+CRLF: 0, LF-only: 5212, use_crlf: False
+Total lines: 5213
+Found start at line 3296: // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
+Found BACK at line 3340: } else if (action.type == AIAction::Type::BACK) {
+Found end at line 3341: 
+Replacing lines 3296 to 3341
+New block: 45 lines
+Result total lines: 5212
+Verify CRLF: 0
+VERIFICATION: New code found in file - SUCCESS
+Old code removed - OK

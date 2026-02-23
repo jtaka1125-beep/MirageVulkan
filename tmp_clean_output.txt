@@ -1,0 +1,166 @@
+eval "$(echo X19naXRfY2hlY2tvdXRfZGVmYXVsdF9kd2ltX21vZGUgKCkgCnsgCiAgICBsb2NhbCBsYXN0X29w: No such file or directory
+eval "$(echo X19naXRfY29tcGxldGUgKCkgCnsgCiAgICBsb2NhbCBmdW5jOwogICAgaWYgX19naXRfaGF2ZV9m: No such file or directory
+eval "$(echo X19naXRfY29tcGxldGVfY29tbW9uICgpIAp7IAogICAgbG9jYWwgY29tbWFuZD0iJDEiOwogICAg: No such file or directory
+eval "$(echo X19naXRfY29tcGxldGVfc3ltYm9sICgpIAp7IAogICAgbG9jYWwgdGFncz10YWdzIHBmeD0iIiBj: No such file or directory
+eval "$(echo X19naXRfY29tcGxldGVfd29ya3RyZWVfcGF0aHMgKCkgCnsgCiAgICBsb2NhbCBJRlM9JwonOwog: No such file or directory
+eval "$(echo X19naXRfY29tcHV0ZV9jb25maWdfc2VjdGlvbnMgKCkgCnsgCiAgICB0ZXN0IC1uICIkX19naXRf: No such file or directory
+eval "$(echo X19naXRfY29tcHV0ZV9maXJzdF9sZXZlbF9jb25maWdfdmFyc19mb3Jfc2VjdGlvbiAoKSAKeyAK: No such file or directory
+eval "$(echo X19naXRfY29tcHV0ZV9zZWNvbmRfbGV2ZWxfY29uZmlnX3ZhcnNfZm9yX3NlY3Rpb24gKCkgCnsg: No such file or directory
+eval "$(echo X19naXRfZmluZF9yZXBvX3BhdGggKCkgCnsgCiAgICBpZiBbIC1uICIke19fZ2l0X3JlcG9fcGF0: No such file or directory
+eval "$(echo X19naXRfZmluZF9zdWJjb21tYW5kICgpIAp7IAogICAgbG9jYWwgc3ViY29tbWFuZCBzdWJjb21t: No such file or directory
+eval "$(echo X19naXRfZnVuY193cmFwICgpIAp7IAogICAgbG9jYWwgY3VyIHdvcmRzIGN3b3JkIHByZXY7CiAg: No such file or directory
+eval "$(echo X19naXRfaGVhZHMgKCkgCnsgCiAgICBsb2NhbCBwZng9IiR7MS19IiBjdXJfPSIkezItfSIgc2Z4: No such file or directory
+eval "$(echo X19naXRfbGlzdF9tZXJnZV9zdHJhdGVnaWVzICgpIAp7IAogICAgTEFORz1DIExDX0FMTD1DIGdp: No such file or directory
+eval "$(echo X19naXRfbWFpbiAoKSAKeyAKICAgIGxvY2FsIGkgYz0xIGNvbW1hbmQgX19naXRfZGlyIF9fZ2l0: No such file or directory
+eval "$(echo X19naXRfbWF0Y2hfY3RhZyAoKSAKeyAKICAgIGF3ayAtdiBwZng9IiR7My19IiAtdiBzZng9IiR7: No such file or directory
+eval "$(echo X19naXRfcHNldWRvcmVmX2V4aXN0cyAoKSAKeyAKICAgIGxvY2FsIHJlZj0kMTsKICAgIGxvY2Fs: No such file or directory
+eval "$(echo X19naXRfcmVhc3NlbWJsZV9jb21wX3dvcmRzX2J5X3JlZiAoKSAKeyAKICAgIGxvY2FsIGV4Y2x1: No such file or directory
+eval "$(echo X19naXRfcmVmczIgKCkgCnsgCiAgICBsb2NhbCBpOwogICAgZm9yIGkgaW4gJChfX2dpdF9yZWZz: No such file or directory
+eval "$(echo X19naXRfcmVmc19yZW1vdGVzICgpIAp7IAogICAgbG9jYWwgaSBoYXNoOwogICAgX19naXQgbHMt: No such file or directory
+eval "$(echo X19naXRfcmVtb3RlX2hlYWRzICgpIAp7IAogICAgbG9jYWwgcGZ4PSIkezEtfSIgY3VyXz0iJHsy: No such file or directory
+eval "$(echo X19naXRfcmVtb3RlcyAoKSAKeyAKICAgIF9fZ2l0X2ZpbmRfcmVwb19wYXRoOwogICAgdGVzdCAt: No such file or directory
+eval "$(echo X19naXRfc2VxdWVuY2VyX3N0YXR1cyAoKSAKeyAKICAgIGxvY2FsIHRvZG87CiAgICBpZiB0ZXN0: No such file or directory
+eval "$(echo X19naXRfdGFncyAoKSAKeyAKICAgIGxvY2FsIHBmeD0iJHsxLX0iIGN1cl89IiR7Mi19IiBzZng9: No such file or directory
+eval "$(echo X19naXRjb21wICgpIAp7IAogICAgbG9jYWwgY3VyXz0iJHszLSRjdXJ9IjsKICAgIGNhc2UgIiRj: No such file or directory
+eval "$(echo X19naXRjb21wX2RpcmVjdG9yaWVzICgpIAp7IAogICAgbG9jYWwgX3RtcF9kaXIgX3RtcF9jb21w: No such file or directory
+eval "$(echo X19naXRjb21wX25sX2FwcGVuZCAoKSAKeyAKICAgIGxvY2FsIElGUz0nCic7CiAgICBfX2dpdGNv: No such file or directory
+eval "$(echo X19naXRjb21wX3NsYXNoX2xlYWRpbmdfcGF0aHMgKCkgCnsgCiAgICBsb2NhbCBkZXF1b3RlZF93: No such file or directory
+CRLF: 0, LF-only: 5212, use_crlf: False
+Total lines: 5213
+Found start at line 3296: // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
+Found BACK at line 3340: } else if (action.type == AIAction::Type::BACK) {
+Found end at line 3341: 
+Replacing lines 3296 to 3341
+--- OLD BLOCK ---
+  3296:         // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
+  3297: 
+  3298: 
+  3299: 
+  3300:         std::string device_id = "slot_" + std::to_string(slot);
+  3301: 
+  3302: 
+  3303: 
+  3304:         if (action.type == AIAction::Type::TAP) {
+  3305: 
+  3306: 
+  3307: 
+  3308:             mirage::TapCommandEvent evt;
+  3309: 
+  3310: 
+  3311: 
+  3312:             evt.device_id = device_id;
+  3313: 
+  3314: 
+  3315: 
+  3316:             evt.x = action.x;
+  3317: 
+  3318: 
+  3319: 
+  3320:             evt.y = action.y;
+  3321: 
+  3322: 
+  3323: 
+  3324:             evt.source = mirage::CommandSource::AI;
+  3325: 
+  3326: 
+  3327: 
+  3328:             mirage::bus().publish(evt);
+  3329: 
+  3330: 
+  3331: 
+  3332:             MLOG_DEBUG("ai", "EventBus TapCommand発行: device=%s (%d,%d) tpl=%s",
+  3333: 
+  3334: 
+  3335: 
+  3336:                        device_id.c_str(), action.x, action.y, tpl_name.c_str());
+  3337: 
+  3338: 
+  3339: 
+  3340:         } else if (action.type == AIAction::Type::BACK) {
+  3341: 
+--- END OLD BLOCK ---
+New block: 45 lines
+Result total lines: 5212
+File written successfully
+Verify file size: 59781
+Verify CRLF: 0
+VERIFICATION: New code found in file - SUCCESS
+Old code removed - OK
+
+
+=== SUMMARY ===
+CRLF: 0, LF-only: 5212, use_crlf: False
+Total lines: 5213
+Found start at line 3296: // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
+Found BACK at line 3340: } else if (action.type == AIAction::Type::BACK) {
+Found end at line 3341: 
+Replacing lines 3296 to 3341
+New block: 45 lines
+Result total lines: 5212
+Verify CRLF: 0
+VERIFICATION: New code found in file - SUCCESS
+Old code removed - OK
+
+
+=== REPLACE LOG ===
+CRLF: 0, LF-only: 5212, use_crlf: False
+Total lines: 5213
+Found start at line 3296: // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
+Found BACK at line 3340: } else if (action.type == AIAction::Type::BACK) {
+Found end at line 3341: 
+Replacing lines 3296 to 3341
+--- OLD BLOCK ---
+  3296:         // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
+  3297: 
+  3298: 
+  3299: 
+  3300:         std::string device_id = "slot_" + std::to_string(slot);
+  3301: 
+  3302: 
+  3303: 
+  3304:         if (action.type == AIAction::Type::TAP) {
+  3305: 
+  3306: 
+  3307: 
+  3308:             mirage::TapCommandEvent evt;
+  3309: 
+  3310: 
+  3311: 
+  3312:             evt.device_id = device_id;
+  3313: 
+  3314: 
+  3315: 
+  3316:             evt.x = action.x;
+  3317: 
+  3318: 
+  3319: 
+  3320:             evt.y = action.y;
+  3321: 
+  3322: 
+  3323: 
+  3324:             evt.source = mirage::CommandSource::AI;
+  3325: 
+  3326: 
+  3327: 
+  3328:             mirage::bus().publish(evt);
+  3329: 
+  3330: 
+  3331: 
+  3332:             MLOG_DEBUG("ai", "EventBus TapCommand発行: device=%s (%d,%d) tpl=%s",
+  3333: 
+  3334: 
+  3335: 
+  3336:                        device_id.c_str(), action.x, action.y, tpl_name.c_str());
+  3337: 
+  3338: 
+  3339: 
+  3340:         } else if (action.type == AIAction::Type::BACK) {
+  3341: 
+--- END OLD BLOCK ---
+New block: 45 lines
+Result total lines: 5212
+File written successfully
+Verify file size: 59781
+Verify CRLF: 0
+VERIFICATION: New code found in file - SUCCESS
+Old code removed - OK
