@@ -646,6 +646,26 @@ if(BUILD_TESTS)
         target_compile_definitions(test_ai_e2e PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_test(NAME AIE2ETest COMMAND test_ai_e2e)
 
+        # 改善P: テンプレートバージョニングテスト
+        add_executable(test_template_versioning
+            tests/test_template_versioning.cpp
+            src/ai/template_store.cpp
+            src/stb_image_impl.cpp
+        )
+        target_include_directories(test_template_versioning PRIVATE src)
+        target_link_libraries(test_template_versioning PRIVATE gtest)
+        target_compile_definitions(test_template_versioning PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME TemplateVersioningTest COMMAND test_template_versioning)
+
+        # 改善N/Q/R: AI improvements struct/logic tests
+        add_executable(test_ai_improvements_nqr
+            tests/test_ai_improvements_nqr.cpp
+        )
+        target_include_directories(test_ai_improvements_nqr PRIVATE src)
+        target_link_libraries(test_ai_improvements_nqr PRIVATE gtest)
+        target_compile_definitions(test_ai_improvements_nqr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME AIImprovementsNQRTest COMMAND test_ai_improvements_nqr)
+
         # Frame Analyzer OCR test
         if(USE_OCR)
             add_executable(test_frame_analyzer

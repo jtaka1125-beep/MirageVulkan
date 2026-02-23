@@ -82,6 +82,17 @@ struct KeyCommandEvent : Event {
     CommandSource source = CommandSource::USER;
 };
 
+// 改善S: AI決定アクション通知イベント
+struct AIActionEvent : Event {
+    int slot = 0;
+    std::string device_id;
+    std::string action_type;   // "TAP"/"SWIPE"/"BACK"/"NONE"
+    int x = 0, y = 0, x2 = 0, y2 = 0;
+    int duration_ms = 0;
+    std::string template_name;
+    float confidence = 0.0f;
+};
+
 // Learning mode (GUI -> AI)
 struct LearningStartEvent : Event {
     std::string device_id;
