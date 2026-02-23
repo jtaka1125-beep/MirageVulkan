@@ -3340,32 +3340,6 @@ private:
         }
 
 
-            mirage::KeyCommandEvent evt;
-
-
-
-            evt.device_id = device_id;
-
-
-
-            evt.keycode = 4;  // KEYCODE_BACK
-
-
-
-            evt.source = mirage::CommandSource::AI;
-
-
-
-            mirage::bus().publish(evt);
-
-
-
-            MLOG_DEBUG("ai", "EventBus KeyCommand(BACK)発行: device=%s", device_id.c_str());
-
-
-
-        }
-
 
 
 

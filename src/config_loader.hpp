@@ -8,6 +8,7 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <map>
 #include "mirage_log.hpp"
 
 // Try nlohmann/json, fall back to manual parser
@@ -50,12 +51,17 @@ struct OcrConfig {
     std::string language = "eng+jpn";
 };
 
+struct LogConfig {
+    std::string log_path = "mirage_gui.log";
+};
+
 struct AppConfig {
     NetworkConfig network;
     UsbTetherConfig usb_tether;
     GuiConfig gui;
     AiConfig ai;
     OcrConfig ocr;
+    LogConfig log;
 };
 
 #if MIRAGE_HAS_JSON
@@ -165,6 +171,8 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ocr.enabled = jsonGet<bool>(j, "ocr", "enabled", false);
         config.ocr.language = jsonGet<std::string>(j, "ocr", "language", "eng+jpn");
 
+        config.log.log_path = jsonGet<std::string>(j, "log", "log_path", "mirage_gui.log");
+
     } catch (const nlohmann::json::exception& e) {
         MLOG_ERROR("config", "JSON parse error: %s", e.what());
         return config;
@@ -195,6 +203,9 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
     config.ocr.enabled = extractJsonBool(json, "enabled", false);
     config.ocr.language = extractJsonString(json, "language");
     if (config.ocr.language.empty()) config.ocr.language = "eng+jpn";
+
+    config.log.log_path = extractJsonString(json, "log_path");
+    if (config.log.log_path.empty()) config.log.log_path = "mirage_gui.log";
 #endif
 
     MLOG_INFO("config", "Loaded: pc_ip=%s, video_port=%d, command_port=%d",
@@ -209,7 +220,6 @@ inline AppConfig& getConfig() {
     static AppConfig config = loadConfig();
     return config;
 }
-
 
 // =============================================================================
 // Device Registry - loads expected resolution from devices.json
@@ -229,7 +239,7 @@ public:
     }
 
     // Load from devices.json (call once at startup)
-    bool loadDevices(const std::string& path = "C:/MirageWork/MirageComplete/build/devices.json") {
+    bool loadDevices(const std::string& path = "devices.json") {
         std::ifstream file(path);
         if (!file.is_open()) {
             MLOG_WARN("ExpectedSizeRegistry", "devices.json not found: %s", path.c_str());

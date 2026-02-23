@@ -41,6 +41,8 @@ static std::string jsonEscape(const std::string& s) {
         case '\n': out += "\\n";  break;
         case '\r': out += "\\r";  break;
         case '\t': out += "\\t";  break;
+        case '\b': out += "\\b";  break;
+        case '\f': out += "\\f";  break;
         default:
             if (c < 0x20) {
                 // 制御文字 → \uXXXX
@@ -74,20 +76,38 @@ static std::string jsonUnescape(const std::string& s) {
             case 'b':  out += '\b'; break;
             case 'f':  out += '\f'; break;
             case 'u':
-                // \uXXXX → UTF-8エンコード（BMP範囲のみ対応）
+                // \uXXXX → UTF-8エンコード（サロゲートペア対応）
                 if (i + 4 < s.size()) {
                     char hex[5] = {};
                     hex[0] = s[i+1]; hex[1] = s[i+2];
                     hex[2] = s[i+3]; hex[3] = s[i+4];
                     unsigned int cp = (unsigned int)std::strtoul(hex, nullptr, 16);
                     i += 4;
+                    // サロゲートペア: \uD800-\uDBFF + \uDC00-\uDFFF → U+10000以上
+                    if (cp >= 0xD800 && cp <= 0xDBFF
+                        && i + 6 < s.size() && s[i+1] == '\\' && s[i+2] == 'u') {
+                        char hex2[5] = {};
+                        hex2[0] = s[i+3]; hex2[1] = s[i+4];
+                        hex2[2] = s[i+5]; hex2[3] = s[i+6];
+                        unsigned int lo = (unsigned int)std::strtoul(hex2, nullptr, 16);
+                        if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            i += 6;
+                        }
+                    }
                     if (cp < 0x80) {
                         out += (char)cp;
                     } else if (cp < 0x800) {
                         out += (char)(0xC0 | (cp >> 6));
                         out += (char)(0x80 | (cp & 0x3F));
-                    } else {
+                    } else if (cp < 0x10000) {
                         out += (char)(0xE0 | (cp >> 12));
+                        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+                        out += (char)(0x80 | (cp & 0x3F));
+                    } else {
+                        // 4バイト UTF-8 (U+10000以上)
+                        out += (char)(0xF0 | (cp >> 18));
+                        out += (char)(0x80 | ((cp >> 12) & 0x3F));
                         out += (char)(0x80 | ((cp >> 6) & 0x3F));
                         out += (char)(0x80 | (cp & 0x3F));
                     }
@@ -177,6 +197,90 @@ static bool findFloat(const std::string& j, const std::string& key, float& out) 
     return e && e != j.c_str() + pos;
 }
 
+// JSON内の位置から行番号を計算
+static size_t lineNumber(const std::string& s, size_t pos) {
+    size_t line = 1;
+    for (size_t i = 0; i < pos && i < s.size(); ++i) {
+        if (s[i] == '\n') ++line;
+    }
+    return line;
+}
+
+// 文字列を考慮した括弧マッチング（エスケープ済み文字列内の {} [] を無視）
+// pos は '{' or '[' の位置。対応する閉じ括弧の位置を返す
+static size_t findMatchingBracket(const std::string& j, size_t pos) {
+    if (pos >= j.size()) return std::string::npos;
+    char open = j[pos];
+    char close = (open == '{') ? '}' : (open == '[') ? ']' : '\0';
+    if (!close) return std::string::npos;
+
+    int depth = 0;
+    for (size_t i = pos; i < j.size(); ++i) {
+        if (j[i] == '"') {
+            // 文字列をスキップ（エスケープ考慮）
+            ++i;
+            while (i < j.size() && j[i] != '"') {
+                if (j[i] == '\\') ++i;
+                ++i;
+            }
+        } else if (j[i] == open) {
+            ++depth;
+        } else if (j[i] == close) {
+            --depth;
+            if (depth == 0) return i;
+        }
+    }
+    return std::string::npos;
+}
+
+// JSON構造の基本検証（括弧の対応、文字列の閉じ）
+// エラー時は行番号・位置情報を含むメッセージを返す
+static bool validateJsonStructure(const std::string& j, std::string* err) {
+    std::vector<char> stack;
+    bool inString = false;
+    for (size_t i = 0; i < j.size(); ++i) {
+        if (inString) {
+            if (j[i] == '\\') {
+                ++i; // エスケープされた文字をスキップ
+            } else if (j[i] == '"') {
+                inString = false;
+            }
+            continue;
+        }
+        switch (j[i]) {
+        case '"': inString = true; break;
+        case '{': stack.push_back('}'); break;
+        case '[': stack.push_back(']'); break;
+        case '}':
+        case ']':
+            if (stack.empty() || stack.back() != j[i]) {
+                if (err) {
+                    *err = "JSONパースエラー: 不正な '" + std::string(1, j[i])
+                         + "' (行 " + std::to_string(lineNumber(j, i))
+                         + ", 位置 " + std::to_string(i) + ")";
+                }
+                return false;
+            }
+            stack.pop_back();
+            break;
+        default: break;
+        }
+    }
+    if (inString) {
+        if (err) *err = "JSONパースエラー: 閉じられていない文字列";
+        return false;
+    }
+    if (!stack.empty()) {
+        if (err) {
+            *err = "JSONパースエラー: 閉じられていない括弧 ('"
+                 + std::string(1, stack.back()) + "' が不足)";
+        }
+        return false;
+    }
+    return true;
+}
+
+// 配列内のオブジェクト分割（文字列内の {} を考慮）
 static std::vector<std::string> splitObjectsInArray(const std::string& j, const std::string& arrayKey) {
     std::vector<std::string> objs;
     auto k = "\"" + arrayKey + "\"";
@@ -184,41 +288,39 @@ static std::vector<std::string> splitObjectsInArray(const std::string& j, const 
     if (pos == std::string::npos) return objs;
     pos = j.find('[', pos);
     if (pos == std::string::npos) return objs;
-    auto end = j.find(']', pos);
+    // 対応する ']' を文字列考慮で検索
+    size_t end = findMatchingBracket(j, pos);
     if (end == std::string::npos) return objs;
 
-    int depth = 0;
-    size_t cur = 0;
-    for (size_t i = pos; i < end; i++) {
-        if (j[i] == '{') {
-            if (depth == 0) cur = i;
-            depth++;
-        } else if (j[i] == '}') {
-            depth--;
-            if (depth == 0) {
-                objs.push_back(j.substr(cur, i - cur + 1));
+    // 配列内のトップレベルオブジェクトを抽出（文字列内の {} を無視）
+    for (size_t i = pos + 1; i < end; ++i) {
+        if (j[i] == '"') {
+            // 文字列をスキップ
+            ++i;
+            while (i < end && j[i] != '"') {
+                if (j[i] == '\\') ++i;
+                ++i;
             }
+        } else if (j[i] == '{') {
+            size_t objEnd = findMatchingBracket(j, i);
+            if (objEnd == std::string::npos) break;
+            objs.push_back(j.substr(i, objEnd - i + 1));
+            i = objEnd;
         }
     }
     return objs;
 }
 
-// Extract sub-object string for a given key: "key": { ... }
+// サブオブジェクト抽出: "key": { ... }（文字列内の {} を考慮）
 static std::string findSubObject(const std::string& j, const std::string& key) {
     auto k = "\"" + key + "\"";
     auto pos = j.find(k);
     if (pos == std::string::npos) return {};
     pos = j.find('{', pos);
     if (pos == std::string::npos) return {};
-    int depth = 0;
-    for (size_t i = pos; i < j.size(); ++i) {
-        if (j[i] == '{') ++depth;
-        else if (j[i] == '}') {
-            --depth;
-            if (depth == 0) return j.substr(pos, i - pos + 1);
-        }
-    }
-    return {};
+    size_t end = findMatchingBracket(j, pos);
+    if (end == std::string::npos) return {};
+    return j.substr(pos, end - pos + 1);
 }
 
 
@@ -226,7 +328,12 @@ bool loadManifestJson(const std::string& path_utf8, TemplateManifest& out, std::
     out = {};
     auto j = readAll(path_utf8);
     if (j.empty()) {
-        if (err) *err = "manifest not found or empty";
+        if (err) *err = "manifest not found or empty: " + path_utf8;
+        return false;
+    }
+    // JSON構造の基本検証（括弧/文字列の対応チェック）
+    if (!validateJsonStructure(j, err)) {
+        MLOG_WARN(TAG, "マニフェストJSON構造不正: %s", path_utf8.c_str());
         return false;
     }
     findInt(j, "version", out.version);

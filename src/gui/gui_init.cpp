@@ -655,8 +655,8 @@ void initializeAI() {
     auto gui = g_gui;
     g_ai_engine = std::make_unique<mirage::ai::AIEngine>();
     mirage::ai::AIConfig ai_config;
-    ai_config.templates_dir = "templates";
-    ai_config.default_threshold = 0.80f;
+    ai_config.templates_dir     = mirage::config::getConfig().ai.templates_dir;
+    ai_config.default_threshold = mirage::config::getConfig().ai.default_threshold;
     ai_config.enable_multi_scale = true;
 
     // Pass VulkanContext for GPU compute backend

@@ -348,3 +348,155 @@ TEST_F(ManifestTest, DefaultRootDir) {
     // root_dir未指定時は "templates" がデフォルト
     EXPECT_EQ(loaded.root_dir, "templates");
 }
+
+// ---------------------------------------------------------------------------
+// 特殊文字（\n \t \r \b \f）エスケープのラウンドトリップ
+// ---------------------------------------------------------------------------
+TEST_F(ManifestTest, SpecialCharEscapeRoundTrip) {
+    TemplateManifest m;
+    m.version = 1;
+    m.root_dir = "templates";
+
+    TemplateEntry e;
+    e.template_id = 1;
+    e.name = "line1\nline2\ttab";
+    e.file = "path\\with\\backslash.png";
+    e.w = 32; e.h = 16;
+    e.tags = "has\rcarriage\breturn\fformfeed";
+    m.entries.push_back(e);
+
+    std::string err;
+    ASSERT_TRUE(saveManifestJson(manifest_path_, m, &err)) << err;
+
+    TemplateManifest loaded;
+    ASSERT_TRUE(loadManifestJson(manifest_path_, loaded, &err)) << err;
+
+    ASSERT_EQ(loaded.entries.size(), 1u);
+    EXPECT_EQ(loaded.entries[0].name, "line1\nline2\ttab");
+    EXPECT_EQ(loaded.entries[0].file, "path\\with\\backslash.png");
+    EXPECT_EQ(loaded.entries[0].tags, "has\rcarriage\breturn\fformfeed");
+}
+
+// ---------------------------------------------------------------------------
+// 文字列内の {} を含むJSONが正しくパースされる
+// ---------------------------------------------------------------------------
+TEST_F(ManifestTest, BracesInsideStringValues) {
+    TemplateManifest m;
+    m.version = 1;
+    m.root_dir = "templates";
+
+    TemplateEntry e;
+    e.template_id = 1;
+    e.name = "test{with}braces";
+    e.file = "test.png";
+    e.w = 32; e.h = 16;
+    e.tags = "json:{\"key\":\"val\"}";
+    m.entries.push_back(e);
+
+    std::string err;
+    ASSERT_TRUE(saveManifestJson(manifest_path_, m, &err)) << err;
+
+    TemplateManifest loaded;
+    ASSERT_TRUE(loadManifestJson(manifest_path_, loaded, &err)) << err;
+
+    ASSERT_EQ(loaded.entries.size(), 1u);
+    EXPECT_EQ(loaded.entries[0].name, "test{with}braces");
+    EXPECT_EQ(loaded.entries[0].tags, "json:{\"key\":\"val\"}");
+}
+
+// ---------------------------------------------------------------------------
+// Unicode エスケープシーケンスの処理（サロゲートペア含む）
+// ---------------------------------------------------------------------------
+TEST_F(ManifestTest, UnicodeEscapeInJson) {
+    // 手動でUnicodeエスケープを含むJSONを作成
+    std::string json =
+        "{\n"
+        "  \"version\": 1,\n"
+        "  \"root_dir\": \"templates\",\n"
+        "  \"entries\": [\n"
+        "    {\n"
+        "      \"template_id\": 1,\n"
+        "      \"name\": \"hello\\u0020world\",\n"
+        "      \"file\": \"test.png\",\n"
+        "      \"w\": 32,\n"
+        "      \"h\": 16,\n"
+        "      \"tags\": \"emoji\\uD83D\\uDE00end\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n";
+    {
+        std::ofstream ofs(manifest_path_);
+        ofs << json;
+    }
+
+    TemplateManifest loaded;
+    std::string err;
+    ASSERT_TRUE(loadManifestJson(manifest_path_, loaded, &err)) << err;
+
+    ASSERT_EQ(loaded.entries.size(), 1u);
+    // \u0020 = スペース
+    EXPECT_EQ(loaded.entries[0].name, "hello world");
+    // \uD83D\uDE00 = U+1F600 (😀) = UTF-8: F0 9F 98 80
+    std::string expected_tags = "emoji";
+    expected_tags += (char)(unsigned char)0xF0;
+    expected_tags += (char)(unsigned char)0x9F;
+    expected_tags += (char)(unsigned char)0x98;
+    expected_tags += (char)(unsigned char)0x80;
+    expected_tags += "end";
+    EXPECT_EQ(loaded.entries[0].tags, expected_tags);
+}
+
+// ---------------------------------------------------------------------------
+// 不正JSON: 閉じ括弧不一致
+// ---------------------------------------------------------------------------
+TEST_F(ManifestTest, MalformedJsonUnmatchedBrace) {
+    std::string json = R"({ "version": 1, "entries": [ )";
+    {
+        std::ofstream ofs(manifest_path_);
+        ofs << json;
+    }
+
+    TemplateManifest loaded;
+    std::string err;
+    EXPECT_FALSE(loadManifestJson(manifest_path_, loaded, &err));
+    EXPECT_FALSE(err.empty());
+    // エラーメッセージに位置情報が含まれることを確認
+    bool has_position = err.find("行") != std::string::npos
+                     || err.find("位置") != std::string::npos
+                     || err.find("閉じ") != std::string::npos;
+    EXPECT_TRUE(has_position) << "Error should contain position info: " << err;
+}
+
+// ---------------------------------------------------------------------------
+// 不正JSON: 閉じられていない文字列
+// ---------------------------------------------------------------------------
+TEST_F(ManifestTest, MalformedJsonUnclosedString) {
+    std::string json = R"({ "version": 1, "root_dir": "unclosed )";
+    {
+        std::ofstream ofs(manifest_path_);
+        ofs << json;
+    }
+
+    TemplateManifest loaded;
+    std::string err;
+    EXPECT_FALSE(loadManifestJson(manifest_path_, loaded, &err));
+    EXPECT_FALSE(err.empty());
+}
+
+// ---------------------------------------------------------------------------
+// 不正JSON: 括弧の種類不一致（{ に対して ]）
+// ---------------------------------------------------------------------------
+TEST_F(ManifestTest, MalformedJsonMismatchedBrackets) {
+    std::string json = R"({ "version": 1 ])";
+    {
+        std::ofstream ofs(manifest_path_);
+        ofs << json;
+    }
+
+    TemplateManifest loaded;
+    std::string err;
+    EXPECT_FALSE(loadManifestJson(manifest_path_, loaded, &err));
+    EXPECT_FALSE(err.empty());
+    // 行番号と位置が含まれる
+    EXPECT_NE(err.find("行"), std::string::npos) << "Error: " << err;
+}

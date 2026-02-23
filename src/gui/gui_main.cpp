@@ -271,7 +271,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
 #ifdef _CONSOLE
 int main(int argc, char* argv[]) {
     // Initialize structured logging
-    mirage::log::openLogFile("mirage_gui.log");
+    mirage::log::openLogFile(mirage::config::getConfig().log.log_path);
 #ifdef _DEBUG
     mirage::log::setLogLevel(mirage::log::Level::Debug);
 #endif
