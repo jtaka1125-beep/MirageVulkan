@@ -159,8 +159,8 @@ TEST(Vid0ParserTest, BufferOverflowConstants) {
     // when accumulated unparsed data exceeds 128KB between parse calls. Since
     // RTP_MAX_LEN (65535) < BUFFER_MAX, a single incomplete frame can never alone
     // trigger overflow. Verify the constants are correctly related.
-    EXPECT_EQ(BUFFER_MAX, 128u * 1024u);
-    EXPECT_EQ(BUFFER_TRIM, 32u * 1024u);
+    EXPECT_EQ(BUFFER_MAX, 2u * 1024u * 1024u);
+    EXPECT_EQ(BUFFER_TRIM, 256u * 1024u);
     EXPECT_LT(BUFFER_TRIM, BUFFER_MAX);
     EXPECT_LT(RTP_MAX_LEN + VID0_HEADER_SIZE, BUFFER_MAX);
 }
