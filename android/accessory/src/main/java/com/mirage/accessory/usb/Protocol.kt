@@ -96,7 +96,7 @@ object Protocol {
         data class Tap(override val seq: Int, val x: Int, val y: Int, val w: Int, val h: Int) : Command()
         data class Back(override val seq: Int) : Command()
         data class Key(override val seq: Int, val keycode: Int) : Command()
-        data class Swipe(override val seq: Int, val startX: Int, val startY: Int, val endX: Int, val endY: Int, val durationMs: Int) : Command()
+        data class Swipe(override val seq: Int, val startX: Int, val startY: Int, val endX: Int, val endY: Int, val durationMs: Int, val screenW: Int = 0, val screenH: Int = 0) : Command()  // ISSUE-18
         data class Pinch(override val seq: Int, val centerX: Int, val centerY: Int, val startDistance: Int, val endDistance: Int, val durationMs: Int, val angleDeg100: Int) : Command()
         data class LongPress(override val seq: Int, val x: Int, val y: Int, val durationMs: Int) : Command()
         data class Config(override val seq: Int, val payload: ByteArray) : Command()           // 設定変更
@@ -159,14 +159,17 @@ object Protocol {
 
             CMD_SWIPE -> {
                 if (payloadData == null || header.payloadLen < 20) return null
-                Command.Swipe(
-                    seq = header.seq,
-                    startX = payloadData.int,
-                    startY = payloadData.int,
-                    endX = payloadData.int,
-                    endY = payloadData.int,
-                    durationMs = payloadData.int
-                )
+                // ISSUE-18: 28-byte payload adds screenW, screenH (20-byte legacy is still accepted)
+                val startX    = payloadData.int
+                val startY    = payloadData.int
+                val endX      = payloadData.int
+                val endY      = payloadData.int
+                val durationMs = payloadData.int
+                val screenW   = if (header.payloadLen >= 28) payloadData.int else 0
+                val screenH   = if (header.payloadLen >= 28) payloadData.int else 0
+                Command.Swipe(seq = header.seq, startX = startX, startY = startY,
+                    endX = endX, endY = endY, durationMs = durationMs,
+                    screenW = screenW, screenH = screenH)
             }
 
             CMD_PINCH -> {

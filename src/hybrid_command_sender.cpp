@@ -225,7 +225,7 @@ uint32_t HybridCommandSender::send_swipe(const std::string& device_id, int x1, i
 
     // Tier 2: MIRA protocol via USB bulk
     if (usb_sender_) {
-        uint32_t seq = usb_sender_->send_swipe(device_id, x1, y1, x2, y2, duration_ms);
+        uint32_t seq = usb_sender_->send_swipe(device_id, x1, y1, x2, y2, duration_ms, screen_w, screen_h);  // ISSUE-18
         if (seq > 0) {
             current_touch_mode_.store(TouchMode::MIRA_USB);
             return seq;
@@ -457,9 +457,9 @@ uint32_t HybridCommandSender::send_tap(int x, int y, int screen_w, int screen_h)
     return first.empty() ? 0 : send_tap(first, x, y, screen_w, screen_h);
 }
 
-uint32_t HybridCommandSender::send_swipe(int x1, int y1, int x2, int y2, int duration_ms) {
+uint32_t HybridCommandSender::send_swipe(int x1, int y1, int x2, int y2, int duration_ms, int screen_w, int screen_h) {
     auto first = get_first_device_id();
-    return first.empty() ? 0 : send_swipe(first, x1, y1, x2, y2, duration_ms);
+    return first.empty() ? 0 : send_swipe(first, x1, y1, x2, y2, duration_ms, screen_w, screen_h);  // ISSUE-18
 }
 
 uint32_t HybridCommandSender::send_back() {

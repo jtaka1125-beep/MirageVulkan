@@ -824,11 +824,14 @@ class AccessoryIoService : Service() {
 
 
     private fun handleSwipe(cmd: Protocol.Command.Swipe) {
-        // FIX-A note: Swipe coords are assumed to be in device pixel space.
-        // Add screen_w/h fields to CMD_SWIPE payload in a future protocol version for full scaling.
+        // ISSUE-18: scale coordinates when screenW/H are provided
+        val (dw, dh) = getDeviceDisplaySize()
+        val sx1 = if (cmd.screenW > 0 && dw > 0) (cmd.startX.toLong() * dw / cmd.screenW).toInt() else cmd.startX
+        val sy1 = if (cmd.screenH > 0 && dh > 0) (cmd.startY.toLong() * dh / cmd.screenH).toInt() else cmd.startY
+        val sx2 = if (cmd.screenW > 0 && dw > 0) (cmd.endX.toLong()   * dw / cmd.screenW).toInt() else cmd.endX
+        val sy2 = if (cmd.screenH > 0 && dh > 0) (cmd.endY.toLong()   * dh / cmd.screenH).toInt() else cmd.endY
         com.mirage.accessory.access.MirageAccessibilityService.instance
-            ?.swipe(cmd.startX.toFloat(), cmd.startY.toFloat(),
-                    cmd.endX.toFloat(), cmd.endY.toFloat(), cmd.durationMs, cmd.seq)
+            ?.swipe(sx1.toFloat(), sy1.toFloat(), sx2.toFloat(), sy2.toFloat(), cmd.durationMs, cmd.seq)
     }
     private fun handlePinch(cmd: Protocol.Command.Pinch) {
 

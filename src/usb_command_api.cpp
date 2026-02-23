@@ -60,37 +60,21 @@ uint32_t MultiUsbCommandSender::send_tap(const std::string& usb_id, int x, int y
     return seq;
 }
 
-uint32_t MultiUsbCommandSender::send_swipe(const std::string& usb_id, int x1, int y1, int x2, int y2, int duration_ms) {
-    uint8_t payload[20];
+uint32_t MultiUsbCommandSender::send_swipe(const std::string& usb_id, int x1, int y1, int x2, int y2, int duration_ms, int screen_w, int screen_h) {
+    // ISSUE-18: payload 28 bytes = x1,y1,x2,y2,dur,screen_w,screen_h (7×int32)
+    uint8_t payload[28];
 
-    payload[0] = x1 & 0xFF;
-    payload[1] = (x1 >> 8) & 0xFF;
-    payload[2] = (x1 >> 16) & 0xFF;
-    payload[3] = (x1 >> 24) & 0xFF;
-
-    payload[4] = y1 & 0xFF;
-    payload[5] = (y1 >> 8) & 0xFF;
-    payload[6] = (y1 >> 16) & 0xFF;
-    payload[7] = (y1 >> 24) & 0xFF;
-
-    payload[8] = x2 & 0xFF;
-    payload[9] = (x2 >> 8) & 0xFF;
-    payload[10] = (x2 >> 16) & 0xFF;
-    payload[11] = (x2 >> 24) & 0xFF;
-
-    payload[12] = y2 & 0xFF;
-    payload[13] = (y2 >> 8) & 0xFF;
-    payload[14] = (y2 >> 16) & 0xFF;
-    payload[15] = (y2 >> 24) & 0xFF;
-
-    payload[16] = duration_ms & 0xFF;
-    payload[17] = (duration_ms >> 8) & 0xFF;
-    payload[18] = (duration_ms >> 16) & 0xFF;
-    payload[19] = (duration_ms >> 24) & 0xFF;
+    payload[0] = x1 & 0xFF;  payload[1] = (x1>>8)&0xFF;  payload[2] = (x1>>16)&0xFF;  payload[3] = (x1>>24)&0xFF;
+    payload[4] = y1 & 0xFF;  payload[5] = (y1>>8)&0xFF;  payload[6] = (y1>>16)&0xFF;  payload[7] = (y1>>24)&0xFF;
+    payload[8] = x2 & 0xFF;  payload[9] = (x2>>8)&0xFF;  payload[10]= (x2>>16)&0xFF;  payload[11]= (x2>>24)&0xFF;
+    payload[12]= y2 & 0xFF;  payload[13]= (y2>>8)&0xFF;  payload[14]= (y2>>16)&0xFF;  payload[15]= (y2>>24)&0xFF;
+    payload[16]= duration_ms&0xFF; payload[17]=(duration_ms>>8)&0xFF; payload[18]=(duration_ms>>16)&0xFF; payload[19]=(duration_ms>>24)&0xFF;
+    payload[20]= screen_w&0xFF;   payload[21]=(screen_w>>8)&0xFF;   payload[22]=(screen_w>>16)&0xFF;   payload[23]=(screen_w>>24)&0xFF;
+    payload[24]= screen_h&0xFF;   payload[25]=(screen_h>>8)&0xFF;   payload[26]=(screen_h>>16)&0xFF;   payload[27]=(screen_h>>24)&0xFF;
 
     uint32_t seq = queue_command(usb_id, CMD_SWIPE, payload, sizeof(payload));
     if (seq) {
-        MLOG_INFO("multicmd", "Queued SWIPE(%d,%d)->(%d,%d) to %s seq=%u", x1, y1, x2, y2, usb_id.c_str(), seq);
+        MLOG_INFO("multicmd", "Queued SWIPE(%d,%d)->(%d,%d) sw=%d sh=%d to %s seq=%u", x1,y1,x2,y2,screen_w,screen_h,usb_id.c_str(),seq);
     }
     return seq;
 }

@@ -50,7 +50,7 @@ public:
     // Send commands (returns sequence number, 0 on error)
     uint32_t send_ping();
     uint32_t send_tap(int x, int y, int screen_w = 0, int screen_h = 0);
-    uint32_t send_swipe(int x1, int y1, int x2, int y2, int duration_ms = 300);
+    uint32_t send_swipe(int x1, int y1, int x2, int y2, int duration_ms = 300, int screen_w = 0, int screen_h = 0);  // ISSUE-18
     uint32_t send_back();
     uint32_t send_key(int keycode);
     uint32_t send_click_id(const std::string& resource_id);

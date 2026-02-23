@@ -299,8 +299,9 @@ uint32_t WifiCommandSender::send_tap(int x, int y, int screen_w, int screen_h) {
     return seq;
 }
 
-uint32_t WifiCommandSender::send_swipe(int x1, int y1, int x2, int y2, int duration_ms) {
-    uint8_t payload[20];
+uint32_t WifiCommandSender::send_swipe(int x1, int y1, int x2, int y2, int duration_ms, int screen_w, int screen_h) {
+    // ISSUE-18: payload 28 bytes = x1,y1,x2,y2,dur,screen_w,screen_h
+    uint8_t payload[28];
 
     payload[0] = x1 & 0xFF;
     payload[1] = (x1 >> 8) & 0xFF;
@@ -326,6 +327,8 @@ uint32_t WifiCommandSender::send_swipe(int x1, int y1, int x2, int y2, int durat
     payload[17] = (duration_ms >> 8) & 0xFF;
     payload[18] = (duration_ms >> 16) & 0xFF;
     payload[19] = (duration_ms >> 24) & 0xFF;
+    payload[20] = screen_w & 0xFF; payload[21]=(screen_w>>8)&0xFF; payload[22]=(screen_w>>16)&0xFF; payload[23]=(screen_w>>24)&0xFF;
+    payload[24] = screen_h & 0xFF; payload[25]=(screen_h>>8)&0xFF; payload[26]=(screen_h>>16)&0xFF; payload[27]=(screen_h>>24)&0xFF;
 
     auto packet = build_packet(CMD_SWIPE, payload, sizeof(payload));
     uint32_t seq = packet[6] | (packet[7] << 8) | (packet[8] << 16) | (packet[9] << 24);
