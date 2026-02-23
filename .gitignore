@@ -33,7 +33,10 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+android/capture/build/
+android/capture/.gradle/
 scripts/__pycache__/
+*.apk
 *.keystore
 
 # Phase 2 Migration
