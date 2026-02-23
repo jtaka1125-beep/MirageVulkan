@@ -298,8 +298,11 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
             float got_ratio = static_cast<float>(width) / static_cast<float>(height);
             if (std::abs(exp_ratio - got_ratio) < 0.10f) {
                 // Accept and update expected size for this device
-                MLOG_INFO("VkTex", "Aspect ratio match, accepting non-native video size: device=%s native=%dx%d video=%dx%d",
-                          id.c_str(), exp_w, exp_h, width, height);
+                if (!device.aspect_match_logged) {
+                    MLOG_INFO("VkTex", "Aspect ratio match, accepting non-native video size: device=%s native=%dx%d video=%dx%d",
+                              id.c_str(), exp_w, exp_h, width, height);
+                    device.aspect_match_logged = true;
+                }
                 device.video_width = width;
                 device.video_height = height;
             } else {
@@ -403,6 +406,7 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
         device.texture_height = height;
         device.vk_texture_ds = device.vk_texture->imguiDescriptorSet();
         device.size_mismatch_logged = false;  // Reset on new texture
+        device.aspect_match_logged = false;   // Reset on texture recreate (resolution may change)
 
     }
 

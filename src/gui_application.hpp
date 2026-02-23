@@ -73,6 +73,7 @@ struct DeviceInfo {
 
     // Dual-stream mismatch tracking (log once per state change)
     bool size_mismatch_logged = false;  // true if mismatch already logged for current texture
+    bool aspect_match_logged = false;   // suppress repeated "Aspect ratio match" log after first acceptance
 
     // Expected native resolution (from devices.json)
     int expected_width = 0;   // 0 = unknown, accept any
@@ -122,6 +123,7 @@ struct DeviceInfo {
         texture_width = o.texture_width;
         texture_height = o.texture_height;
         size_mismatch_logged = o.size_mismatch_logged;
+        aspect_match_logged = o.aspect_match_logged;
         expected_width = o.expected_width;
         expected_height = o.expected_height;
         video_width = o.video_width;
