@@ -12,6 +12,8 @@
 #include <mutex>
 #include <functional>
 #include <thread>
+#include <deque>
+#include <condition_variable>
 
 namespace mirage {
 
@@ -26,7 +28,7 @@ namespace mirage {
  */
 class AdbTouchFallback {
 public:
-    AdbTouchFallback() = default;
+    AdbTouchFallback();  // ISSUE-5: starts async worker thread
     ~AdbTouchFallback();
 
     // Set target device serial for adb -s <serial>
@@ -89,6 +91,17 @@ private:
     bool shell_running_ = false;
     std::string shell_device_{};
 #endif
+
+    // ISSUE-5: single worker thread + bounded async queue
+    std::thread async_worker_;
+    std::atomic<bool> async_running_{false};
+    std::mutex async_queue_mutex_;
+    std::condition_variable async_queue_cv_;
+    struct AsyncCmd { std::string cmd; };
+    std::deque<AsyncCmd> async_queue_;
+    static constexpr size_t ASYNC_QUEUE_MAX = 32;
+    void async_worker_loop();
+    void enqueue_async(const std::string& cmd);
 };
 
 } // namespace mirage

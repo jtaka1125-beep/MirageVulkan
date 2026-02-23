@@ -95,11 +95,13 @@ void BandwidthMonitor::updateStats() {
 
 BandwidthMonitor::UsbStats BandwidthMonitor::getUsbStats() {
     updateStats();
+    std::lock_guard<std::mutex> lock(usb_mutex_);  // ISSUE-4: TOCTOU fix
     return usb_stats_;
 }
 
 BandwidthMonitor::WifiStats BandwidthMonitor::getWifiStats() {
     updateStats();
+    std::lock_guard<std::mutex> lock(wifi_mutex_);  // ISSUE-4: TOCTOU fix
     return wifi_stats_;
 }
 

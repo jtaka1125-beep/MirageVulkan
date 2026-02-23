@@ -33,14 +33,20 @@ bool HybridCommandSender::start() {
         auto touch = std::make_unique<mirage::AoaHidTouch>();
         MLOG_INFO("hybridcmd", "Registering HID touch device during AOA switch (v%d)", aoa_version);
         if (!touch->register_device(handle)) return false;
-        // Store with temp key; moved to real device ID in device_opened_callback
-        hid_touches_["_pending"] = std::move(touch);
+        // ISSUE-3: unique key per handle to avoid collision when multiple devices connect simultaneously
+        char tmp_key[32];
+        snprintf(tmp_key, sizeof(tmp_key), "_pending_%p", static_cast<void*>(handle));
+        hid_touches_[tmp_key] = std::move(touch);
         return true;
     });
 
     // Move pending HID registration to the real device ID after re-enumeration
     usb_sender_->set_device_opened_callback([this](const std::string& usb_id, libusb_device_handle* handle) {
-        auto it = hid_touches_.find("_pending");
+        // ISSUE-3: find any pending entry by "_pending_" prefix
+        auto it = hid_touches_.end();
+        for (auto jt = hid_touches_.begin(); jt != hid_touches_.end(); ++jt) {
+            if (jt->first.rfind("_pending_", 0) == 0) { it = jt; break; }
+        }
         if (it != hid_touches_.end()) {
             it->second->set_handle(handle);
             hid_touches_[usb_id] = std::move(it->second);
@@ -303,7 +309,18 @@ bool HybridCommandSender::send_long_press(const std::string& device_id, int x, i
         MLOG_WARN("hybridcmd", "AOA HID long press failed for %s, falling back to ADB", device_id.c_str());
     }
 
-    // Tier 3: ADB fallback (no MIRA protocol for long press)
+    // Tier 2: MIRA USB (CMD_LONGPRESS — added in FIX-B)
+    if (usb_sender_) {
+        uint32_t seq = usb_sender_->send_longpress(device_id, x, y, hold_ms);
+        if (seq > 0) {
+            MLOG_INFO("hybridcmd", "MIRA long press (%d,%d) %dms [%s] seq=%u", x, y, hold_ms, device_id.c_str(), seq);
+            current_touch_mode_.store(TouchMode::MIRA_USB);
+            return true;
+        }
+        MLOG_WARN("hybridcmd", "MIRA long press failed for %s, falling back to ADB", device_id.c_str());
+    }
+
+    // Tier 3: ADB fallback
     if (adb_fallback_ && adb_fallback_->is_enabled()) {
         if (adb_fallback_->long_press(x, y, hold_ms)) {
             MLOG_INFO("hybridcmd", "ADB long press (%d, %d) %dms", x, y, hold_ms);
@@ -327,7 +344,18 @@ bool HybridCommandSender::send_pinch(const std::string& device_id, int cx, int c
         }
     }
 
-    MLOG_ERROR("hybridcmd", "Pinch failed for device %s (HID-only, no fallback)", device_id.c_str());
+    // Tier 2: MIRA USB (CMD_PINCH — added in FIX-B, angle=0 default)
+    if (usb_sender_) {
+        uint32_t seq = usb_sender_->send_pinch(device_id, cx, cy, start_dist, end_dist, duration_ms, 0);
+        if (seq > 0) {
+            MLOG_INFO("hybridcmd", "MIRA pinch (%d,%d) %d->%d %dms [%s] seq=%u",
+                cx, cy, start_dist, end_dist, duration_ms, device_id.c_str(), seq);
+            current_touch_mode_.store(TouchMode::MIRA_USB);
+            return true;
+        }
+    }
+
+    MLOG_ERROR("hybridcmd", "Pinch failed for device %s (no fallback available)", device_id.c_str());
     return false;
 }
 

@@ -58,10 +58,18 @@ RouteController::RouteDecision RouteController::evaluate(
     const RouteDecision prev_decision = current_;
     const auto now = std::chrono::steady_clock::now();
 
+    // ISSUE-6: EWMA smoothing  Esuppresses transient bandwidth/RTT spikes
+    ewma_usb_bw_  = EWMA_ALPHA * usb.bandwidth_mbps  + (1.0f - EWMA_ALPHA) * ewma_usb_bw_;
+    ewma_wifi_bw_ = EWMA_ALPHA * wifi.bandwidth_mbps + (1.0f - EWMA_ALPHA) * ewma_wifi_bw_;
+    ewma_rtt_     = EWMA_ALPHA * usb.ping_rtt_ms     + (1.0f - EWMA_ALPHA) * ewma_rtt_;
+    const bool usb_congested_ewma = usb.is_congested         // keep BandwidthMonitor flag
+                                  || (ewma_usb_bw_ > 25.0f)  // EWMA: USB_CONGESTION_THRESHOLD_MBPS
+                                  || (ewma_rtt_ > 50.0f);   // EWMA: USB_RTT_THRESHOLD_MS
+
     // Track consecutive states for hysteresis
     // TCP_ONLY: USB counters skipped (USB always dead, would reset recovery counter)
     if (!tcp_only_mode_) {
-        if (usb.is_congested) {
+        if (usb_congested_ewma) {  // ISSUE-6: EWMA
             consecutive_usb_congestion_++;
             consecutive_recovery_ = 0;
         } else {
@@ -103,7 +111,7 @@ RouteController::RouteDecision RouteController::evaluate(
         );
     }
 
-    // TCP-only mode: USB統計を無視し、WiFi統計のみでFPS制御
+    // TCP-only mode: USB統計を無視し、WiFi統計�EみでFPS制御
     if (tcp_only_mode_) {
         if (wifi_failed) {
             // WiFi死亡 = TCP-onlyでは全経路死亡、最小FPSへ
@@ -111,12 +119,10 @@ RouteController::RouteDecision RouteController::evaluate(
             decision.sub_fps = SUB_FPS_LOW;
             state_ = State::BOTH_DEGRADED;
         } else if (wifi_loss > 0.10f) {
-            // 高パケットロス - 積極的に削減
-            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -10);
+            // 高パケチE��ロス - 積極皁E��削渁E            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -10);
             decision.sub_fps = adjustFps(current_.sub_fps, SUB_FPS_LOW, -5);
         } else if (wifi_loss > 0.05f) {
-            // 中程度のロス - 段階的に削減
-            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -5);
+            // 中程度のロス - 段階的に削渁E            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -5);
             decision.sub_fps = adjustFps(current_.sub_fps, SUB_FPS_MED, -5);
         } else {
             // WiFi正常 - 最大値に向けて増加
@@ -137,7 +143,7 @@ RouteController::RouteDecision RouteController::evaluate(
         decision.control = ControlRoute::USB;  // Keep control on USB for low-latency input
         decision.state = state_;
 
-        // 変更があれば適用
+        // 変更があれ�E適用
         if (decision.video != current_.video ||
             decision.main_fps != current_.main_fps ||
             decision.sub_fps != current_.sub_fps) {
@@ -153,7 +159,7 @@ RouteController::RouteDecision RouteController::evaluate(
                 decision.main_fps, decision.sub_fps);
         }
 
-        // 定期デバッグログ
+        // 定期チE��チE��ログ
         if (log_tick >= 10) {
             MLOG_INFO("RouteEval", "TCP_ONLY: State=%s WiFi=%.1fMbps(loss=%.2f,alive=%d) MainFPS=%d SubFPS=%d",
                       stateToStr(state_), wifi.bandwidth_mbps, wifi_loss, wifi.is_alive ? 1 : 0,
@@ -161,7 +167,7 @@ RouteController::RouteDecision RouteController::evaluate(
         }
 
         current_ = decision;
-        return decision;  // USB状態マシンをスキップ
+        return decision;  // USB状態�EシンをスキチE�E
     }
 
     // State machine

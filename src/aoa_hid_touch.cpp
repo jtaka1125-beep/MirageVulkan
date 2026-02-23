@@ -347,18 +347,23 @@ bool AoaHidTouch::long_press(int x, int y, int screen_w, int screen_h, int hold_
 }
 
 bool AoaHidTouch::pinch(int cx, int cy, int start_dist, int end_dist,
-                         int screen_w, int screen_h, int duration_ms) {
+                         int screen_w, int screen_h, int duration_ms, int angleDeg100) {  // ISSUE-2
     const int interval_ms = 12;
     const int steps = std::max(1, duration_ms / interval_ms);
 
     // Two fingers, horizontally symmetric around center
+    // ISSUE-2: angle-aware two-finger placement
     auto put_fingers = [&](int dist) {
         int half = dist / 2;
-        uint16_t hx0 = pixel_to_hid_x(std::max(0, cx - half), screen_w);
-        uint16_t hx1 = pixel_to_hid_x(std::min(screen_w - 1, cx + half), screen_w);
-        uint16_t hy = pixel_to_hid_y(cy, screen_h);
-        contacts_[0] = { true, 0, hx0, hy };
-        contacts_[1] = { true, 1, hx1, hy };
+        float angle_rad = (angleDeg100 / 100.0f) * static_cast<float>(M_PI) / 180.0f;
+        int dx = static_cast<int>(half * std::cos(angle_rad));
+        int dy = static_cast<int>(half * std::sin(angle_rad));
+        uint16_t hx0 = pixel_to_hid_x(std::clamp(cx - dx, 0, screen_w - 1), screen_w);
+        uint16_t hy0 = pixel_to_hid_y(std::clamp(cy - dy, 0, screen_h - 1), screen_h);
+        uint16_t hx1 = pixel_to_hid_x(std::clamp(cx + dx, 0, screen_w - 1), screen_w);
+        uint16_t hy1 = pixel_to_hid_y(std::clamp(cy + dy, 0, screen_h - 1), screen_h);
+        contacts_[0] = { true, 0, hx0, hy0 };
+        contacts_[1] = { true, 1, hx1, hy1 };
     };
 
     // Touch down both fingers

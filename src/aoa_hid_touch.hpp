@@ -98,7 +98,7 @@ public:
     bool long_press(int x, int y, int screen_w, int screen_h, int hold_ms = 500);
 
     // Two-finger pinch (zoom in/out)
-    bool pinch(int cx, int cy, int start_dist, int end_dist, int screen_w, int screen_h, int duration_ms = 400);
+    bool pinch(int cx, int cy, int start_dist, int end_dist, int screen_w, int screen_h, int duration_ms = 400, int angleDeg100 = 0);  // ISSUE-2
 
     // ── Low-level operations (HID coordinates 0-32767) ──
 

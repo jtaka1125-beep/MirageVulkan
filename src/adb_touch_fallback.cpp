@@ -14,7 +14,19 @@
 
 namespace mirage {
 
+// ISSUE-5: constructor starts async worker thread
+AdbTouchFallback::AdbTouchFallback() {
+    async_running_.store(true);
+    async_worker_ = std::thread(&AdbTouchFallback::async_worker_loop, this);
+}
+
 AdbTouchFallback::~AdbTouchFallback() {
+    // Stop async worker before stopping shell
+    {
+        async_running_.store(false);
+        async_queue_cv_.notify_all();
+        if (async_worker_.joinable()) async_worker_.join();
+    }
     stop_shell();
 }
 
@@ -47,21 +59,7 @@ int execHidden(const std::string& cmd) {
 #endif
 }
 
-// Execute command async without showing console window (Windows)
-void execHiddenAsync(const std::string& cmd, std::atomic<int>* latency_out) {
-    std::thread([cmd, latency_out]() {
-        auto t0 = std::chrono::steady_clock::now();
-        int ret = execHidden(cmd);
-        auto t1 = std::chrono::steady_clock::now();
-        int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-        if (latency_out) latency_out->store(ms);
-        if (ret != 0) {
-            MLOG_ERROR("adb_touch", "Async command failed (ret=%d, %dms): %s", ret, ms, cmd.c_str());
-        } else {
-            MLOG_DEBUG("adb_touch", "Async OK (%dms): %s", ms, cmd.c_str());
-        }
-    }).detach();
-}
+// execHiddenAsync removed — ISSUE-5: replaced by AdbTouchFallback::enqueue_async()
 } // namespace
 
 std::string AdbTouchFallback::adb_prefix() const {
@@ -238,11 +236,44 @@ bool AdbTouchFallback::exec_adb_sync(const std::string& args) {
 
 bool AdbTouchFallback::exec_adb_async(const std::string& args) {
     if (!enabled_.load()) return false;
-
     std::string cmd = adb_prefix() + " " + args;
-    execHiddenAsync(cmd, &last_latency_ms_);
+    enqueue_async(cmd);  // ISSUE-5: queue instead of detach
+    return true;
+}
 
-    return true; // Optimistically return success
+// ISSUE-5: bounded async queue enqueuer
+void AdbTouchFallback::enqueue_async(const std::string& cmd) {
+    std::lock_guard<std::mutex> lk(async_queue_mutex_);
+    if (async_queue_.size() >= ASYNC_QUEUE_MAX) {
+        async_queue_.pop_front();
+        MLOG_WARN("adb_touch", "Async queue overflow, dropped oldest command");
+    }
+    async_queue_.push_back({cmd});
+    async_queue_cv_.notify_one();
+}
+
+// ISSUE-5: single worker thread that drains async_queue_
+void AdbTouchFallback::async_worker_loop() {
+    while (async_running_.load()) {
+        std::unique_lock<std::mutex> lk(async_queue_mutex_);
+        async_queue_cv_.wait(lk, [this]{
+            return !async_queue_.empty() || !async_running_.load();
+        });
+        if (!async_running_.load() && async_queue_.empty()) break;
+        if (async_queue_.empty()) continue;
+        auto task = std::move(async_queue_.front());
+        async_queue_.pop_front();
+        lk.unlock();
+        auto t0 = std::chrono::steady_clock::now();
+        int ret = execHidden(task.cmd);
+        int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        last_latency_ms_.store(ms);
+        if (ret != 0)
+            MLOG_ERROR("adb_touch", "Async failed (ret=%d, %dms): %s", ret, ms, task.cmd.c_str());
+        else
+            MLOG_DEBUG("adb_touch", "Async OK (%dms): %s", ms, task.cmd.c_str());
+    }
 }
 
 bool AdbTouchFallback::tap(int x, int y) {

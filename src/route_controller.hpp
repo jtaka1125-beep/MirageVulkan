@@ -116,6 +116,12 @@ private:
     FpsCommandCallback fps_callback_;
     RouteCommandCallback route_callback_;
     std::string wifi_host_;  // Set from config via setWifiHost()
+
+    // ISSUE-6: EWMA smoothed metrics (suppresses transient spikes)
+    float ewma_usb_bw_{0.0f};
+    float ewma_wifi_bw_{0.0f};
+    float ewma_rtt_{0.0f};
+    static constexpr float EWMA_ALPHA = 0.25f;  // weight of new sample
 };
 
 } // namespace gui
