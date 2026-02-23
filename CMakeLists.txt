@@ -686,6 +686,15 @@ if(BUILD_TESTS)
         target_compile_definitions(test_device_transform PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_test(NAME DeviceTransformTest COMMAND test_device_transform)
 
+        # config_loader.hpp unit tests
+        add_executable(test_config_loader
+            tests/test_config_loader.cpp
+        )
+        target_include_directories(test_config_loader PRIVATE src)
+        target_link_libraries(test_config_loader PRIVATE gtest)
+        target_compile_definitions(test_config_loader PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME ConfigLoaderTest COMMAND test_config_loader)
+
         # Frame Analyzer OCR test
         if(USE_OCR)
             add_executable(test_frame_analyzer
