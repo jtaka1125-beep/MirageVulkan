@@ -27,6 +27,7 @@
 #include <mutex>
 #include <filesystem>
 #include <algorithm>
+#include <random>
 #include <unordered_map>
 
 namespace mirage::ai {
@@ -209,6 +210,10 @@ public:
             if (addResult.is_ok()) {
                 count++;
                 // 改善E: マニフェストのROIをマッチャーに反映
+                if (entry.threshold > 0.0f && vk_matcher_) {
+                    vk_matcher_->setTemplateThreshold(entry.name, entry.threshold);
+                    MLOG_DEBUG("ai", "閾値設定: %s -> %.2f", entry.name.c_str(), entry.threshold);
+                }
                 if (entry.roi_w > 0.0f && vk_matcher_) {
                     vk_matcher_->setTemplateRoiNorm(entry.name,
                         entry.roi_x, entry.roi_y,
@@ -339,10 +344,23 @@ public:
             auto decision = vision_engine_->update(device_id, vision_matches);
 
             if (decision.should_act && can_send) {
-                // VisionDecisionEngineが確定 → decideActionを実行
-                action = decideAction(slot, vk_results, can_send);
-                // アクション実行完了通知 → COOLDOWN遷移
+                AIAction decided = decideAction(slot, vk_results, can_send);
                 vision_engine_->notifyActionExecuted(device_id);
+
+                // 改善L: ジッター遅延
+                if (config_.jitter_max_ms > 0 && decided.type != AIAction::Type::NONE) {
+                    int range = config_.jitter_max_ms - config_.jitter_min_ms;
+                    int delay_ms = config_.jitter_min_ms +
+                        (range > 0 ? (int)(rng_() % (unsigned)range) : 0);
+                    auto fire_at = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(delay_ms);
+                    pending_actions_.push_back({slot, decided, fire_at});
+                    MLOG_DEBUG("ai", "ジッター保留: slot=%d delay=%dms", slot, delay_ms);
+                    action.type = AIAction::Type::WAIT;
+                    action.reason = "jitter_pending";
+                } else {
+                    action = decided;
+                }
             } else if (!decision.should_act) {
                 // 未確定 or COOLDOWN中 → WAIT
                 if (!vk_results.empty()) {
@@ -464,6 +482,25 @@ public:
         }
     }
 
+    void setJitterConfig(int min_ms, int max_ms) {
+        config_.jitter_min_ms = std::max(0, min_ms);
+        config_.jitter_max_ms = std::max(0, max_ms);
+        MLOG_INFO("ai", "ジッター設定: %d~%dms", min_ms, max_ms);
+    }
+
+    // 改善L: 期限切れの保留アクションをコールバックで発火
+    void flushPendingActions(const ActionCallback& cb) {
+        if (!cb) return;
+        auto now = std::chrono::steady_clock::now();
+        for (auto it = pending_actions_.begin(); it != pending_actions_.end(); ) {
+            if (it->fire_at <= now) {
+                MLOG_DEBUG("ai", "ジッター発火: slot=%d", it->slot);
+                cb(it->slot, it->action);
+                it = pending_actions_.erase(it);
+            } else { ++it; }
+        }
+    }
+
     std::vector<std::pair<std::string, int>> getAllDeviceVisionStates() const {
         std::vector<std::pair<std::string, int>> result;
         if (!vision_engine_) return result;
@@ -492,6 +529,7 @@ private:
         if (evt.device_id.substr(0, 5) == "slot_") {
             try { slot = std::stoi(evt.device_id.substr(5)); } catch (...) {}
         }
+        (void)slot;  // 将来のパイプライン統合用
 
         // processFrameは外部（gui_threads.cpp）から直接呼ばれるため、
         // EventBus経由では重複呼び出しを避ける。
@@ -804,6 +842,17 @@ private:
     // メンバ変数
     // =========================================================================
 
+    // =========================================================================
+    // 改善L: 遅延ジッター用 保留アクション
+    // =========================================================================
+    struct PendingAction {
+        int slot;
+        AIAction action;
+        std::chrono::steady_clock::time_point fire_at;
+    };
+    std::vector<PendingAction> pending_actions_;
+    std::mt19937 rng_{std::random_device{}()};
+
     AIConfig config_;
     bool initialized_ = false;
 
@@ -883,6 +932,10 @@ AIAction AIEngine::processFrame(int slot, const uint8_t* rgba, int width, int he
     bool can_send = can_send_callback_ ? can_send_callback_() : true;
     auto action = impl_->processFrame(slot, rgba, width, height, can_send);
 
+    // 改善L: 保留ジッターアクションをフラッシュ
+    if (impl_) impl_->flushPendingActions(action_callback_);  // ジッターアクションもここで処理
+
+    // 改善L: 保留ジッターアクションのフラッシュ
     // アクション実行コールバック呼び出し
     if (action.type != AIAction::Type::NONE &&
         action.type != AIAction::Type::WAIT &&
@@ -927,6 +980,10 @@ std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() co
 
 void AIEngine::setVDEConfig(const VDEConfig& cfg) {
     if (impl_) impl_->setVDEConfig(cfg);
+}
+
+void AIEngine::setJitterConfig(int min_ms, int max_ms) {
+    if (impl_) impl_->setJitterConfig(min_ms, max_ms);
 }
 
 } // namespace mirage::ai
@@ -975,6 +1032,7 @@ void AIEngine::resetDeviceVision(const std::string&) {}
 void AIEngine::resetAllVision() {}
 AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
 void AIEngine::setVDEConfig(const VDEConfig&) {}
+void AIEngine::setJitterConfig(int, int) {}
 std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const { return {}; }
 
 } // namespace mirage::ai

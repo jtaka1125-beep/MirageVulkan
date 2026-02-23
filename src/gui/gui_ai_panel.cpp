@@ -16,6 +16,9 @@
 #include <vector>
 #include <unordered_map>
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
+#include "event_bus.hpp"
 
 namespace mirage::gui::ai_panel {
 
@@ -77,6 +80,61 @@ struct ScoreHistory {
     }
 };
 static std::unordered_map<std::string, ScoreHistory> s_score_histories;
+
+// =============================================================================
+// LearningMode キャプチャ状態 (改善I)
+// =============================================================================
+struct CaptureState {
+    int  slot       = 0;              // キャプチャ対象スロット
+    char name[64]   = "template_001"; // テンプレート名
+    int  roi_x      = 0;
+    int  roi_y      = 0;
+    int  roi_w      = 200;
+    int  roi_h      = 200;
+    bool capturing  = false;          // キャプチャ中フラグ
+    // 最後の結果
+    bool  last_ok   = false;
+    bool  has_result = false;
+    char  last_msg[256] = {};
+    int   last_tid  = -1;
+    int   last_w    = 0;
+    int   last_h    = 0;
+};
+static CaptureState s_cap;
+static mirage::SubscriptionHandle s_cap_sub;  // LearningCaptureEvent 購読ハンドル
+
+static void ensureCapSub() {
+    if (static_cast<bool>(s_cap_sub)) return;  // GCC15: explicit cast for SubscriptionHandle
+    s_cap_sub = mirage::bus().subscribe<mirage::LearningCaptureEvent>(
+        [](const mirage::LearningCaptureEvent& e) {
+            s_cap.capturing = false;
+            s_cap.has_result = true;
+            s_cap.last_ok    = e.ok;
+            s_cap.last_tid   = e.template_id;
+            s_cap.last_w     = e.w;
+            s_cap.last_h     = e.h;
+            if (e.ok) {
+                snprintf(s_cap.last_msg, sizeof(s_cap.last_msg),
+                    "OK: id=%d  %dx%d  %s",
+                    e.template_id, e.w, e.h, e.saved_file_rel.c_str());
+                // 名前をインクリメント（template_001 -> template_002）
+                std::string name(s_cap.name);
+                auto pos = name.rfind('_');
+                if (pos != std::string::npos) {
+                    try {
+                        int n = std::stoi(name.substr(pos + 1));
+                        char next[64];
+                        snprintf(next, sizeof(next), "%s_%03d",
+                                 name.substr(0, pos).c_str(), n + 1);
+                        strncpy(s_cap.name, next, sizeof(s_cap.name) - 1);
+                    } catch (...) {}
+                }
+            } else {
+                snprintf(s_cap.last_msg, sizeof(s_cap.last_msg),
+                    "NG: %s", e.error.c_str());
+            }
+        });
+}
 
 // =============================================================================
 // セクション1: AIエンジン制御
@@ -160,90 +218,35 @@ static void renderVisionStates() {
     }
 
     // ----------------------------------------------------------------
-    // VDE設定スライダー (改善B)
+    // VDE設定スライダー
     // ----------------------------------------------------------------
     ImGui::Spacing();
-    if (ImGui::CollapsingHeader("VDE Config##vde_cfg")) {
+    if (ImGui::CollapsingHeader("VDE設定")) {
         auto vde_cfg = g_ai_engine->getVDEConfig();
         bool changed = false;
 
         ImGui::PushItemWidth(180);
 
-        changed |= ImGui::SliderInt("Confirm Count##vde", &vde_cfg.confirm_count, 1, 10);
+        changed |= ImGui::SliderInt("Confirm Count##vde", &vde_cfg.confirm_count, 1, 20);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("DETECTED -> CONFIRMED に必要な連続検出回数\n(少ない=速い反応, 多い=誤検出防止)");
 
-        changed |= ImGui::SliderInt("Cooldown (ms)##vde", &vde_cfg.cooldown_ms, 500, 10000);
+        changed |= ImGui::SliderInt("Cooldown (ms)##vde", &vde_cfg.cooldown_ms, 0, 5000);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("アクション実行後の冷却時間 (同一テンプレート再実行防止)");
 
-        changed |= ImGui::SliderInt("Debounce (ms)##vde", &vde_cfg.debounce_window_ms, 100, 2000);
+        changed |= ImGui::SliderInt("Debounce (ms)##vde", &vde_cfg.debounce_window_ms, 0, 2000);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("デバウンスウィンドウ (同一アクションの連打抑制)");
 
-        changed |= ImGui::SliderInt("Error Recovery (ms)##vde", &vde_cfg.error_recovery_ms, 500, 10000);
+        changed |= ImGui::SliderInt("Error Recovery (ms)##vde", &vde_cfg.error_recovery_ms, 0, 10000);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("ERROR_RECOVERY 状態の最大滞在時間");
 
         ImGui::PopItemWidth();
 
-        // ── 改善D: EWMA ──
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Temporal Filter (EWMA)");
-        changed |= ImGui::Checkbox("Enable EWMA##vde", &vde_cfg.enable_ewma);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("フレーム間スコアをEWMA平滑化して瞬間ノイズを除去");
-
-        ImGui::BeginDisabled(!vde_cfg.enable_ewma);
-        ImGui::SetNextItemWidth(180);
-        changed |= ImGui::SliderFloat("EWMA Alpha##vde", &vde_cfg.ewma_alpha, 0.05f, 1.0f, "%.2f");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("平滑化係数: 0.05=超スムーズ, 1.0=生スコアそのまま");
-
-        ImGui::SetNextItemWidth(180);
-        changed |= ImGui::SliderFloat("EWMA Confirm Thr##vde", &vde_cfg.ewma_confirm_thr,
-                                      0.3f, 0.95f, "%.2f");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("CONFIRMED遷移に必要なEWMAスコアの最低値");
-        ImGui::EndDisabled();
-
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Temporal Filter (改善D)");
-
-        changed |= ImGui::Checkbox("Enable EWMA##vde", &vde_cfg.enable_ewma);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("指数移動平均でスコアを平滑化。\nノイズフレームや画面遷移中の誤検出を抑制。");
-
-        if (vde_cfg.enable_ewma) {
-            ImGui::SetNextItemWidth(180);
-            changed |= ImGui::SliderFloat("EWMA Alpha##vde", &vde_cfg.ewma_alpha, 0.1f, 1.0f, "%.2f");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("平滑化係数 (0=強平滑/遅反応, 1=生スコア/即反応)\n推奨: 0.3~0.5");
-
-            ImGui::SetNextItemWidth(180);
-            changed |= ImGui::SliderFloat("EWMA Confirm Thr##vde", &vde_cfg.ewma_confirm_thr, 0.1f, 1.0f, "%.2f");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("EWMAがこの値以上でないとCONFIRMED不可\n(閾値との二重ゲート)");
-        }
-
         if (changed) {
             g_ai_engine->setVDEConfig(vde_cfg);
-        }
-
-        // 現在値を小さく表示
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-            "confirm=%d  cool=%dms  db=%dms  err=%dms",
-            vde_cfg.confirm_count, vde_cfg.cooldown_ms,
-            vde_cfg.debounce_window_ms, vde_cfg.error_recovery_ms);
-        if (vde_cfg.enable_ewma) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                "ewma: alpha=%.2f  confirm_thr=%.2f",
-                vde_cfg.ewma_alpha, vde_cfg.ewma_confirm_thr);
-        }
-        if (vde_cfg.enable_ewma) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                "ewma: alpha=%.2f  confirm_thr=%.2f",
-                vde_cfg.ewma_alpha, vde_cfg.ewma_confirm_thr);
         }
     }
 }
@@ -294,31 +297,13 @@ static void renderMatchResults() {
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
             "(%d,%d)", m.center_x, m.center_y);
 
-        // スコア履歴グラフ (改善C)
+        // スコア履歴グラフ
         if (hist.count > 1) {
             char plot_id[64];
             snprintf(plot_id, sizeof(plot_id), "##score_%s", m.template_id.c_str());
-
-            // 閾値ラインを示すオーバーレイテキスト
-            char plot_overlay[16];
-            snprintf(plot_overlay, sizeof(plot_overlay), "%.0f%%", m.score * 100.0f);
-
-            ImGui::PushStyleColor(ImGuiCol_FrameBg,      ImVec4(0.1f, 0.1f, 0.15f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_PlotLines,
-                above_threshold ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
-                                : ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-            ImGui::SameLine(160);
-            ImGui::PlotLines(plot_id,
-                hist.buf, SCORE_HISTORY_LEN, hist.head,
-                plot_overlay,
-                0.0f, 1.0f,
-                ImVec2(120, 28));
-            ImGui::PopStyleColor(2);
-
-            // 閾値ラインの注釈（グラフ右に小さく）
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f),
-                "thr=%.0f%%", s_overlay_threshold * 100.0f);
+            ImGui::PlotLines(plot_id, hist.buf, 60, hist.head,
+                nullptr, 0.f, 1.f, ImVec2(80, 20));
         }
     }
 }
@@ -333,38 +318,124 @@ static void renderLearningMode() {
         return;
     }
 
+    // EventBus 購読を確保
+    ensureCapSub();
+
     bool running = g_learning_mode->is_running();
 
-    // Start/Stop トグル
+    // ── Start/Stop トグル ──────────────────────────────────────────
     if (running) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
-        if (ImGui::Button("Stop Learning", ImVec2(120, 25))) {
-            g_learning_mode->stop();
-        }
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
+        if (ImGui::Button("Stop Learning", ImVec2(120, 25))) g_learning_mode->stop();
         ImGui::PopStyleColor(3);
     } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
-        if (ImGui::Button("Start Learning", ImVec2(120, 25))) {
-            g_learning_mode->start();
-        }
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
+        if (ImGui::Button("Start Learning", ImVec2(120, 25))) g_learning_mode->start();
         ImGui::PopStyleColor(3);
     }
-
     ImGui::SameLine();
     ImGui::TextColored(
         running ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
         running ? "Running" : "Stopped");
 
-    // テンプレートキャプチャ（将来実装プレースホルダー）
-    ImGui::BeginDisabled(true);
-    ImGui::Button("Capture Template", ImVec2(120, 25));
+    if (!running) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.3f, 1.0f),
+            "(*) Start Learning してからキャプチャしてください");
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Template Capture (改善I)");
+
+    // ── スロット選択 ───────────────────────────────────────────────
+    ImGui::SetNextItemWidth(80);
+    ImGui::InputInt("Slot##cap_slot", &s_cap.slot);
+    s_cap.slot = std::max(0, std::min(s_cap.slot, 9));
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("キャプチャ対象スロット番号 (0-9)");
+
+    // ── テンプレート名 ─────────────────────────────────────────────
+    ImGui::SetNextItemWidth(200);
+    ImGui::InputText("Name##cap_name", s_cap.name, sizeof(s_cap.name));
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("保存するテンプレート名 (英数_のみ推奨)\nキャプチャ成功後に末尾番号が自動インクリメント");
+
+    // ── ROI 入力（2列レイアウト） ──────────────────────────────────
+    ImGui::Text("ROI (px):");
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("X##cap_x", &s_cap.roi_x);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("Y##cap_y", &s_cap.roi_y);
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("W##cap_w", &s_cap.roi_w);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("H##cap_h", &s_cap.roi_h);
+
+    // 値クランプ
+    s_cap.roi_x = std::max(0, s_cap.roi_x);
+    s_cap.roi_y = std::max(0, s_cap.roi_y);
+    s_cap.roi_w = std::max(4, s_cap.roi_w);
+    s_cap.roi_h = std::max(4, s_cap.roi_h);
+
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("最終マッチ結果の座標を参考に範囲を指定してください");
+
+    // ── 最新マッチ座標をROIにコピー ───────────────────────────────
+    if (g_ai_engine) {
+        auto matches = g_ai_engine->getLastMatches();
+        if (!matches.empty()) {
+            const auto& m = matches[0];
+            ImGui::SameLine();
+            if (ImGui::SmallButton("From Match##cap_from")) {
+                // マッチ中心 ± テンプレートサイズをROIに設定
+                s_cap.roi_x = m.x;
+                s_cap.roi_y = m.y;
+                s_cap.roi_w = std::max(4, m.w);
+                s_cap.roi_h = std::max(4, m.h);
+                strncpy(s_cap.name, m.template_id.c_str(), sizeof(s_cap.name) - 1);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("最新マッチ結果 (%s) の座標・サイズをROIにコピー", m.template_id.c_str());
+        }
+    }
+
+    // ── Capture ボタン ─────────────────────────────────────────────
+    ImGui::Spacing();
+    ImGui::BeginDisabled(s_cap.capturing);
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.2f, 0.4f, 0.9f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.1f, 0.3f, 0.8f, 1.0f));
+    if (ImGui::Button("Capture Template", ImVec2(150, 28))) {
+        mirage::LearningStartEvent evt;
+        evt.device_id  = "slot_" + std::to_string(s_cap.slot);
+        evt.name_stem  = std::string(s_cap.name);
+        evt.roi_x      = s_cap.roi_x;
+        evt.roi_y      = s_cap.roi_y;
+        evt.roi_w      = s_cap.roi_w;
+        evt.roi_h      = s_cap.roi_h;
+        s_cap.capturing  = true;
+        s_cap.has_result = false;
+        mirage::bus().publish(evt);
+        MLOG_INFO("ai_panel", "LearningStartEvent発行: device=%s name=%s roi=(%d,%d %dx%d)",
+                  evt.device_id.c_str(), evt.name_stem.c_str(),
+                  evt.roi_x, evt.roi_y, evt.roi_w, evt.roi_h);
+    }
+    ImGui::PopStyleColor(3);
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip("テンプレートキャプチャ（将来実装）");
+
+    if (s_cap.capturing) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "処理中...");
+    }
+
+    // ── 結果表示 ───────────────────────────────────────────────────
+    if (s_cap.has_result) {
+        ImVec4 result_col = s_cap.last_ok
+            ? ImVec4(0.2f, 1.0f, 0.3f, 1.0f)
+            : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+        ImGui::TextColored(result_col, "%s", s_cap.last_msg);
     }
 }
 

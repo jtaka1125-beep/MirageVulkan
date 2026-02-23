@@ -36,6 +36,9 @@ struct AIConfig {
     bool enable_multi_scale = true;
     int max_idle_frames = 300;
     bool subscribe_events = true;  // EventBus自動購読
+    // 改善L: マルチスロット遅延ジッター
+    int  jitter_max_ms    = 0;   // 0=無効, >0 で [0, jitter_max_ms] のランダム遅延
+    int  jitter_min_ms    = 0;   // 最小遅延（jitter_max_ms > 0 時有効）
 };
 
 struct AIAction {
@@ -144,6 +147,8 @@ public:
     VDEConfig getVDEConfig() const;
     // VisionDecisionConfig の変更（GUIスライダー等から呼ぶ）
     void setVDEConfig(const VDEConfig& cfg);
+    // 改善L: ジッター設定 (0,0 で無効)
+    void setJitterConfig(int min_ms, int max_ms);
 
     // 全デバイスの状態一覧 (device_id → VisionState as int)
     std::vector<std::pair<std::string, int>> getAllDeviceVisionStates() const;
