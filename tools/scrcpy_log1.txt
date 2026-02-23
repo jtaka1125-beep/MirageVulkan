@@ -1,2 +1,0 @@
-[server] INFO: Device: [RebotAi] RebotAi A9 (Android 15)
-Terminated 

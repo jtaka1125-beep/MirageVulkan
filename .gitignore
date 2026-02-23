@@ -55,7 +55,15 @@ analysis/
 # Auto-generated session files
 .session_context.md
 
-# One-off fix scripts
+# One-off fix/patch scripts
 fix_*.py
+patch_*.py
+apply_*.py
 *.patch
-src/gui/gui_init_fix.py
+
+# tools/ temporary data
+tools/scrcpy-server-*
+tools/test_*
+tools/*.h264
+tools/*.log
+tools/*.txt
