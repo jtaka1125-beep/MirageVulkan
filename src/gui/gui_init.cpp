@@ -294,6 +294,71 @@ void initializeHybridCommand() {
     }
 }
 
+// =============================================================================
+// Route Evaluation Thread
+// =============================================================================
+// Polls bandwidth stats every second and calls RouteController::evaluate().
+// Sends FPS and route commands via callbacks registered in initializeRouting().
+static void startRouteEvalThread() {
+    g_route_eval_running.store(true);
+    g_route_eval_thread = std::thread([]() {
+      try {
+        MLOG_INFO("RouteEval", "Evaluation thread started");
+        uint64_t prev_usb_bytes = 0;
+        uint64_t prev_wifi_bytes = 0;
+        int log_counter = 0;
+
+        while (g_route_eval_running.load() && g_running.load()) {
+            if (g_bandwidth_monitor && g_route_controller) {
+                // Feed USB bandwidth data
+                if (g_hybrid_cmd) {
+                    uint64_t usb_bytes = g_hybrid_cmd->total_bytes_received();
+                    if (usb_bytes > prev_usb_bytes) {
+                        g_bandwidth_monitor->recordUsbRecv(usb_bytes - prev_usb_bytes);
+                        prev_usb_bytes = usb_bytes;
+                    }
+                }
+
+                // Feed WiFi bandwidth data
+                if (g_multi_receiver) {
+                    auto stats = g_multi_receiver->getStats();
+                    uint64_t wifi_bytes = 0;
+                    for (const auto& s : stats) {
+                        wifi_bytes += s.bytes;
+                    }
+                    if (wifi_bytes > prev_wifi_bytes) {
+                        g_bandwidth_monitor->recordWifiRecv(wifi_bytes - prev_wifi_bytes);
+                        prev_wifi_bytes = wifi_bytes;
+                    }
+                }
+
+                g_bandwidth_monitor->updateStats();
+
+                auto usb_stats = g_bandwidth_monitor->getUsbStats();
+                auto wifi_stats = g_bandwidth_monitor->getWifiStats();
+                auto decision = g_route_controller->evaluate(usb_stats, wifi_stats);
+
+                // Log state every 10 seconds
+                if (++log_counter % 10 == 0) {
+                    MLOG_INFO("RouteEval", "State=%d USB=%.1fMbps(cong=%d,alive=%d) WiFi=%.1fMbps(alive=%d) MainFPS=%d SubFPS=%d",
+                        (int)decision.state,
+                        usb_stats.bandwidth_mbps, usb_stats.is_congested, usb_stats.is_alive,
+                        wifi_stats.bandwidth_mbps, wifi_stats.is_alive,
+                        decision.main_fps, decision.sub_fps);
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        MLOG_INFO("RouteEval", "Evaluation thread ended");
+      } catch (const std::exception& e) {
+        MLOG_ERROR("RouteEval", "Exception: %s", e.what());
+      } catch (...) {
+        MLOG_ERROR("RouteEval", "Unknown exception");
+      }
+    });
+    MLOG_INFO("gui", "Route evaluation started");
+}
+
 void initializeRouting() {
     // Initialize routing even without USB devices - WiFi-only mode is valid
     g_bandwidth_monitor = std::make_unique<::gui::BandwidthMonitor>();
@@ -423,65 +488,7 @@ void initializeRouting() {
             }}
     }
 
-    // Start route evaluation thread
-    g_route_eval_running.store(true);
-    g_route_eval_thread = std::thread([]() {
-      try {
-        MLOG_INFO("RouteEval", "Evaluation thread started");
-        uint64_t prev_usb_bytes = 0;
-        uint64_t prev_wifi_bytes = 0;
-        int log_counter = 0;
-
-        while (g_route_eval_running.load() && g_running.load()) {
-            if (g_bandwidth_monitor && g_route_controller) {
-                // Feed USB bandwidth data
-                if (g_hybrid_cmd) {
-                    uint64_t usb_bytes = g_hybrid_cmd->total_bytes_received();
-                    if (usb_bytes > prev_usb_bytes) {
-                        g_bandwidth_monitor->recordUsbRecv(usb_bytes - prev_usb_bytes);
-                        prev_usb_bytes = usb_bytes;
-                    }
-                }
-
-                // Feed WiFi bandwidth data
-                if (g_multi_receiver) {
-                    auto stats = g_multi_receiver->getStats();
-                    uint64_t wifi_bytes = 0;
-                    for (const auto& s : stats) {
-                        wifi_bytes += s.bytes;
-                    }
-                    if (wifi_bytes > prev_wifi_bytes) {
-                        g_bandwidth_monitor->recordWifiRecv(wifi_bytes - prev_wifi_bytes);
-                        prev_wifi_bytes = wifi_bytes;
-                    }
-                }
-
-                g_bandwidth_monitor->updateStats();
-
-                auto usb_stats = g_bandwidth_monitor->getUsbStats();
-                auto wifi_stats = g_bandwidth_monitor->getWifiStats();
-                auto decision = g_route_controller->evaluate(usb_stats, wifi_stats);
-
-                // Log state every 10 seconds
-                if (++log_counter % 10 == 0) {
-                    MLOG_INFO("RouteEval", "State=%d USB=%.1fMbps(cong=%d,alive=%d) WiFi=%.1fMbps(alive=%d) MainFPS=%d SubFPS=%d",
-                        (int)decision.state,
-                        usb_stats.bandwidth_mbps, usb_stats.is_congested, usb_stats.is_alive,
-                        wifi_stats.bandwidth_mbps, wifi_stats.is_alive,
-                        decision.main_fps, decision.sub_fps);
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
-        MLOG_INFO("RouteEval", "Evaluation thread ended");
-      } catch (const std::exception& e) {
-        MLOG_ERROR("RouteEval", "Exception: %s", e.what());
-      } catch (...) {
-        MLOG_ERROR("RouteEval", "Unknown exception");
-      }
-    });
-
-    MLOG_INFO("gui", "Route evaluation started");
+    startRouteEvalThread();
 }
 
 // =============================================================================
