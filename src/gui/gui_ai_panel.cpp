@@ -600,6 +600,12 @@ void renderAIPanel() {
     // セクション1: エンジン制御
     renderEngineControl();
 
+    // セクション1.5: OCR Keyword Mapping (改善N)
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("OCR Keyword Mapping")) {
+        renderOcrKeywordEditor();
+    }
+
     // セクション2: VisionDecisionEngine (スライダー付き)
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Vision Decision Engine")) {

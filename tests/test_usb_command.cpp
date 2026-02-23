@@ -131,7 +131,7 @@ TEST(UsbCommand, TapFullPacket) {
     EXPECT_EQ(hdr.version, PROTOCOL_VERSION);
     EXPECT_EQ(hdr.cmd, CMD_TAP);
     EXPECT_EQ(hdr.seq, 42u);
-    EXPECT_EQ(hdr.payload_len, 28u);  // ISSUE-18
+    EXPECT_EQ(hdr.payload_len, 20u);  // TAP = 20 bytes
 }
 
 TEST(UsbCommand, TapLargeCoordinates) {
@@ -184,6 +184,21 @@ TEST(UsbCommand, SwipeLongDuration) {
     // Test with long duration (e.g., 10 seconds = 10000ms)
     auto payload = buildSwipePayload(0, 0, 1000, 1000, 10000);
     EXPECT_EQ(readLE32(&payload[16]), 10000u);
+    EXPECT_EQ(readLE32(&payload[20]), 0u);   // screen_w defaults to 0
+    EXPECT_EQ(readLE32(&payload[24]), 0u);   // screen_h defaults to 0
+}
+
+TEST(UsbCommand, SwipeWithScreenSize) {
+    // ISSUE-18: screen_w/h embedded in 28-byte payload
+    auto payload = buildSwipePayload(540, 960, 540, 400, 250, 1080, 1920);
+    EXPECT_EQ(payload.size(), 28u);
+    EXPECT_EQ(readLE32(&payload[0]),  540u);
+    EXPECT_EQ(readLE32(&payload[4]),  960u);
+    EXPECT_EQ(readLE32(&payload[8]),  540u);
+    EXPECT_EQ(readLE32(&payload[12]), 400u);
+    EXPECT_EQ(readLE32(&payload[16]), 250u);
+    EXPECT_EQ(readLE32(&payload[20]), 1080u);  // screen_w
+    EXPECT_EQ(readLE32(&payload[24]), 1920u);  // screen_h
 }
 
 // ===========================================================================
