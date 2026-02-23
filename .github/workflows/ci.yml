@@ -1,154 +1,52 @@
-# =============================================================================
-# MirageVulkan CI/CD Pipeline
-# =============================================================================
-# Runs on: push to master, pull requests
-# Tests: 16 test suites (Google Test)
-# Build: Windows with Vulkan SDK, FFmpeg, libusb
-# =============================================================================
-
 name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [ master ]
   pull_request:
-    branches: [master, main]
-
-env:
-  BUILD_TYPE: Release
-  VULKAN_SDK_VERSION: "1.3.290.0"
+    branches: [ master ]
 
 jobs:
   build-and-test:
-    runs-on: windows-latest
+    name: Build & Test (Windows / MinGW)
+    runs-on: self-hosted
 
     steps:
-      # =======================================================================
-      # Checkout
-      # =======================================================================
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # =======================================================================
-      # Cache dependencies
-      # =======================================================================
-      - name: Cache Vulkan SDK
-        id: cache-vulkan
-        uses: actions/cache@v4
-        with:
-          path: C:\VulkanSDK
-          key: vulkan-sdk-${{ env.VULKAN_SDK_VERSION }}-windows
-
-      - name: Cache vcpkg
-        uses: actions/cache@v4
-        with:
-          path: |
-            C:\vcpkg\installed
-            C:\vcpkg\packages
-          key: vcpkg-windows-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: |
-            vcpkg-windows-
-
-      # =======================================================================
-      # Install Vulkan SDK
-      # =======================================================================
-      - name: Install Vulkan SDK
-        if: steps.cache-vulkan.outputs.cache-hit != 'true'
+      - name: Configure (CMake)
+        shell: cmd
         run: |
-          $installer = "VulkanSDK-${{ env.VULKAN_SDK_VERSION }}-Installer.exe"
-          $url = "https://sdk.lunarg.com/sdk/download/${{ env.VULKAN_SDK_VERSION }}/windows/$installer"
-          Invoke-WebRequest -Uri $url -OutFile $installer
-          Start-Process -FilePath ".\$installer" -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
-          Remove-Item $installer
-        shell: pwsh
+          set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin;%PATH%
+          if not exist build mkdir build
+          cd build
+          cmake .. -G "MinGW Makefiles" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DBUILD_TESTS=ON ^
+            -DUSE_VULKAN_VIDEO=ON ^
+            -DUSE_LIBUSB=ON
 
-      - name: Set Vulkan environment
+      - name: Build (tests)
+        shell: cmd
         run: |
-          echo "VULKAN_SDK=C:\VulkanSDK\${{ env.VULKAN_SDK_VERSION }}" >> $env:GITHUB_ENV
-          echo "C:\VulkanSDK\${{ env.VULKAN_SDK_VERSION }}\Bin" >> $env:GITHUB_PATH
-        shell: pwsh
+          set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin;%PATH%
+          cd build
+          mingw32-make -j4 2>&1
 
-      # =======================================================================
-      # Install dependencies via vcpkg
-      # =======================================================================
-      - name: Install vcpkg dependencies
+      - name: Run tests (ctest)
+        shell: cmd
         run: |
-          vcpkg install libusb:x64-windows
-          vcpkg integrate install
-        shell: pwsh
+          set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin;%PATH%
+          cd build
+          ctest --output-on-failure --parallel 4
 
-      # =======================================================================
-      # Configure CMake
-      # =======================================================================
-      - name: Configure CMake
-        run: |
-          cmake -B build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-            -DBUILD_TESTS=ON `
-            -DUSE_VULKAN_VIDEO=ON `
-            -DUSE_FFMPEG=OFF `
-            -DUSE_LIBUSB=ON `
-            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
-        shell: pwsh
-
-      # =======================================================================
-      # Build
-      # =======================================================================
-      - name: Build
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
-        shell: pwsh
-
-      # =======================================================================
-      # Run Tests
-      # =======================================================================
-      - name: Run Tests
-        working-directory: build
-        run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --timeout 120
-        shell: pwsh
-
-      # =======================================================================
-      # Upload test results on failure
-      # =======================================================================
-      - name: Upload test logs on failure
-        if: failure()
+      - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
-          path: |
-            build/Testing/
-            build/**/*.log
-
-  # ===========================================================================
-  # Code quality checks (lightweight, fast)
-  # ===========================================================================
-  lint:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check line endings
-        run: |
-          # Ensure no CRLF in source files (except Windows-specific)
-          if git ls-files -z '*.cpp' '*.hpp' '*.h' | xargs -0 grep -l $'\r' 2>/dev/null; then
-            echo "Warning: Some files have CRLF line endings"
-          fi
-
-      - name: Check for debug code
-        run: |
-          # Warn if debug code is left in
-          if grep -rn "TODO\|FIXME\|HACK\|XXX" src/ --include="*.cpp" --include="*.hpp" | head -20; then
-            echo "Note: Found TODO/FIXME comments (not blocking)"
-          fi
-
-      - name: Check include guards
-        run: |
-          # Verify all headers have include guards or #pragma once
-          for f in $(find src -name "*.hpp" -o -name "*.h"); do
-            if ! head -5 "$f" | grep -q "#pragma once\|#ifndef"; then
-              echo "Warning: $f may be missing include guard"
-            fi
-          done
+          name: test-results
+          path: build/Testing/
+          retention-days: 7
