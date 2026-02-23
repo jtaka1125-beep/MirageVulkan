@@ -14,6 +14,10 @@ public:
 
     bool create(VulkanContext& ctx, VkDescriptorPool pool, int width, int height);
     void update(VkCommandPool cmd_pool, VkQueue queue, const uint8_t* rgba, int width, int height);
+    // Integrated path: stageUpdate() copies to staging (CPU only).
+    // recordUpdate() records upload commands into external VkCommandBuffer (no separate submit).
+    bool stageUpdate(const uint8_t* rgba, int w, int h);
+    bool recordUpdate(VkCommandBuffer cmd);
     // Initialize/clear texture to a known color (prevents showing uninitialized VRAM)
     void clear(VkCommandPool cmd_pool, VkQueue queue, uint32_t rgba = 0xFF000000u);
     void destroy();
@@ -50,6 +54,7 @@ private:
     uint64_t last_submit_ms_ = 0;
     uint32_t skipped_updates_ = 0;
     uint32_t update_count_ = 0;
+    bool has_pending_upload_ = false;
 };
 
 } // namespace mirage::vk

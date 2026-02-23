@@ -413,8 +413,9 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
 
     }
 
-    // Update texture data
-    device.vk_texture->update(vk_command_pool_, vk_context_->graphicsQueue(), rgba_ptr, width, height);
+    // Stage texture data into CPU-side buffer.
+    // Actual GPU upload is recorded into the render command buffer in vulkanBeginFrame().
+    device.vk_texture->stageUpdate(rgba_ptr, width, height);
 
     // Update stats
     device.frame_count++;
@@ -903,7 +904,12 @@ void GuiApplication::vulkanBeginFrame() {
         return;
     }
     if (r != VK_SUCCESS) {
-        MLOG_ERROR("vkframe", "acquire failed: %d", (int)r);
+        MLOG_ERROR("vkframe", "acquire failed: %d fi=%u, recreating semaphore", (int)r, fi);
+        // VK_TIMEOUT leaves semaphore in undefined state (Vulkan spec) - must recreate
+        vkDestroySemaphore(dev, vk_image_available_[fi], nullptr);
+        VkSemaphoreCreateInfo sci{}; sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        vkCreateSemaphore(dev, &sci, nullptr, &vk_image_available_[fi]);
+        vk_current_frame_ = (vk_current_frame_ + 1) % VK_MAX_FRAMES_IN_FLIGHT;
         return;
     }
 
@@ -916,6 +922,22 @@ void GuiApplication::vulkanBeginFrame() {
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &bi);
+
+    // Record all pending texture uploads into this frame's command buffer
+    // BEFORE the render pass. Eliminates separate vkQueueSubmit contention.
+    {
+        std::lock_guard<std::mutex> dlock(devices_mutex_);
+        int uploads_recorded = 0;
+        for (auto& [dev_id, dev_info] : devices_) {
+            if (dev_info.vk_texture && dev_info.vk_texture->valid()) {
+                if (dev_info.vk_texture->recordUpdate(cmd)) { uploads_recorded++; }
+            }
+        }
+        static int tex_upload_log = 0;
+        if (uploads_recorded > 0 && tex_upload_log++ < 10) {
+            MLOG_INFO("vkframe", "Recorded %d texture uploads in frame cmd buffer", uploads_recorded);
+        }
+    }
 
     VkClearValue clear = {{{0.10f, 0.10f, 0.12f, 1.0f}}};
     VkRenderPassBeginInfo rbi{};

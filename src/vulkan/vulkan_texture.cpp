@@ -322,6 +322,59 @@ void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
     layout_initialized_ = true;
 }
 
+// =============================================================================
+// Integrated upload path (no separate vkQueueSubmit)
+// =============================================================================
+
+bool VulkanTexture::stageUpdate(const uint8_t* rgba, int w, int h) {
+    if (!ctx_ || !image_ || w != width_ || h != height_ || !staging_mapped_) return false;
+    memcpy(staging_mapped_, rgba, (size_t)w * h * 4);
+    has_pending_upload_ = true;
+    update_count_++;
+    if (update_count_ <= 5 || update_count_ % 300 == 0) {
+        MLOG_INFO("VkTex", "stageUpdate#%u w=%d h=%d", update_count_, w, h);
+    }
+    return true;
+}
+
+bool VulkanTexture::recordUpdate(VkCommandBuffer cmd) {
+    if (!has_pending_upload_ || !ctx_ || !image_ || !staging_) return false;
+    has_pending_upload_ = false;
+
+    // Transition: SHADER_READ_ONLY (or UNDEFINED on first frame) -> TRANSFER_DST
+    VkImageMemoryBarrier bar{};
+    bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    bar.oldLayout = layout_initialized_ ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bar.image = image_;
+    bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    bar.srcAccessMask = layout_initialized_ ? VK_ACCESS_SHADER_READ_BIT : 0;
+    bar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+        layout_initialized_ ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+
+    // Copy staging buffer -> image
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {(uint32_t)width_, (uint32_t)height_, 1};
+    vkCmdCopyBufferToImage(cmd, staging_, image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    // Transition: TRANSFER_DST -> SHADER_READ_ONLY
+    bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+
+    layout_initialized_ = true;
+    return true;
+}
+
+
 void VulkanTexture::destroy() {
     if (!ctx_) return;
     VkDevice dev = ctx_->device();
