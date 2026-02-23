@@ -26,6 +26,8 @@ public:
     int width()  const { return width_; }
     int height() const { return height_; }
     bool valid()  const { return image_ != VK_NULL_HANDLE; }
+    bool hasPendingUpload()     const { return has_pending_upload_; }
+    bool isLayoutInitialized()  const { return layout_initialized_; }
 
 private:
     VulkanContext* ctx_ = nullptr;

@@ -52,6 +52,9 @@ logs/
 screenshots/
 analysis/
 
+# Auto-generated session files
+.session_context.md
+
 # One-off fix scripts
 fix_*.py
 *.patch
