@@ -241,6 +241,36 @@ class MirageAccessibilityService : AccessibilityService() {
             """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"ok":$result}""")
     }
 
+    // ISSUE-19: dispatch arbitrary keycode via global actions or KeyEvent
+    fun performKey(keycode: Int, seq: Int = 0) {
+        // Map common keycodes to AccessibilityService global actions
+        val globalAction = when (keycode) {
+            android.view.KeyEvent.KEYCODE_BACK         -> GLOBAL_ACTION_BACK
+            android.view.KeyEvent.KEYCODE_HOME         -> GLOBAL_ACTION_HOME
+            android.view.KeyEvent.KEYCODE_APP_SWITCH   -> GLOBAL_ACTION_RECENTS
+            android.view.KeyEvent.KEYCODE_NOTIFICATION -> GLOBAL_ACTION_NOTIFICATIONS
+            else -> -1
+        }
+        if (globalAction >= 0) {
+            val result = performGlobalAction(globalAction)
+            Log.i(TAG, "KEY keycode=$keycode globalAction=$globalAction result=$result seq=$seq")
+            udpSender.trySendLine(Config.TAG_BACK_EXEC,
+                """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"key","keycode":$keycode,"ok":$result}""")
+        } else {
+            // Inject raw KeyEvent for keys without global action mappings
+            try {
+                val im = getSystemService(android.hardware.input.InputManager::class.java)
+                val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keycode)
+                val up   = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,   keycode)
+                im.injectInputEvent(down, android.hardware.input.InputManager.INJECT_INPUT_EVENT_MODE_ASYNC)
+                im.injectInputEvent(up,   android.hardware.input.InputManager.INJECT_INPUT_EVENT_MODE_ASYNC)
+                Log.i(TAG, "KEY inject keycode=$keycode seq=$seq")
+            } catch (e: Exception) {
+                Log.w(TAG, "KEY keycode=$keycode not supported: ${e.message} seq=$seq")
+            }
+        }
+    }
+
     // =========================================================================
     // リソースID / テキスト指定クリック
     // =========================================================================

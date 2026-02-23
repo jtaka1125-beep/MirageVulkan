@@ -59,9 +59,11 @@ RouteController::RouteDecision RouteController::evaluate(
     const auto now = std::chrono::steady_clock::now();
 
     // ISSUE-6: EWMA smoothing  Esuppresses transient bandwidth/RTT spikes
-    ewma_usb_bw_  = EWMA_ALPHA * usb.bandwidth_mbps  + (1.0f - EWMA_ALPHA) * ewma_usb_bw_;
-    ewma_wifi_bw_ = EWMA_ALPHA * wifi.bandwidth_mbps + (1.0f - EWMA_ALPHA) * ewma_wifi_bw_;
-    ewma_rtt_     = EWMA_ALPHA * usb.ping_rtt_ms     + (1.0f - EWMA_ALPHA) * ewma_rtt_;
+    ewma_usb_bw_   = EWMA_ALPHA * usb.bandwidth_mbps    + (1.0f - EWMA_ALPHA) * ewma_usb_bw_;
+    ewma_wifi_bw_  = EWMA_ALPHA * wifi.bandwidth_mbps   + (1.0f - EWMA_ALPHA) * ewma_wifi_bw_;
+    ewma_rtt_      = EWMA_ALPHA * usb.ping_rtt_ms       + (1.0f - EWMA_ALPHA) * ewma_rtt_;
+    // ISSUE-20: smooth packet loss to suppress transient spikes
+    ewma_wifi_loss_= EWMA_ALPHA * wifi.packet_loss_rate + (1.0f - EWMA_ALPHA) * ewma_wifi_loss_;
     const bool usb_congested_ewma = usb.is_congested         // keep BandwidthMonitor flag
                                   || (ewma_usb_bw_ > 25.0f)  // EWMA: USB_CONGESTION_THRESHOLD_MBPS
                                   || (ewma_rtt_ > 50.0f);   // EWMA: USB_RTT_THRESHOLD_MS
@@ -95,7 +97,7 @@ RouteController::RouteDecision RouteController::evaluate(
     const bool usb_failed = (consecutive_usb_failure_ >= FAILURE_THRESHOLD);
     const bool usb_congested = (consecutive_usb_congestion_ >= CONGESTION_THRESHOLD);
 
-    const float wifi_loss = wifi.packet_loss_rate;
+    const float wifi_loss = ewma_wifi_loss_;  // ISSUE-20: use EWMA
 
     const auto log_tick = std::chrono::duration_cast<std::chrono::seconds>(now - last_debug_log_).count();
     if (log_tick >= 10) {

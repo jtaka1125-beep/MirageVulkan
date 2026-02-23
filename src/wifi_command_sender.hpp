@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <condition_variable>
 #include <atomic>
 #include <thread>
 #include <functional>
@@ -87,6 +88,9 @@ private:
 
     // Command queue
     std::mutex queue_mtx_;
+    // ISSUE-17: CV to wake send_thread on new commands
+    std::condition_variable send_cv_;
+    std::mutex send_cv_mtx_;
     std::queue<std::vector<uint8_t>> command_queue_;
 
     // Sequence number

@@ -755,7 +755,7 @@ class AccessoryIoService : Service() {
 
     private fun handleVideoFps(fps: Int) {
 
-        Log.i(TAG, "FPS → $fps")
+        Log.i(TAG, "FPS -> $fps")
 
         sendBroadcast(Intent(ACTION_VIDEO_FPS).setPackage("com.mirage.capture").putExtra(EXTRA_TARGET_FPS, fps))
 
@@ -804,7 +804,12 @@ class AccessoryIoService : Service() {
 
                 CMD_TYPE_BACK -> a11y.performBack(seq)
 
-                CMD_TYPE_KEY -> Log.i(TAG, "KEY $keycode seq=$seq")
+                CMD_TYPE_KEY -> {
+                    // ISSUE-19: dispatch key to accessibility service
+                    val a11y = com.mirage.accessory.access.MirageAccessibilityService.instance
+                    if (a11y != null) a11y.performKey(keycode, seq)
+                    else Log.w(TAG, "A11y not available for KEY keycode=$keycode seq=$seq")
+                }
 
             }
 

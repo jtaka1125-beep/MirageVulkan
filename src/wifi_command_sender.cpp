@@ -82,12 +82,18 @@ void WifiCommandSender::stop() {
     running_.store(false);
     connected_.store(false);
 
-    if (send_thread_.joinable()) {
-        send_thread_.join();
+    // ISSUE-16: shutdown socket before join so recvfrom() unblocks immediately
+    if (socket_ != WIFI_INVALID_SOCKET) {
+#ifdef _WIN32
+        shutdown(socket_, SD_BOTH);
+#else
+        shutdown(socket_, SHUT_RDWR);
+#endif
     }
-    if (recv_thread_.joinable()) {
-        recv_thread_.join();
-    }
+    send_cv_.notify_one();  // ISSUE-17: also wake send_thread
+
+    if (send_thread_.joinable()) send_thread_.join();
+    if (recv_thread_.joinable()) recv_thread_.join();
 
     if (socket_ != WIFI_INVALID_SOCKET) {
         closesocket(socket_);
@@ -114,7 +120,9 @@ void WifiCommandSender::send_thread() {
                 commands_sent_.fetch_add(1);
             }
         } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            // ISSUE-17: CV wait replaces 10ms spinlock
+            std::unique_lock<std::mutex> cv_lk(send_cv_mtx_);
+            send_cv_.wait_for(cv_lk, std::chrono::milliseconds(30));
         }
     }
 
@@ -248,6 +256,7 @@ uint32_t WifiCommandSender::send_ping() {
 
     std::lock_guard<std::mutex> lock(queue_mtx_);
     command_queue_.push(std::move(packet));
+    send_cv_.notify_one();  // ISSUE-17: wake send_thread
     return seq;
 }
 
@@ -284,6 +293,7 @@ uint32_t WifiCommandSender::send_tap(int x, int y, int screen_w, int screen_h) {
 
     std::lock_guard<std::mutex> lock(queue_mtx_);
     command_queue_.push(std::move(packet));
+    send_cv_.notify_one();  // ISSUE-17
 
     MLOG_INFO("wificmd", "Queued TAP(%d, %d) seq=%u", x, y, seq);
     return seq;
@@ -322,6 +332,7 @@ uint32_t WifiCommandSender::send_swipe(int x1, int y1, int x2, int y2, int durat
 
     std::lock_guard<std::mutex> lock(queue_mtx_);
     command_queue_.push(std::move(packet));
+    send_cv_.notify_one();  // ISSUE-17
 
     MLOG_INFO("wificmd", "Queued SWIPE(%d,%d)->(%d,%d) seq=%u", x1, y1, x2, y2, seq);
     return seq;
@@ -335,6 +346,7 @@ uint32_t WifiCommandSender::send_back() {
 
     std::lock_guard<std::mutex> lock(queue_mtx_);
     command_queue_.push(std::move(packet));
+    send_cv_.notify_one();  // ISSUE-17
 
     MLOG_INFO("wificmd", "Queued BACK seq=%u", seq);
     return seq;
@@ -357,6 +369,7 @@ uint32_t WifiCommandSender::send_key(int keycode) {
 
     std::lock_guard<std::mutex> lock(queue_mtx_);
     command_queue_.push(std::move(packet));
+    send_cv_.notify_one();  // ISSUE-17
 
     MLOG_INFO("wificmd", "Queued KEY(%d) seq=%u", keycode, seq);
     return seq;
@@ -374,6 +387,7 @@ uint32_t WifiCommandSender::send_click_id(const std::string& resource_id) {
 
     std::lock_guard<std::mutex> lock(queue_mtx_);
     command_queue_.push(std::move(packet));
+    send_cv_.notify_one();  // ISSUE-17
 
     MLOG_INFO("wificmd", "Queued CLICK_ID(%s) seq=%u", resource_id.c_str(), seq);
     return seq;
@@ -391,6 +405,7 @@ uint32_t WifiCommandSender::send_click_text(const std::string& text) {
 
     std::lock_guard<std::mutex> lock(queue_mtx_);
     command_queue_.push(std::move(packet));
+    send_cv_.notify_one();  // ISSUE-17
 
     MLOG_INFO("wificmd", "Queued CLICK_TEXT(%s) seq=%u", text.c_str(), seq);
     return seq;

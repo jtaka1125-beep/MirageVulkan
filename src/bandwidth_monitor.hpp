@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include <atomic>
 #include <chrono>
@@ -52,13 +53,14 @@ private:
     std::atomic<uint64_t> usb_bytes_sent_{0};
     std::atomic<uint64_t> usb_bytes_recv_{0};
     std::atomic<float> last_ping_rtt_{0.0f};
-    std::chrono::steady_clock::time_point last_usb_activity_;
+    // ISSUE-23: atomic nanosecond timestamps replace time_point+mutex in hot path
+    std::atomic<int64_t> last_usb_activity_ns_{0};
     mutable std::mutex usb_mutex_;
 
     // WiFi metrics
     std::atomic<uint64_t> wifi_bytes_recv_{0};
     std::atomic<float> wifi_packet_loss_{0.0f};
-    std::chrono::steady_clock::time_point last_wifi_activity_;
+    std::atomic<int64_t> last_wifi_activity_ns_{0};
     mutable std::mutex wifi_mutex_;
 
     // Calculated stats (updated by updateStats)

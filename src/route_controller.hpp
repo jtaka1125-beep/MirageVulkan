@@ -121,6 +121,7 @@ private:
     float ewma_usb_bw_{0.0f};
     float ewma_wifi_bw_{0.0f};
     float ewma_rtt_{0.0f};
+    float ewma_wifi_loss_{0.0f};  // ISSUE-20: EWMA-smoothed packet loss
     static constexpr float EWMA_ALPHA = 0.25f;  // weight of new sample
 };
 
