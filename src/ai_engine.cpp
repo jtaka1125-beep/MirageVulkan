@@ -1687,23 +1687,22 @@ public:
 
 
 
-                    // マッチなし
-
-
-
-                    action.type = AIAction::Type::WAIT;
-
-
-
-                    action.reason = "マッチなし";
-
-
-
-                    idle_frames_++;
-
-
-
-                    stats_.idle_frames = idle_frames_;
+                    // マッチなし — 改善T: OCRフォールバック
+#ifdef MIRAGE_OCR_ENABLED
+                    if (frame_analyzer_ && frame_analyzer_->isInitialized()) {
+                        auto ocr_action = tryOcrFallback(slot, device_id, can_send);
+                        if (ocr_action.type != AIAction::Type::NONE) {
+                            action = ocr_action;
+                            MLOG_DEBUG("ai", "改善T: VisionEngine経路OCRフォールバック成功: slot=%d", slot);
+                        }
+                    }
+#endif
+                    if (action.type == AIAction::Type::NONE) {
+                        action.type = AIAction::Type::WAIT;
+                        action.reason = "マッチなし";
+                        idle_frames_++;
+                        stats_.idle_frames = idle_frames_;
+                    }
 
 
 
@@ -3542,11 +3541,9 @@ private:
 
 
 
-                if (action.template_id.empty() && !tpl_name.empty())
-
-
-
-                    stats_.template_stats[tpl_name].action_count++;
+                // 改善T: OCRキーワード別統計
+                stats_.template_stats["ocr:" + keyword].detect_count++;
+                stats_.template_stats["ocr:" + keyword].action_count++;
 
 
 

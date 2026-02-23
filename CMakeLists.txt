@@ -666,6 +666,16 @@ if(BUILD_TESTS)
         target_compile_definitions(test_ai_improvements_nqr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_test(NAME AIImprovementsNQRTest COMMAND test_ai_improvements_nqr)
 
+        # BandwidthMonitor unit tests
+        add_executable(test_bandwidth_monitor
+            tests/test_bandwidth_monitor.cpp
+            src/bandwidth_monitor.cpp
+        )
+        target_include_directories(test_bandwidth_monitor PRIVATE src)
+        target_link_libraries(test_bandwidth_monitor PRIVATE gtest)
+        target_compile_definitions(test_bandwidth_monitor PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME BandwidthMonitorTest COMMAND test_bandwidth_monitor)
+
         # Frame Analyzer OCR test
         if(USE_OCR)
             add_executable(test_frame_analyzer
