@@ -76,3 +76,6 @@ tools/*.h264
 tools/*.log
 tools/*.txt
 nul  
+ 
+# Third-party tools (tracked) 
+!driver_installer/tools/wdi/wdi-simple.exe
