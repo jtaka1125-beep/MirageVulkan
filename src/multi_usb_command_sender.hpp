@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -245,7 +245,7 @@ private:
         DeviceHandle& operator=(const DeviceHandle&) = delete;
     };
 
-    bool find_and_open_all_devices();
+    bool find_and_open_all_devices(bool allow_wait = true);
     bool open_aoa_device(libusb_device* dev, uint16_t pid);
     bool switch_device_to_aoa_mode(libusb_device* dev);
     int get_aoa_protocol_version(libusb_device_handle* handle);

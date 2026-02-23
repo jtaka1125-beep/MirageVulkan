@@ -1,4 +1,4 @@
-#include "multi_usb_command_sender.hpp"
+﻿#include "multi_usb_command_sender.hpp"
 #include <system_error>
 #include <cstdio>
 #include <cstring>
@@ -86,7 +86,7 @@ bool MultiUsbCommandSender::start() {
     libusb_set_option(ctx_, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_WARNING);
 #endif
 
-    if (!find_and_open_all_devices()) {
+    if (!find_and_open_all_devices(false)) {
         MLOG_WARN("multicmd", "No AOA devices found (will retry on rescan)");
         // Diagnose: check if WinUSB driver is the issue
         if (mirage::WinUsbChecker::anyDeviceNeedsWinUsb()) {
@@ -308,7 +308,7 @@ void MultiUsbCommandSender::send_thread() {
     MLOG_INFO("multicmd", "Send thread started");
 
     // ISSUE-7+9+10: CV-driven loop; out-of-lock USB transfer; ACK always checked
-    constexpr int RESCAN_INTERVAL_MS = 30000;
+    constexpr int RESCAN_INTERVAL_MS = 8000;
     auto last_rescan = std::chrono::steady_clock::now();
 
     while (running_.load()) {

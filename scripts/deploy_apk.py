@@ -3,10 +3,11 @@
 deploy_apk.py - APKビルド→全端末デプロイ→起動→権限承認 ワンクリック
 
 Usage:
-    python deploy_apk.py                  # 全モジュール ビルド+デプロイ
-    python deploy_apk.py --module app     # appのみ
-    python deploy_apk.py --skip-build     # ビルドスキップ（既存APKをデプロイ）
-    python deploy_apk.py --debug          # debugビルド
+    python deploy_apk.py                        # 全モジュール ビルド+デプロイ
+    python deploy_apk.py --module capture       # captureのみ
+    python deploy_apk.py --module accessory     # accessoryのみ
+    python deploy_apk.py --skip-build           # ビルドスキップ（既存APKをデプロイ）
+    python deploy_apk.py --debug                # debugビルド
 """
 
 import subprocess
@@ -18,13 +19,9 @@ import glob
 
 ANDROID_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "android")
 
+# NOTE: "app" (旧モノリス) は 2026-02-24 に :capture + :accessory に分割済み。
+# android/app/ ソースは参照用に保持するが、settings.gradle.kts から除外済み。
 MODULES = {
-    "app": {
-        "package": "com.mirage.android",
-        "activity": "com.mirage.android.ui.MainActivity",
-        "apk_release": "app/build/outputs/apk/release/app-release.apk",
-        "apk_debug": "app/build/outputs/apk/debug/app-debug.apk",
-    },
     "accessory": {
         "package": "com.mirage.accessory",
         "activity": "com.mirage.accessory.ui.AccessoryActivity",
@@ -33,7 +30,7 @@ MODULES = {
     },
     "capture": {
         "package": "com.mirage.capture",
-        "activity": None,  # サービスのみ、Activity起動不要
+        "activity": None,  # サービスのみ、Activity起動不要（ADB broadcastで制御）
         "apk_release": "capture/build/outputs/apk/release/capture-release.apk",
         "apk_debug": "capture/build/outputs/apk/debug/capture-debug.apk",
     },
@@ -64,19 +61,19 @@ def build_modules(modules, debug=False):
     """Gradleビルド"""
     build_type = "Debug" if debug else "Release"
     tasks = [f":{m}:assemble{build_type}" for m in modules]
-    
+
     print(f"\n[BUILD] {', '.join(modules)} ({build_type})")
     gradlew = os.path.join(ANDROID_DIR, "gradlew.bat")
-    
+
     cmd = [gradlew] + tasks
     r = run(cmd, cwd=ANDROID_DIR, timeout=600)
-    
+
     if r.returncode != 0:
         print(f"  [FAIL] ビルド失敗")
         print(r.stdout[-500:] if r.stdout else "")
         print(r.stderr[-500:] if r.stderr else "")
         return False
-    
+
     print(f"  [OK] ビルド成功")
     return True
 
@@ -85,39 +82,39 @@ def deploy_module(module_name, module_info, devices, debug=False):
     """1モジュールを全端末にデプロイ"""
     apk_key = "apk_debug" if debug else "apk_release"
     apk_path = os.path.join(ANDROID_DIR, module_info[apk_key])
-    
+
     if not os.path.exists(apk_path):
         print(f"  [SKIP] APK not found: {apk_path}")
         return 0
-    
+
     apk_size = os.path.getsize(apk_path) / 1024 / 1024
     print(f"\n[DEPLOY] {module_name} ({apk_size:.1f}MB) → {len(devices)} 台")
-    
+
     success = 0
     for serial in devices:
         model = subprocess.run(
             ["adb", "-s", serial, "shell", "getprop", "ro.product.model"],
             capture_output=True, text=True, timeout=5
         ).stdout.strip()
-        
+
         print(f"  [{model} / {serial}]")
-        
+
         # インストール (-r で上書き, -g で全権限付与)
         r = run(["adb", "-s", serial, "install", "-r", "-g", apk_path], timeout=120)
         if r.returncode != 0:
             print(f"    [FAIL] インストール失敗")
             continue
         print(f"    [OK] インストール完了")
-        
+
         # アプリ起動
         if module_info["activity"]:
             time.sleep(1)
             run(["adb", "-s", serial, "shell", "am", "start", "-n",
                  f"{module_info['package']}/{module_info['activity']}"], timeout=10)
             print(f"    [OK] 起動")
-        
+
         success += 1
-    
+
     return success
 
 
@@ -129,22 +126,17 @@ def grant_permissions(devices):
             ["adb", "-s", serial, "shell", "getprop", "ro.product.model"],
             capture_output=True, text=True, timeout=5
         ).stdout.strip()
-        
-        # Accessibility Service有効化
-        for pkg in ["com.mirage.android", "com.mirage.accessory"]:
-            svc = f"{pkg}/{pkg.rsplit('.', 1)[0]}.access.MirageAccessibilityService"
-            run(["adb", "-s", serial, "shell", "settings", "put", "secure",
-                 "enabled_accessibility_services", svc], timeout=5)
-        
-        # 通知リスナー権限
-        run(["adb", "-s", serial, "shell", "cmd", "notification",
-             "allow_listener", "com.mirage.android/com.mirage.android.svc.CaptureService"], timeout=5)
-        
-        # バッテリー最適化除外
-        for pkg in ["com.mirage.android", "com.mirage.accessory", "com.mirage.capture"]:
+
+        # MirageAccessory の AccessibilityService 有効化
+        acc_svc = "com.mirage.accessory/com.mirage.accessory.access.MirageAccessibilityService"
+        run(["adb", "-s", serial, "shell", "settings", "put", "secure",
+             "enabled_accessibility_services", acc_svc], timeout=5)
+
+        # バッテリー最適化除外 (capture + accessory)
+        for pkg in ["com.mirage.capture", "com.mirage.accessory"]:
             run(["adb", "-s", serial, "shell", "dumpsys", "deviceidle", "whitelist",
                  f"+{pkg}"], timeout=5)
-        
+
         print(f"  [{model}] AccessibilityService + バッテリー最適化除外 設定済み")
 
 

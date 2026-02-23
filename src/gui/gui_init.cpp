@@ -339,6 +339,50 @@ static void startRouteEvalThread() {
     MLOG_INFO("gui", "Route evaluation started");
 }
 
+// =============================================================================
+// FPS Command Callback
+// =============================================================================
+static void onFpsCommand(const std::string& device_id, int fps) {
+    if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
+        auto devices = g_adb_manager->getUniqueDevices();
+        for (const auto& dev : devices) {
+            if (dev.hardware_id == device_id) {
+                std::string adb_id = dev.preferred_adb_id;
+                const bool isX1 = (dev.display_name.find("Npad X1") != std::string::npos) ||
+                                   (dev.display_name.find("N-one Npad X1") != std::string::npos) ||
+                                   (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos) ||
+                                   (dev.preferred_adb_id.find("93020523431940") != std::string::npos);
+                int send_fps = fps;
+                if (isX1 && send_fps < 60) send_fps = 60;
+                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei fps " + std::to_string(send_fps);
+                std::string cmd2 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000" : "";
+                std::string cmd3 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture" : "";
+                std::thread([adb_id, cmd, cmd2, cmd3, device_id, send_fps]() {
+                    if (g_adb_manager) { g_adb_manager->adbCommand(adb_id, cmd); if(!cmd2.empty()) g_adb_manager->adbCommand(adb_id, cmd2); if(!cmd3.empty()) g_adb_manager->adbCommand(adb_id, cmd3); }
+                    MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)", send_fps, device_id.c_str(), adb_id.c_str());
+                }).detach();
+                break;
+            }
+        }
+    } else if (g_hybrid_cmd) {
+        g_hybrid_cmd->send_video_fps(device_id, fps);
+        MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s (USB)", fps, device_id.c_str());
+    }
+}
+
+// =============================================================================
+// Route Command Callback
+// =============================================================================
+static void onRouteCommand(const std::string& device_id,
+                           ::gui::RouteController::VideoRoute route,
+                           const std::string& host, int port) {
+    if (g_hybrid_cmd) {
+        uint8_t mode = (route == ::gui::RouteController::VideoRoute::WIFI) ? 1 : 0;
+        g_hybrid_cmd->send_video_route(device_id, mode, host, port);
+        MLOG_INFO("RouteCtrl", "Sent Route=%s to %s (%s:%d)", mode ? "WiFi" : "USB", device_id.c_str(), host.c_str(), port);
+    }
+}
+
 void initializeRouting() {
     // Initialize routing even without USB devices - WiFi-only mode is valid
     g_bandwidth_monitor = std::make_unique<::gui::BandwidthMonitor>();
@@ -362,57 +406,10 @@ void initializeRouting() {
     // TCP-only mode is set dynamically below based on USB device availability
 
     // FPS command callback
-    g_route_controller->setFpsCommandCallback([](const std::string& device_id, int fps) {
-        // TCP-onlyモード: ADB broadcast経由でFPS送信（USB経由はスキップ）
-        if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
-            auto devices = g_adb_manager->getUniqueDevices();
-            for (const auto& dev : devices) {
-                if (dev.hardware_id == device_id) {
-                    // Async: ADB broadcast can take 1-2s over WiFi, must not block GUI/RouteCtrl thread
-                    std::string adb_id = dev.preferred_adb_id;
-                    // Force X1 to stay at high quality (main) even if adaptive logic mislabels fps.
-                    const bool isX1 = (dev.display_name.find("Npad X1") != std::string::npos) ||
-                                       (dev.display_name.find("N-one Npad X1") != std::string::npos) ||
-                                       (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos) ||
-                                       (dev.preferred_adb_id.find("93020523431940") != std::string::npos);
-                    int send_fps = fps;
-                    if (isX1 && send_fps < 60) send_fps = 60;
-                    std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei fps " + std::to_string(send_fps);
-                    std::string cmd2;
-                    if (isX1) {
-                        // Keep max_size at 2000 and request IDR so SPS refresh happens.
-                        cmd2 = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000";
-                    }
-                    std::string cmd3;
-                    if (isX1) {
-                        cmd3 = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture";
-                    }
-                    std::thread([adb_id, cmd, cmd2, cmd3, device_id, send_fps]() {
-                        if (g_adb_manager) { g_adb_manager->adbCommand(adb_id, cmd); if(!cmd2.empty()) g_adb_manager->adbCommand(adb_id, cmd2); if(!cmd3.empty()) g_adb_manager->adbCommand(adb_id, cmd3); }
-                        MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)",
-                                  send_fps, device_id.c_str(), adb_id.c_str());
-                    }).detach();
-                    break;
-                }
-            }
-        } else if (g_hybrid_cmd) {
-            // USB AOA経由でFPS送信
-            g_hybrid_cmd->send_video_fps(device_id, fps);
-            MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s (USB)", fps, device_id.c_str());
-        }
-    });
+    g_route_controller->setFpsCommandCallback([](const std::string& device_id, int fps) { onFpsCommand(device_id, fps); });
 
     // Route command callback
-    g_route_controller->setRouteCommandCallback([](const std::string& device_id,
-                                                    ::gui::RouteController::VideoRoute route,
-                                                    const std::string& host, int port) {
-        if (g_hybrid_cmd) {
-            uint8_t mode = (route == ::gui::RouteController::VideoRoute::WIFI) ? 1 : 0;
-            g_hybrid_cmd->send_video_route(device_id, mode, host, port);
-            MLOG_INFO("RouteCtrl", "Sent Route=%s to %s (%s:%d)",
-                    mode ? "WiFi" : "USB", device_id.c_str(), host.c_str(), port);
-        }
-    });
+    g_route_controller->setRouteCommandCallback([](const std::string& device_id, ::gui::RouteController::VideoRoute route, const std::string& host, int port) { onRouteCommand(device_id, route, host, port); });
 
     // Register USB devices if available
     if (g_hybrid_cmd) {
