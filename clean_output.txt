@@ -1,0 +1,2 @@
+-rw-r--r-- 1 jun なし 881 Feb 24 06:05 C:/MirageWork/MirageVulkan/build_result.txt
+23 C:/MirageWork/MirageVulkan/build_result.txt

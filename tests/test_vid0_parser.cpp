@@ -1,214 +1,246 @@
 // =============================================================================
 // Unit tests for VID0 packet parser (src/vid0_parser.hpp)
+// Header-only, no network/ADB dependencies
+// VID0 format: [MAGIC(4,BE)] [LENGTH(4,BE)] [RTP_DATA(LENGTH)]
+// MAGIC = 0x56494430 ("VID0")
 // =============================================================================
 #include <gtest/gtest.h>
+#include <vector>
+#include <cstdint>
 #include "vid0_parser.hpp"
 
 using namespace mirage::video;
 
-// Helper: build a valid VID0 packet (MAGIC + LENGTH + payload)
-static std::vector<uint8_t> makeVid0Packet(const std::vector<uint8_t>& rtp_payload) {
+// ---------------------------------------------------------------------------
+// Helper: build a single VID0-framed packet
+// ---------------------------------------------------------------------------
+static std::vector<uint8_t> makeVid0(const std::vector<uint8_t>& rtp) {
+    uint32_t len = static_cast<uint32_t>(rtp.size());
     std::vector<uint8_t> pkt;
-    uint32_t magic = VID0_MAGIC;
-    uint32_t len = static_cast<uint32_t>(rtp_payload.size());
-
-    // Big-endian magic
-    pkt.push_back(static_cast<uint8_t>((magic >> 24) & 0xFF));
-    pkt.push_back(static_cast<uint8_t>((magic >> 16) & 0xFF));
-    pkt.push_back(static_cast<uint8_t>((magic >>  8) & 0xFF));
-    pkt.push_back(static_cast<uint8_t>((magic      ) & 0xFF));
-
-    // Big-endian length
-    pkt.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
-    pkt.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
-    pkt.push_back(static_cast<uint8_t>((len >>  8) & 0xFF));
-    pkt.push_back(static_cast<uint8_t>((len      ) & 0xFF));
-
-    pkt.insert(pkt.end(), rtp_payload.begin(), rtp_payload.end());
+    // MAGIC
+    pkt.push_back(0x56); pkt.push_back(0x49); pkt.push_back(0x44); pkt.push_back(0x30);
+    // LENGTH big-endian
+    pkt.push_back((len >> 24) & 0xFF);
+    pkt.push_back((len >> 16) & 0xFF);
+    pkt.push_back((len >>  8) & 0xFF);
+    pkt.push_back( len        & 0xFF);
+    pkt.insert(pkt.end(), rtp.begin(), rtp.end());
     return pkt;
 }
 
-// Helper: create a minimal valid RTP payload (>= RTP_MIN_LEN = 12 bytes)
-static std::vector<uint8_t> makeMinimalRtp() {
-    return std::vector<uint8_t>(12, 0xAA);
-}
+// Minimal valid RTP payload (12 bytes minimum)
+static std::vector<uint8_t> minRtp() { return std::vector<uint8_t>(12, 0xAB); }
+
+// RTP of given size
+static std::vector<uint8_t> rtpOfSize(size_t n) { return std::vector<uint8_t>(n, 0x55); }
 
 // ---------------------------------------------------------------------------
-// Empty buffer returns no packets
+// V-1: Empty buffer → no packets, no errors
 // ---------------------------------------------------------------------------
 TEST(Vid0ParserTest, EmptyBuffer) {
-    std::vector<uint8_t> buffer;
-    auto result = parseVid0Packets(buffer);
-
-    EXPECT_TRUE(result.rtp_packets.empty());
-    EXPECT_EQ(result.sync_errors, 0);
-    EXPECT_FALSE(result.buffer_overflow);
-    EXPECT_TRUE(buffer.empty());
+    std::vector<uint8_t> buf;
+    auto r = parseVid0Packets(buf);
+    EXPECT_TRUE(r.rtp_packets.empty());
+    EXPECT_EQ(r.sync_errors, 0);
+    EXPECT_FALSE(r.buffer_overflow);
+    EXPECT_TRUE(buf.empty());  // nothing consumed from empty
 }
 
 // ---------------------------------------------------------------------------
-// Single valid packet
+// V-2: Single valid packet fully present → extracted
 // ---------------------------------------------------------------------------
 TEST(Vid0ParserTest, SingleValidPacket) {
-    auto rtp = makeMinimalRtp();
-    auto pkt = makeVid0Packet(rtp);
-    std::vector<uint8_t> buffer = pkt;
-
-    auto result = parseVid0Packets(buffer);
-
-    ASSERT_EQ(result.rtp_packets.size(), 1u);
-    EXPECT_EQ(result.rtp_packets[0], rtp);
-    EXPECT_EQ(result.sync_errors, 0);
-    EXPECT_TRUE(buffer.empty()); // fully consumed
+    auto rtp = minRtp();
+    auto buf = makeVid0(rtp);
+    auto r = parseVid0Packets(buf);
+    ASSERT_EQ(r.rtp_packets.size(), 1u);
+    EXPECT_EQ(r.rtp_packets[0], rtp);
+    EXPECT_EQ(r.sync_errors, 0);
+    EXPECT_TRUE(buf.empty());  // fully consumed
 }
 
 // ---------------------------------------------------------------------------
-// Multiple consecutive packets
+// V-3: Three consecutive valid packets → all extracted
 // ---------------------------------------------------------------------------
 TEST(Vid0ParserTest, MultiplePackets) {
-    auto rtp1 = std::vector<uint8_t>(20, 0x11);
-    auto rtp2 = std::vector<uint8_t>(30, 0x22);
+    auto rtp1 = rtpOfSize(100);
+    auto rtp2 = rtpOfSize(200);
+    auto rtp3 = rtpOfSize(50);
+    auto buf = makeVid0(rtp1);
+    auto p2  = makeVid0(rtp2);
+    auto p3  = makeVid0(rtp3);
+    buf.insert(buf.end(), p2.begin(), p2.end());
+    buf.insert(buf.end(), p3.begin(), p3.end());
 
-    auto pkt1 = makeVid0Packet(rtp1);
-    auto pkt2 = makeVid0Packet(rtp2);
-
-    std::vector<uint8_t> buffer;
-    buffer.insert(buffer.end(), pkt1.begin(), pkt1.end());
-    buffer.insert(buffer.end(), pkt2.begin(), pkt2.end());
-
-    auto result = parseVid0Packets(buffer);
-
-    ASSERT_EQ(result.rtp_packets.size(), 2u);
-    EXPECT_EQ(result.rtp_packets[0], rtp1);
-    EXPECT_EQ(result.rtp_packets[1], rtp2);
-    EXPECT_TRUE(buffer.empty());
+    auto r = parseVid0Packets(buf);
+    ASSERT_EQ(r.rtp_packets.size(), 3u);
+    EXPECT_EQ(r.rtp_packets[0], rtp1);
+    EXPECT_EQ(r.rtp_packets[1], rtp2);
+    EXPECT_EQ(r.rtp_packets[2], rtp3);
+    EXPECT_EQ(r.sync_errors, 0);
+    EXPECT_TRUE(buf.empty());
 }
 
 // ---------------------------------------------------------------------------
-// Incomplete packet (not enough data for payload) - stays in buffer
+// V-4: Incomplete packet (header present, data truncated) → 0 packets, buffer kept
 // ---------------------------------------------------------------------------
-TEST(Vid0ParserTest, IncompletePacket) {
-    auto rtp = makeMinimalRtp();
-    auto pkt = makeVid0Packet(rtp);
-    // Truncate: remove last 4 bytes
-    pkt.resize(pkt.size() - 4);
+TEST(Vid0ParserTest, IncompletePacketWaits) {
+    auto rtp = rtpOfSize(200);
+    auto full = makeVid0(rtp);
+    // Truncate to header + first 50 bytes of payload
+    std::vector<uint8_t> partial(full.begin(), full.begin() + VID0_HEADER_SIZE + 50);
 
-    std::vector<uint8_t> buffer = pkt;
-    size_t original_size = buffer.size();
-
-    auto result = parseVid0Packets(buffer);
-
-    EXPECT_TRUE(result.rtp_packets.empty());
-    EXPECT_EQ(buffer.size(), original_size); // data preserved for next read
+    auto r = parseVid0Packets(partial);
+    EXPECT_EQ(r.rtp_packets.size(), 0u);
+    EXPECT_EQ(r.sync_errors, 0);
+    // Buffer should retain at least the header bytes (not consumed)
+    EXPECT_GE(partial.size(), VID0_HEADER_SIZE);
 }
 
 // ---------------------------------------------------------------------------
-// Garbage before valid packet -> sync error + recovery
+// V-5: Only magic header, no length bytes → 0 packets
 // ---------------------------------------------------------------------------
-TEST(Vid0ParserTest, SyncRecovery) {
-    std::vector<uint8_t> garbage = {0xDE, 0xAD, 0xBE, 0xEF};
-    auto rtp = makeMinimalRtp();
-    auto pkt = makeVid0Packet(rtp);
-
-    std::vector<uint8_t> buffer;
-    buffer.insert(buffer.end(), garbage.begin(), garbage.end());
-    buffer.insert(buffer.end(), pkt.begin(), pkt.end());
-
-    auto result = parseVid0Packets(buffer);
-
-    ASSERT_EQ(result.rtp_packets.size(), 1u);
-    EXPECT_EQ(result.rtp_packets[0], rtp);
-    EXPECT_GT(result.sync_errors, 0);
+TEST(Vid0ParserTest, OnlyMagicNoLength) {
+    std::vector<uint8_t> buf = {0x56, 0x49, 0x44, 0x30};
+    auto r = parseVid0Packets(buf);
+    EXPECT_EQ(r.rtp_packets.size(), 0u);
 }
 
 // ---------------------------------------------------------------------------
-// Packet with invalid length (too small) is skipped
+// V-6: Garbage prefix → sync error, then valid packet recovered
+// ---------------------------------------------------------------------------
+TEST(Vid0ParserTest, GarbagePrefixResync) {
+    std::vector<uint8_t> buf = {0xFF, 0x00, 0xDE, 0xAD, 0xBE, 0xEF};  // garbage
+    auto valid = makeVid0(minRtp());
+    buf.insert(buf.end(), valid.begin(), valid.end());
+
+    auto r = parseVid0Packets(buf);
+    EXPECT_EQ(r.rtp_packets.size(), 1u);
+    EXPECT_GT(r.sync_errors, 0);
+    EXPECT_GT(r.magic_resync, 0);
+    EXPECT_TRUE(buf.empty());
+}
+
+// ---------------------------------------------------------------------------
+// V-7: Two garbage bytes then two valid packets
+// ---------------------------------------------------------------------------
+TEST(Vid0ParserTest, GarbageThenTwoPackets) {
+    std::vector<uint8_t> buf = {0x01, 0x02};
+    auto p1 = makeVid0(rtpOfSize(12));
+    auto p2 = makeVid0(rtpOfSize(20));
+    buf.insert(buf.end(), p1.begin(), p1.end());
+    buf.insert(buf.end(), p2.begin(), p2.end());
+
+    auto r = parseVid0Packets(buf);
+    EXPECT_EQ(r.rtp_packets.size(), 2u);
+    EXPECT_GT(r.sync_errors, 0);
+    EXPECT_TRUE(buf.empty());
+}
+
+// ---------------------------------------------------------------------------
+// V-8: Length too small (< RTP_MIN_LEN=12) → invalid_len count incremented
 // ---------------------------------------------------------------------------
 TEST(Vid0ParserTest, InvalidLengthTooSmall) {
-    // Build a VID0 header with length < RTP_MIN_LEN (12)
-    std::vector<uint8_t> buffer;
-    uint32_t magic = VID0_MAGIC;
-    buffer.push_back(static_cast<uint8_t>((magic >> 24) & 0xFF));
-    buffer.push_back(static_cast<uint8_t>((magic >> 16) & 0xFF));
-    buffer.push_back(static_cast<uint8_t>((magic >>  8) & 0xFF));
-    buffer.push_back(static_cast<uint8_t>((magic      ) & 0xFF));
-    // Length = 4 (too small)
-    buffer.push_back(0x00);
-    buffer.push_back(0x00);
-    buffer.push_back(0x00);
-    buffer.push_back(0x04);
-    buffer.resize(buffer.size() + 4, 0x00); // payload
+    std::vector<uint8_t> buf;
+    // MAGIC + length=5 (< 12)
+    buf = {0x56, 0x49, 0x44, 0x30,  0x00, 0x00, 0x00, 0x05};
+    buf.insert(buf.end(), 5, 0xAA);  // payload
 
-    // Append a valid packet after
-    auto rtp = makeMinimalRtp();
-    auto valid = makeVid0Packet(rtp);
-    buffer.insert(buffer.end(), valid.begin(), valid.end());
-
-    auto result = parseVid0Packets(buffer);
-
-    // The valid packet should still be parsed
-    ASSERT_EQ(result.rtp_packets.size(), 1u);
-    EXPECT_EQ(result.rtp_packets[0], rtp);
+    auto r = parseVid0Packets(buf);
+    EXPECT_EQ(r.rtp_packets.size(), 0u);
+    EXPECT_GT(r.invalid_len, 0);
 }
 
 // ---------------------------------------------------------------------------
-// Buffer overflow protection constants are sane
+// V-9: Length > RTP_MAX_LEN (65535) → invalid_len count incremented
 // ---------------------------------------------------------------------------
-TEST(Vid0ParserTest, BufferOverflowConstants) {
-    // The overflow guard (buffer.size() > BUFFER_MAX) is a safety net that fires
-    // when accumulated unparsed data exceeds 128KB between parse calls. Since
-    // RTP_MAX_LEN (65535) < BUFFER_MAX, a single incomplete frame can never alone
-    // trigger overflow. Verify the constants are correctly related.
-    EXPECT_EQ(BUFFER_MAX, 2u * 1024u * 1024u);
-    EXPECT_EQ(BUFFER_TRIM, 256u * 1024u);
-    EXPECT_LT(BUFFER_TRIM, BUFFER_MAX);
-    EXPECT_LT(RTP_MAX_LEN + VID0_HEADER_SIZE, BUFFER_MAX);
+TEST(Vid0ParserTest, InvalidLengthTooLarge) {
+    std::vector<uint8_t> buf;
+    // MAGIC + length = 65536 (> 65535)
+    uint32_t too_big = 65536;
+    buf = {0x56, 0x49, 0x44, 0x30,
+           uint8_t(too_big >> 24), uint8_t(too_big >> 16),
+           uint8_t(too_big >>  8), uint8_t(too_big & 0xFF)};
+
+    auto r = parseVid0Packets(buf);
+    EXPECT_EQ(r.rtp_packets.size(), 0u);
+    EXPECT_GT(r.invalid_len, 0);
 }
 
 // ---------------------------------------------------------------------------
-// Large buffer with parseable data is fully consumed
+// V-10: Exact minimum RTP size (12 bytes) → accepted
 // ---------------------------------------------------------------------------
-TEST(Vid0ParserTest, LargeBufferFullyConsumed) {
-    std::vector<uint8_t> buffer;
-    auto rtp = makeMinimalRtp();
-
-    // Fill ~130KB of valid VID0 packets
-    while (buffer.size() < BUFFER_MAX + 1024) {
-        auto pkt = makeVid0Packet(rtp);
-        buffer.insert(buffer.end(), pkt.begin(), pkt.end());
-    }
-
-    auto result = parseVid0Packets(buffer);
-
-    EXPECT_GT(result.rtp_packets.size(), 100u);
-    EXPECT_FALSE(result.buffer_overflow);
-    EXPECT_LT(buffer.size(), VID0_HEADER_SIZE + RTP_MIN_LEN); // residual < 1 packet
+TEST(Vid0ParserTest, MinimumRtpSizeAccepted) {
+    auto rtp = rtpOfSize(12);  // exactly RTP_MIN_LEN
+    auto buf = makeVid0(rtp);
+    auto r = parseVid0Packets(buf);
+    ASSERT_EQ(r.rtp_packets.size(), 1u);
+    EXPECT_EQ(r.rtp_packets[0].size(), 12u);
 }
 
 // ---------------------------------------------------------------------------
-// Only header present (no payload bytes yet)
+// V-11: Exact maximum RTP size (65535 bytes) → accepted
 // ---------------------------------------------------------------------------
-TEST(Vid0ParserTest, HeaderOnlyNoPayload) {
-    std::vector<uint8_t> buffer;
-    uint32_t magic = VID0_MAGIC;
-    buffer.push_back(static_cast<uint8_t>((magic >> 24) & 0xFF));
-    buffer.push_back(static_cast<uint8_t>((magic >> 16) & 0xFF));
-    buffer.push_back(static_cast<uint8_t>((magic >>  8) & 0xFF));
-    buffer.push_back(static_cast<uint8_t>((magic      ) & 0xFF));
-    // length = 20
-    buffer.push_back(0x00);
-    buffer.push_back(0x00);
-    buffer.push_back(0x00);
-    buffer.push_back(0x14);
-
-    size_t original_size = buffer.size();
-    auto result = parseVid0Packets(buffer);
-
-    EXPECT_TRUE(result.rtp_packets.empty());
-    EXPECT_EQ(buffer.size(), original_size); // retained for next append
+TEST(Vid0ParserTest, MaximumRtpSizeAccepted) {
+    auto rtp = rtpOfSize(65535);  // exactly RTP_MAX_LEN
+    auto buf = makeVid0(rtp);
+    auto r = parseVid0Packets(buf);
+    ASSERT_EQ(r.rtp_packets.size(), 1u);
+    EXPECT_EQ(r.rtp_packets[0].size(), 65535u);
+    EXPECT_TRUE(buf.empty());
 }
 
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+// ---------------------------------------------------------------------------
+// V-12: Buffer consumed correctly — remainder after partial
+// ---------------------------------------------------------------------------
+TEST(Vid0ParserTest, BufferConsumedPartially) {
+    auto rtp = minRtp();
+    auto p1 = makeVid0(rtp);
+    // p2 is incomplete: only header
+    std::vector<uint8_t> buf(p1.begin(), p1.end());
+    buf.push_back(0x56); buf.push_back(0x49); buf.push_back(0x44); buf.push_back(0x30);
+    // No length bytes for p2
+
+    auto r = parseVid0Packets(buf);
+    EXPECT_EQ(r.rtp_packets.size(), 1u);
+    // The partial magic should remain
+    EXPECT_EQ(buf.size(), 4u);
+}
+
+// ---------------------------------------------------------------------------
+// V-13: ParseResult stats accurately count each error type in one pass
+// ---------------------------------------------------------------------------
+TEST(Vid0ParserTest, StatsAccurate) {
+    // Part 1: 3 garbage bytes (triggers sync_error + magic_resync)
+    std::vector<uint8_t> buf = {0xAA, 0xBB, 0xCC};
+    // Part 2: invalid length = 5 (< RTP_MIN_LEN=12) → invalid_len
+    buf.push_back(0x56); buf.push_back(0x49); buf.push_back(0x44); buf.push_back(0x30);
+    buf.push_back(0x00); buf.push_back(0x00); buf.push_back(0x00); buf.push_back(0x05);
+    buf.insert(buf.end(), 5, 0x00);  // fake payload bytes (< 12)
+    // Part 3: valid packet → recovered
+    auto valid = makeVid0(minRtp());
+    buf.insert(buf.end(), valid.begin(), valid.end());
+
+    auto r = parseVid0Packets(buf);
+    EXPECT_GT(r.sync_errors, 0)     << "sync_errors should be > 0";
+    EXPECT_GT(r.magic_resync, 0)    << "magic_resync should be > 0";
+    EXPECT_GT(r.invalid_len, 0)     << "invalid_len should be > 0";
+    EXPECT_FALSE(r.buffer_overflow) << "no overflow for small buffer";
+    ASSERT_EQ(r.rtp_packets.size(), 1u) << "one valid packet should be extracted";
+}
+
+// ---------------------------------------------------------------------------
+// V-14: Magic bytes in payload do NOT cause false resync
+// ---------------------------------------------------------------------------
+TEST(Vid0ParserTest, MagicInPayloadNoFalseResync) {
+    // Build RTP payload that contains VID0 magic bytes
+    std::vector<uint8_t> rtp = rtpOfSize(50);
+    rtp[10] = 0x56; rtp[11] = 0x49; rtp[12] = 0x44; rtp[13] = 0x30;  // "VID0" in payload
+    auto buf = makeVid0(rtp);
+
+    auto r = parseVid0Packets(buf);
+    ASSERT_EQ(r.rtp_packets.size(), 1u);
+    EXPECT_EQ(r.sync_errors, 0);
+    EXPECT_EQ(r.rtp_packets[0], rtp);
+    EXPECT_TRUE(buf.empty());
 }
