@@ -80,6 +80,13 @@ struct TemplateStats {
     }
 };
 
+// 改善Q: デバイス別マッチング適応設定
+struct DeviceAdaptation {
+    float min_score     = 0.0f;   // 0=無効, >0 で追加最低スコア要件
+    float cooldown_scale= 1.0f;   // クールダウン時間の倍率 (1.0=変更なし)
+    bool  enabled       = false;
+};
+
 struct AIStats {
     uint64_t frames_processed = 0;
     uint64_t actions_executed = 0;
@@ -123,6 +130,11 @@ public:
     void processFrameAsync(int slot, const uint8_t* rgba, int width, int height);
     void setAsyncMode(bool enable);
     bool isAsyncMode() const;
+
+    // 改善Q: デバイス別適応
+    void setDeviceAdaptation(const std::string& device_id, const DeviceAdaptation& adapt);
+    DeviceAdaptation getDeviceAdaptation(const std::string& device_id) const;
+    void clearDeviceAdaptation(const std::string& device_id);
     AIAction processFrame(int slot, const uint8_t* rgba, int width, int height);
 
     // コールバック設定

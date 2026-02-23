@@ -171,8 +171,8 @@ public:
         return mirage::Ok();
     }
 
-    void shutdown() {        stopAsyncWorkers();
-
+    void shutdown() {        stopAsyncWorkers();
+
         stopHotReload();
         if (!initialized_) return;
         MLOG_INFO("ai", "AI Engine シャットダウン");
@@ -350,10 +350,19 @@ public:
         auto vk_results = std::move(matchResult).value();
 
         // マッチ結果をOverlay用にキャッシュ
+        // 改善Q: デバイス適応フィルタ
+        std::string device_id = "slot_" + std::to_string(slot); // moved up for Q
+        {
+            auto adapt = getDeviceAdaptation(device_id);
+            if (adapt.enabled && adapt.min_score > 0.0f) {
+                vk_results.erase(std::remove_if(vk_results.begin(), vk_results.end(),
+                    [&](const vk::VkMatchResult& r){ return r.score < adapt.min_score; }),
+                    vk_results.end());
+            }
+        }
         cacheMatches(vk_results);
 
         // VisionDecisionEngine経由で状態遷移判断
-        std::string device_id = "slot_" + std::to_string(slot);
         if (vision_engine_) {
             // VkMatchResult → VisionMatch変換
             std::unordered_map<int, std::string> names_snap;
@@ -530,21 +539,36 @@ public:
         config_.jitter_max_ms = std::max(0, max_ms);
         MLOG_INFO("ai", "ジッター設定: %d~%dms", min_ms, max_ms);
     }
-
-    // 改善N
-    void registerOcrKeyword(const std::string& kw, const std::string& act) {
-        if (action_mapper_) action_mapper_->registerTextAction(kw, act);
-    }
-    void removeOcrKeyword(const std::string& kw) {
-        if (action_mapper_) action_mapper_->removeTextAction(kw);
-    }
-    std::vector<std::pair<std::string,std::string>> getOcrKeywords() const {
-        std::vector<std::pair<std::string,std::string>> r;
-        if (!action_mapper_) return r;
-        for (const auto& k : action_mapper_->getTextKeywords())
-            r.push_back({k, action_mapper_->getTextAction(k)});
-        return r;
-    }
+
+    // 改善N
+    void registerOcrKeyword(const std::string& kw, const std::string& act) {
+        if (action_mapper_) action_mapper_->registerTextAction(kw, act);
+    }
+
+    // 改善Q: デバイス適応
+    void setDeviceAdaptation(const std::string& id, const mirage::ai::DeviceAdaptation& a) {
+        std::lock_guard<std::mutex> lk(adaptation_mutex_);
+        device_adaptations_[id] = a;
+    }
+    mirage::ai::DeviceAdaptation getDeviceAdaptation(const std::string& id) const {
+        std::lock_guard<std::mutex> lk(adaptation_mutex_);
+        auto it = device_adaptations_.find(id);
+        return it != device_adaptations_.end() ? it->second : mirage::ai::DeviceAdaptation{};
+    }
+    void clearDeviceAdaptation(const std::string& id) {
+        std::lock_guard<std::mutex> lk(adaptation_mutex_);
+        device_adaptations_.erase(id);
+    }
+    void removeOcrKeyword(const std::string& kw) {
+        if (action_mapper_) action_mapper_->removeTextAction(kw);
+    }
+    std::vector<std::pair<std::string,std::string>> getOcrKeywords() const {
+        std::vector<std::pair<std::string,std::string>> r;
+        if (!action_mapper_) return r;
+        for (const auto& k : action_mapper_->getTextKeywords())
+            r.push_back({k, action_mapper_->getTextAction(k)});
+        return r;
+    }
 
     void startHotReload() {
         if (hot_reload_running_.load()) return;
@@ -579,62 +603,62 @@ public:
         if (hot_reload_thread_.joinable()) hot_reload_thread_.join();
     }
 
-
-    // 改善O: 非同期ワーカー管理
-    void startAsyncWorkers(std::function<void(int,const AIAction&)>* cb_ptr) {
-        if (async_enabled_.load()) return;
-        async_action_cb_ = cb_ptr;
-        async_enabled_ = true;
-        for (int s = 0; s < kMaxAsyncSlots; ++s) {
-            async_workers_[s] = std::thread([this, s]() {
-                while (async_enabled_.load()) {
-                    AsyncFrameJob job;
-                    {
-                        std::unique_lock<std::mutex> lk(async_q_mutexes_[s]);
-                        async_q_cvs_[s].wait(lk, [&]{
-                            return !async_queues_[s].empty() || !async_enabled_.load();
-                        });
-                        if (!async_enabled_.load()) break;
-                        job = std::move(async_queues_[s].front());
-                        async_queues_[s].pop();
-                    }
-                    auto action = processFrame(job.slot, job.rgba.data(), job.width, job.height, job.can_send);
-                    if (async_action_cb_ && *async_action_cb_) {
-                        flushPendingActions(*async_action_cb_);
-                        if (action.type != AIAction::Type::NONE && action.type != AIAction::Type::WAIT)
-                            (*async_action_cb_)(job.slot, action);
-                    }
-                }
-            });
-        }
-        MLOG_INFO("ai", "[AsyncO] %d slot workers started", kMaxAsyncSlots);
-    }
-
-    void stopAsyncWorkers() {
-        if (!async_enabled_.load()) return;
-        async_enabled_ = false;
-        for (int s = 0; s < kMaxAsyncSlots; ++s) async_q_cvs_[s].notify_all();
-        for (int s = 0; s < kMaxAsyncSlots; ++s) if (async_workers_[s].joinable()) async_workers_[s].join();
-        MLOG_INFO("ai", "[AsyncO] slot workers stopped");
-    }
-
-    bool isAsyncEnabled() const { return async_enabled_.load(); }
-
-    void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send) {
-        if (slot < 0 || slot >= kMaxAsyncSlots || !rgba) return;
-        AsyncFrameJob job;
-        job.slot = slot;
-        job.width = width; job.height = height;
-        job.can_send = can_send;
-        job.rgba.assign(rgba, rgba + (size_t)width * height * 4);
-        {
-            std::lock_guard<std::mutex> lk(async_q_mutexes_[slot]);
-            // Drop oldest if queue too deep (prevent unbounded memory)
-            while (async_queues_[slot].size() >= 2) async_queues_[slot].pop();
-            async_queues_[slot].push(std::move(job));
-        }
-        async_q_cvs_[slot].notify_one();
-    }
+
+    // 改善O: 非同期ワーカー管理
+    void startAsyncWorkers(std::function<void(int,const AIAction&)>* cb_ptr) {
+        if (async_enabled_.load()) return;
+        async_action_cb_ = cb_ptr;
+        async_enabled_ = true;
+        for (int s = 0; s < kMaxAsyncSlots; ++s) {
+            async_workers_[s] = std::thread([this, s]() {
+                while (async_enabled_.load()) {
+                    AsyncFrameJob job;
+                    {
+                        std::unique_lock<std::mutex> lk(async_q_mutexes_[s]);
+                        async_q_cvs_[s].wait(lk, [&]{
+                            return !async_queues_[s].empty() || !async_enabled_.load();
+                        });
+                        if (!async_enabled_.load()) break;
+                        job = std::move(async_queues_[s].front());
+                        async_queues_[s].pop();
+                    }
+                    auto action = processFrame(job.slot, job.rgba.data(), job.width, job.height, job.can_send);
+                    if (async_action_cb_ && *async_action_cb_) {
+                        flushPendingActions(*async_action_cb_);
+                        if (action.type != AIAction::Type::NONE && action.type != AIAction::Type::WAIT)
+                            (*async_action_cb_)(job.slot, action);
+                    }
+                }
+            });
+        }
+        MLOG_INFO("ai", "[AsyncO] %d slot workers started", kMaxAsyncSlots);
+    }
+
+    void stopAsyncWorkers() {
+        if (!async_enabled_.load()) return;
+        async_enabled_ = false;
+        for (int s = 0; s < kMaxAsyncSlots; ++s) async_q_cvs_[s].notify_all();
+        for (int s = 0; s < kMaxAsyncSlots; ++s) if (async_workers_[s].joinable()) async_workers_[s].join();
+        MLOG_INFO("ai", "[AsyncO] slot workers stopped");
+    }
+
+    bool isAsyncEnabled() const { return async_enabled_.load(); }
+
+    void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send) {
+        if (slot < 0 || slot >= kMaxAsyncSlots || !rgba) return;
+        AsyncFrameJob job;
+        job.slot = slot;
+        job.width = width; job.height = height;
+        job.can_send = can_send;
+        job.rgba.assign(rgba, rgba + (size_t)width * height * 4);
+        {
+            std::lock_guard<std::mutex> lk(async_q_mutexes_[slot]);
+            // Drop oldest if queue too deep (prevent unbounded memory)
+            while (async_queues_[slot].size() >= 2) async_queues_[slot].pop();
+            async_queues_[slot].push(std::move(job));
+        }
+        async_q_cvs_[slot].notify_one();
+    }
     void setHotReload(bool enable, int interval_ms) {
         config_.hot_reload_interval_ms = std::max(200, interval_ms);
         config_.hot_reload = enable;
@@ -669,22 +693,22 @@ public:
         return result;
     }
 
-private:
-    // 改善O: 非同期フレーム処理インフラ
-    static constexpr int kMaxAsyncSlots = 4;
-    struct AsyncFrameJob {
-        int slot;
-        std::vector<uint8_t> rgba;
-        int width, height;
-        bool can_send;
-    };
-    std::array<std::queue<AsyncFrameJob>, kMaxAsyncSlots> async_queues_;
-    std::array<std::mutex, kMaxAsyncSlots>              async_q_mutexes_;
-    std::array<std::condition_variable, kMaxAsyncSlots> async_q_cvs_;
-    std::array<std::thread, kMaxAsyncSlots>             async_workers_;
-    std::atomic<bool>                                   async_enabled_{false};
-    std::function<void(int,const AIAction&)>*           async_action_cb_ = nullptr;
-
+private:
+    // 改善O: 非同期フレーム処理インフラ
+    static constexpr int kMaxAsyncSlots = 4;
+    struct AsyncFrameJob {
+        int slot;
+        std::vector<uint8_t> rgba;
+        int width, height;
+        bool can_send;
+    };
+    std::array<std::queue<AsyncFrameJob>, kMaxAsyncSlots> async_queues_;
+    std::array<std::mutex, kMaxAsyncSlots>              async_q_mutexes_;
+    std::array<std::condition_variable, kMaxAsyncSlots> async_q_cvs_;
+    std::array<std::thread, kMaxAsyncSlots>             async_workers_;
+    std::atomic<bool>                                   async_enabled_{false};
+    std::function<void(int,const AIAction&)>*           async_action_cb_ = nullptr;
+
     // =========================================================================
     // EventBus FrameReady ハンドラ
     // =========================================================================
@@ -1059,6 +1083,9 @@ private:
     // オーバーレイ用マッチ結果キャッシュ
     mutable std::mutex matches_mutex_;
     std::vector<AIEngine::MatchRect> last_matches_;
+    // 改善Q
+    std::unordered_map<std::string, mirage::ai::DeviceAdaptation> device_adaptations_;
+    mutable std::mutex adaptation_mutex_;
 
     // EventBus購読ハンドル
     mirage::SubscriptionHandle frame_sub_;
@@ -1163,17 +1190,17 @@ void AIEngine::setVDEConfig(const VDEConfig& cfg) {
 void AIEngine::setJitterConfig(int min_ms, int max_ms) {
     if (impl_) impl_->setJitterConfig(min_ms, max_ms);
 }
-
-void AIEngine::registerOcrKeyword(const std::string& kw, const std::string& act) {
-    if (impl_) impl_->registerOcrKeyword(kw, act);
-}
-void AIEngine::removeOcrKeyword(const std::string& kw) {
-    if (impl_) impl_->removeOcrKeyword(kw);
-}
-std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const {
-    if (!impl_) return {};
-    return impl_->getOcrKeywords();
-}
+
+void AIEngine::registerOcrKeyword(const std::string& kw, const std::string& act) {
+    if (impl_) impl_->registerOcrKeyword(kw, act);
+}
+void AIEngine::removeOcrKeyword(const std::string& kw) {
+    if (impl_) impl_->removeOcrKeyword(kw);
+}
+std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const {
+    if (!impl_) return {};
+    return impl_->getOcrKeywords();
+}
 
 void AIEngine::setHotReload(bool enable, int interval_ms) {
     if (impl_) impl_->setHotReload(enable, interval_ms);
@@ -1242,14 +1269,17 @@ void AIEngine::resetDeviceVision(const std::string&) {}
 void AIEngine::resetAllVision() {}
 AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
 void AIEngine::setVDEConfig(const VDEConfig&) {}
-void AIEngine::setJitterConfig(int, int) {}
-void AIEngine::processFrameAsync(int, const uint8_t*, int, int) {}
-void AIEngine::setAsyncMode(bool) {}
-bool AIEngine::isAsyncMode() const { return false; }
-
-void AIEngine::registerOcrKeyword(const std::string&, const std::string&) {}
-void AIEngine::removeOcrKeyword(const std::string&) {}
-std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const { return {}; }
+void AIEngine::setJitterConfig(int, int) {}
+void AIEngine::processFrameAsync(int, const uint8_t*, int, int) {}
+void AIEngine::setAsyncMode(bool) {}
+bool AIEngine::isAsyncMode() const { return false; }
+void AIEngine::setDeviceAdaptation(const std::string&, const DeviceAdaptation&) {}
+DeviceAdaptation AIEngine::getDeviceAdaptation(const std::string&) const { return {}; }
+void AIEngine::clearDeviceAdaptation(const std::string&) {}
+
+void AIEngine::registerOcrKeyword(const std::string&, const std::string&) {}
+void AIEngine::removeOcrKeyword(const std::string&) {}
+std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const { return {}; }
 void AIEngine::setHotReload(bool, int) {}
 std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const { return {}; }
 
