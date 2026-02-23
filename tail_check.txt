@@ -1,4 +1,0 @@
-: dCBMQ19DT0xMQVRFPUM7IGVjaG8gJHtNSU5HV19NT1VOVF9QT0lOVH0vZXRjL3Byb2ZpbGUuZC8q: command not found
-/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771881156357-8lk2i4.sh: line 1104: LiQxKTsKICAgICAgICBkbwogICAgICAgICAgICBbIC1lICIke2ZpbGV9IiBdICYmIC4gIiR7Zmls: command not found
-/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771881156357-8lk2i4.sh: line 1112: syntax error near unexpected token `fi'
-/c/Users/jun/.claude/shell-snapshots/snapshot-bash-1771881156357-8lk2i4.sh: line 1112: `fi'
