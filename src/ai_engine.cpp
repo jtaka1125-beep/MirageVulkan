@@ -636,6 +636,9 @@ private:
         if (it != names.end()) tpl_name = it->second;
         else tpl_name = "tpl_" + std::to_string(best.template_id);
 
+        // 改善K: テンプレート検出カウント
+        stats_.template_stats[tpl_name].detect_count++;
+
         // アクション文字列を取得
         std::string action_str = action_mapper_->getAction(tpl_name);
 
@@ -655,6 +658,7 @@ private:
         idle_frames_ = 0;
         stats_.idle_frames = 0;
         stats_.actions_executed++;
+        if (!tpl_name.empty()) stats_.template_stats[tpl_name].action_count++;
 
         // EventBus経由でコマンド発行（AI→CommandSender パイプライン）
         std::string device_id = "slot_" + std::to_string(slot);
@@ -718,6 +722,8 @@ private:
                 idle_frames_ = 0;
                 stats_.idle_frames = 0;
                 stats_.actions_executed++;
+                if (action.template_id.empty() && !tpl_name.empty())
+                    stats_.template_stats[tpl_name].action_count++;
 
                 // OcrMatchResult イベント発行
                 mirage::OcrMatchResult ocr_evt;

@@ -7,6 +7,7 @@
 // =============================================================================
 
 #pragma once
+#include <unordered_map>
 
 #include "result.hpp"
 #include <string>
@@ -65,12 +66,28 @@ struct AIAction {
     std::string reason;
 };
 
+// 改善K: テンプレート別ヒット率統計
+struct TemplateStats {
+    uint64_t detect_count = 0;  // 検出回数（閾値超え）
+    uint64_t action_count = 0;  // アクション実行回数
+    uint64_t skip_count   = 0;  // COOLDOWN等でスキップされた回数
+    float    hit_rate() const {
+        auto total = detect_count + skip_count;
+        return total > 0 ? (float)detect_count / total : 0.0f;
+    }
+    float    action_rate() const {
+        return detect_count > 0 ? (float)action_count / detect_count : 0.0f;
+    }
+};
+
 struct AIStats {
     uint64_t frames_processed = 0;
     uint64_t actions_executed = 0;
     double avg_process_time_ms = 0;
     int templates_loaded = 0;
     int idle_frames = 0;
+    // 改善K: テンプレート別統計
+    std::unordered_map<std::string, TemplateStats> template_stats;
 };
 
 // アクション実行コールバック

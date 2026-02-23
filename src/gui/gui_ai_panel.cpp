@@ -185,6 +185,34 @@ static void renderEngineControl() {
     ImGui::Text("Templates: %d", stats.templates_loaded);
 
     ImGui::Text("Idle frames: %d", stats.idle_frames);
+
+    // 改善K: テンプレート別ヒット率
+    if (!stats.template_stats.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Template Hit Rate (改善K)");
+        if (ImGui::BeginTable("tpl_stats", 4,
+                ImGui::TableFlags_Borders | ImGui::TableFlags_RowBg | ImGui::TableFlags_ScrollY,
+                ImVec2(0, 120))) {
+            ImGui::TableSetupColumn("Template",    ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Detect",      ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableSetupColumn("Actions",     ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableSetupColumn("Act Rate",    ImGuiTableColumnFlags_WidthFixed, 70);
+            ImGui::TableHeadersRow();
+            for (const auto& [name, ts] : stats.template_stats) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(name.c_str());
+                ImGui::TableSetColumnIndex(1); ImGui::Text("%llu", (unsigned long long)ts.detect_count);
+                ImGui::TableSetColumnIndex(2); ImGui::Text("%llu", (unsigned long long)ts.action_count);
+                ImGui::TableSetColumnIndex(3);
+                float ar = ts.action_rate();
+                ImVec4 col = ar > 0.7f ? ImVec4(0.2f,1.0f,0.2f,1.0f)
+                           : ar > 0.3f ? ImVec4(1.0f,0.8f,0.2f,1.0f)
+                                       : ImVec4(1.0f,0.4f,0.4f,1.0f);
+                ImGui::TextColored(col, "%.0f%%", ar * 100.0f);
+            }
+            ImGui::EndTable();
+        }
+    }
 }
 
 // =============================================================================
