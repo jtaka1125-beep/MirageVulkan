@@ -24,9 +24,12 @@ static enum AVPixelFormat hw_get_format(AVCodecContext* ctx, const enum AVPixelF
 
 namespace gui {
 
-H264Decoder::H264Decoder() = default;
+H264Decoder::H264Decoder() {
+    instance_index_ = s_instance_count_.fetch_add(1);
+}
 
 H264Decoder::~H264Decoder() {
+  s_instance_count_.fetch_sub(1);
   if (sws_ctx_) {
     sws_freeContext(sws_ctx_);
     sws_ctx_ = nullptr;
@@ -86,22 +89,29 @@ bool H264Decoder::init(bool use_hevc) {
     { AV_HWDEVICE_TYPE_VULKAN,  AV_PIX_FMT_VULKAN, "Vulkan" },
   };
 
-  for (const auto& opt : hw_options) {
-    AVBufferRef* hw_device_ctx = nullptr;
-    int hw_ret = av_hwdevice_ctx_create(&hw_device_ctx, opt.type, nullptr, nullptr, 0);
-    if (hw_ret >= 0 && hw_device_ctx) {
-      codec_ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx);
-      codec_ctx_->get_format = hw_get_format;
-      codec_ctx_->opaque = reinterpret_cast<void*>(static_cast<intptr_t>(opt.pix_fmt));
-      codec_ctx_->thread_count = 1;  // HW decode is single-thread
-      hw_enabled_ = true;
-      hw_pix_fmt_ = opt.pix_fmt;
-      hw_device_ctx_ = hw_device_ctx;
-      MLOG_INFO("h264", "%s hardware acceleration enabled", opt.name);
-      break;
-    } else {
-      MLOG_INFO("h264", "%s not available (err=%d), trying next...", opt.name, hw_ret);
-      if (hw_device_ctx) av_buffer_unref(&hw_device_ctx);
+  // Only the primary (first) decoder instance uses hardware acceleration.
+  // With multiple simultaneous instances, D3D11VA readbacks compete for GPU
+  // scheduler resources and cause multi-second stalls on the decode threads.
+  if (instance_index_ > 0) {
+    MLOG_INFO("h264", "Instance %d: forcing CPU decode (multi-instance D3D11VA contention prevention)", instance_index_);
+  } else {
+    for (const auto& opt : hw_options) {
+      AVBufferRef* hw_device_ctx = nullptr;
+      int hw_ret = av_hwdevice_ctx_create(&hw_device_ctx, opt.type, nullptr, nullptr, 0);
+      if (hw_ret >= 0 && hw_device_ctx) {
+        codec_ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx);
+        codec_ctx_->get_format = hw_get_format;
+        codec_ctx_->opaque = reinterpret_cast<void*>(static_cast<intptr_t>(opt.pix_fmt));
+        codec_ctx_->thread_count = 1;  // HW decode is single-thread
+        hw_enabled_ = true;
+        hw_pix_fmt_ = opt.pix_fmt;
+        hw_device_ctx_ = hw_device_ctx;
+        MLOG_INFO("h264", "%s hardware acceleration enabled", opt.name);
+        break;
+      } else {
+        MLOG_INFO("h264", "%s not available (err=%d), trying next...", opt.name, hw_ret);
+        if (hw_device_ctx) av_buffer_unref(&hw_device_ctx);
+      }
     }
   }
 
@@ -357,5 +367,8 @@ void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
     frame_callback_(rgba_buffer_.data(), out_width_, out_height_, frame->pts);
   }
 }
+
+// Static member definition
+std::atomic<int> H264Decoder::s_instance_count_{0};
 
 } // namespace gui

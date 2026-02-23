@@ -385,7 +385,13 @@ void MirrorReceiver::stop() {
 bool MirrorReceiver::get_latest_frame(MirrorFrame& out) {
   std::lock_guard<std::mutex> lock(frame_mtx_);
   if (!has_new_frame_) return false;
-  out = current_frame_;
+  // Swap rgba buffers (O(1) pointer swap) instead of 8MB deep copy.
+  // The caller's old buffer is recycled by the decode thread next frame.
+  out.width    = current_frame_.width;
+  out.height   = current_frame_.height;
+  out.frame_id = current_frame_.frame_id;
+  out.pts_us   = current_frame_.pts_us;
+  std::swap(out.rgba, current_frame_.rgba);
   has_new_frame_ = false;
   return true;
 }
@@ -664,7 +670,7 @@ void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
         static thread_local uint64_t last_gap = 0;
         auto now_t = std::chrono::steady_clock::now();
         auto dt_ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(now_t - last_stat_t).count();
-        if (dt_ms >= 2000) {
+        if (dt_ms >= 10000) {
           uint64_t b = bytes_received_.load();
           uint64_t p = packets_received_.load();
           uint64_t d = discontinuities_.load();

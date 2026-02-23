@@ -106,6 +106,11 @@ private:
   bool is_hevc_ = false;
   uint64_t send_packet_errors_ = 0;
   uint64_t receive_frame_errors_ = 0;
+
+  // Global instance counter: only first instance uses D3D11VA.
+  // Prevents multi-instance GPU scheduler contention/stalls.
+  static std::atomic<int> s_instance_count_;
+  int instance_index_ = 0;
 };
 
 } // namespace gui
