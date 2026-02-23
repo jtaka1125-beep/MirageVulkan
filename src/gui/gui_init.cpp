@@ -485,6 +485,73 @@ void initializeRouting() {
 }
 
 // =============================================================================
+// Start Mirroring Handler (extracted from initializeGUI callback)
+// =============================================================================
+static void onStartMirroring() {
+    auto gui = g_gui;
+    if (!g_adb_manager) {
+        if (gui) gui->logError(u8"ADB manager not initialized");
+        return;
+    }
+    if (gui) gui->logInfo(u8"Starting mirroring on all devices...");
+    auto all_devs = g_adb_manager->getUniqueDevices();
+    for (const auto& dev : all_devs) {
+        autoStartCaptureService(dev.preferred_adb_id, dev.display_name);
+    }
+    if (gui) gui->logInfo(u8"Mirroring started on " + std::to_string(all_devs.size()) + u8" device(s)");
+}
+
+// =============================================================================
+// Event Bus Subscription Registration (extracted from initializeGUI)
+// =============================================================================
+static void registerEventBusSubscriptions() {
+    // DeviceConnectedEvent: add to GUI (hardware_id format only, skip raw USB serials)
+    auto sub_connect = mirage::bus().subscribe<mirage::DeviceConnectedEvent>(
+        [](const mirage::DeviceConnectedEvent& e) {
+            auto gui = g_gui;
+            if (!gui) return;
+            const auto& id = e.device_id;
+            bool is_hardware_id = (id.size() > 9 && id[8] == '_');
+            if (!is_hardware_id) {
+                MLOG_DEBUG("gui", "Skipping USB device (not hardware_id): %s", id.c_str());
+                return;
+            }
+            gui->addDevice(e.device_id, e.display_name);
+            gui->logInfo(u8"Device connected: " + e.display_name);
+        });
+    sub_connect.release();
+
+    // FrameReadyEvent: forward frames to GUI
+    auto sub_frame = mirage::bus().subscribe<mirage::FrameReadyEvent>(
+        [](const mirage::FrameReadyEvent& e) {
+            auto gui = g_gui;
+            if (gui) gui->queueFrame(e.device_id, e.rgba_data, e.width, e.height);
+        });
+    sub_frame.release();
+
+    // DeviceDisconnectedEvent: log warning
+    auto sub_disconnect = mirage::bus().subscribe<mirage::DeviceDisconnectedEvent>(
+        [](const mirage::DeviceDisconnectedEvent& e) {
+            auto gui = g_gui;
+            if (gui) gui->logWarning(u8"Device disconnected: " + e.device_id);
+        });
+    sub_disconnect.release();
+
+    // DeviceStatusEvent: update device stats and status
+    auto sub_status = mirage::bus().subscribe<mirage::DeviceStatusEvent>(
+        [](const mirage::DeviceStatusEvent& e) {
+            auto gui = g_gui;
+            if (gui) {
+                gui->updateDeviceStatus(e.device_id, static_cast<mirage::gui::DeviceStatus>(e.status));
+                gui->updateDeviceStats(e.device_id, e.fps, e.latency_ms, e.bandwidth_mbps);
+            }
+        });
+    sub_status.release();
+
+    MLOG_INFO("main", "Event bus subscriptions registered");
+}
+
+// =============================================================================
 // Device Selection Handler (extracted from initializeGUI callback)
 // =============================================================================
 // Updates RouteController main device, sends 60/30 fps commands to all devices
@@ -574,74 +641,12 @@ void initializeGUI(HWND hwnd) {
         if (gui) gui->logDebug(msg);
     });
 
-    g_gui->setStartMirroringCallback([]() {
-        auto gui = g_gui;
-        if (!g_adb_manager) {
-            if (gui) gui->logError(u8"ADB manager not initialized");
-            return;
-        }
-
-        if (gui) gui->logInfo(u8"Starting mirroring on all devices...");
-        // Start MirageCapture ScreenCaptureService on all devices
-        auto all_devs = g_adb_manager->getUniqueDevices();
-        for (const auto& dev : all_devs) {
-            autoStartCaptureService(dev.preferred_adb_id, dev.display_name);
-        }
-        if (gui) gui->logInfo(u8"Mirroring started on " + std::to_string(all_devs.size()) + u8" device(s)");
-    });
+    g_gui->setStartMirroringCallback([]() { onStartMirroring(); });
 
     g_gui->logInfo(u8"MirageSystem v2 GUI started");
 
     // === Event Bus Subscriptions (app-lifetime) ===
-    auto sub_connect = mirage::bus().subscribe<mirage::DeviceConnectedEvent>(
-        [](const mirage::DeviceConnectedEvent& e) {
-            auto gui = g_gui;
-            if (!gui) return;
-
-            // Skip USB serial device IDs - these duplicate WiFi ADB devices
-            // Hardware IDs: "xxxxxxxx_xxxxxxxxx" format (underscore at pos 8)
-            // USB serials: raw numbers/alphanumeric without underscore pattern
-            const auto& id = e.device_id;
-            bool is_hardware_id = (id.size() > 9 && id[8] == '_');
-            if (!is_hardware_id) {
-                MLOG_DEBUG("gui", "Skipping USB device (not hardware_id): %s",
-                          id.c_str());
-                return;
-            }
-
-            gui->addDevice(e.device_id, e.display_name);
-            gui->logInfo(u8"Device connected: " + e.display_name);
-        });
-    sub_connect.release();
-
-    auto sub_frame = mirage::bus().subscribe<mirage::FrameReadyEvent>(
-        [](const mirage::FrameReadyEvent& e) {
-            auto gui = g_gui;
-            if (gui) {
-                gui->queueFrame(e.device_id, e.rgba_data, e.width, e.height);
-            }
-        });
-    sub_frame.release();
-
-    auto sub_disconnect = mirage::bus().subscribe<mirage::DeviceDisconnectedEvent>(
-        [](const mirage::DeviceDisconnectedEvent& e) {
-            auto gui = g_gui;
-            if (gui) {
-                gui->logWarning(u8"Device disconnected: " + e.device_id);
-            }
-        });
-    sub_disconnect.release();
-
-    auto sub_status = mirage::bus().subscribe<mirage::DeviceStatusEvent>(
-        [](const mirage::DeviceStatusEvent& e) {
-            auto gui = g_gui;
-            if (gui) {
-                gui->updateDeviceStatus(e.device_id, static_cast<mirage::gui::DeviceStatus>(e.status));
-                gui->updateDeviceStats(e.device_id, e.fps, e.latency_ms, e.bandwidth_mbps);
-            }
-        });
-    sub_status.release();
-    MLOG_INFO("main", "Event bus subscriptions registered");
+    registerEventBusSubscriptions();
     g_gui->logInfo(u8"Ctrl+L: Toggle learning mode");
 
     if (g_hybrid_cmd) {
