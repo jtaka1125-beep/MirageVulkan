@@ -2,16 +2,13 @@ package com.mirage.accessory.access
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Path
 import android.util.Log
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.mirage.accessory.core.Config
 import com.mirage.accessory.svc.UdpSender
 import com.mirage.accessory.usb.AccessoryIoService
@@ -25,43 +22,37 @@ class MirageAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: MirageAccessibilityService? = null
             private set
+
+        // FIX-6: AOSP + 主要メーカーROMを網羅する部分一致リスト
+        private val SYSTEM_DIALOG_PACKAGES = listOf(
+            "systemui",              // AOSP / Pixel / Sony
+            "android.server",        // AOSP permissions dialog
+            "permissioncontroller",  // Android 10+
+            "packageinstaller",      // AOSP
+            "samsung.android",       // Samsung OneUI
+            "miui",                  // Xiaomi MIUI
+            "emui",                  // Huawei EMUI
+            "oppo",                  // OPPO / Realme
+            "oneplus",               // OnePlus OxygenOS
+        )
     }
 
     private val udpSender = UdpSender()
-
-    private val commandReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != AccessoryIoService.ACTION_COMMAND) return
-            val cmdType = intent.getIntExtra(AccessoryIoService.EXTRA_COMMAND_TYPE, -1)
-            val seq = intent.getIntExtra(AccessoryIoService.EXTRA_SEQ, 0)
-            val x = intent.getIntExtra(AccessoryIoService.EXTRA_X, 0)
-            val y = intent.getIntExtra(AccessoryIoService.EXTRA_Y, 0)
-            val keycode = intent.getIntExtra(AccessoryIoService.EXTRA_KEYCODE, 0)
-            Log.d(TAG, "Received USB command: type=$cmdType seq=$seq x=$x y=$y")
-            when (cmdType) {
-                AccessoryIoService.CMD_TYPE_PING -> Log.i(TAG, "PING received seq=$seq")
-                AccessoryIoService.CMD_TYPE_TAP -> { Log.i(TAG, "TAP x=$x y=$y seq=$seq"); tap(x.toFloat(), y.toFloat(), seq) }
-                AccessoryIoService.CMD_TYPE_BACK -> { Log.i(TAG, "BACK seq=$seq"); performBack(seq) }
-                AccessoryIoService.CMD_TYPE_KEY -> Log.i(TAG, "KEY keycode=$keycode seq=$seq")
-            }
-        }
-    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         udpSender.start()
-        val filter = IntentFilter(AccessoryIoService.ACTION_COMMAND)
-        LocalBroadcastManager.getInstance(this).registerReceiver(commandReceiver, filter)
-        Log.i(TAG, "AccessibilityService connected and receiver registered")
+        Log.i(TAG, "AccessibilityService connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
-        // MediaProjectionダイアログの自動承認を試行
-        if (event.packageName == "com.android.systemui"
-            && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-        ) {
+        // FIX-6: AOSP + Samsung/MIUI/Huawei 等メーカーROM に対応する部分一致チェック
+        val pkg = event.packageName?.toString() ?: return
+        val isSystemOverlay = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            && SYSTEM_DIALOG_PACKAGES.any { pkg.contains(it, ignoreCase = true) }
+        if (isSystemOverlay) {
             handleMediaProjectionDialog()
         }
     }
@@ -73,8 +64,11 @@ class MirageAccessibilityService : AccessibilityService() {
      */
     private fun handleMediaProjectionDialog() {
         val root = rootInActiveWindow ?: return
-        // 日本語・英語両方のボタンテキストを検索
-        val targets = listOf("開始", "Start", "Start now")
+        // FIX-6: 日本語・英語・中国語ボタンテキストを拡充
+        val targets = listOf(
+            "開始", "Start", "Start now",
+            "Allow", "許可", "同意", "はい", "OK",
+        )
         for (label in targets) {
             val nodes = root.findAccessibilityNodeInfosByText(label)
             if (nodes.isNullOrEmpty()) continue
@@ -84,15 +78,17 @@ class MirageAccessibilityService : AccessibilityService() {
                     Log.i(TAG, "MediaProjection自動承認: $label")
                     return
                 }
-                // ボタン自体がクリック不可の場合、親を辿ってクリック可能なノードを探す
+                // 親を最大5段遡ってクリック可能なノードを探す
                 var parent = node.parent
-                while (parent != null) {
+                var depth = 0
+                while (parent != null && depth < 5) {
                     if (parent.isClickable) {
                         parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.i(TAG, "MediaProjection自動承認(親): $label")
+                        Log.i(TAG, "MediaProjection自動承認(親 depth=$depth): $label")
                         return
                     }
                     parent = parent.parent
+                    depth++
                 }
             }
         }
@@ -100,7 +96,6 @@ class MirageAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(commandReceiver)
         udpSender.stop()
         instance = null
         super.onDestroy()

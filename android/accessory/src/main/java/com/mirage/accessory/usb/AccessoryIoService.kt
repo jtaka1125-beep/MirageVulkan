@@ -1,4 +1,4 @@
-﻿package com.mirage.accessory.usb
+package com.mirage.accessory.usb
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -11,6 +11,7 @@ import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.mirage.accessory.util.parcelableExtra
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
@@ -22,8 +23,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Foreground service for USB AOA I/O.
  *
- * Video pipeline: MirageCapture 竊・TCP(localhost:50200) 竊・USB OutputStream
- * Command pipeline: USB InputStream 竊・parse MIRA 竊・AccessibilityService / broadcast
+ * Video pipeline: MirageCapture → TCP(localhost:50200) → USB OutputStream
+ * Command pipeline: USB InputStream → parse MIRA → AccessibilityService / broadcast
+ *
+ * Can be started in two ways:
+ *   1. Normal: via USB_ACCESSORY_ATTACHED intent (UsbManager.openAccessory)
+ *   2. ADB/direct: without EXTRA_ACCESSORY (opens /dev/usb_accessory directly)
  */
 class AccessoryIoService : Service() {
     companion object {
@@ -56,6 +61,8 @@ class AccessoryIoService : Service() {
         const val EXTRA_ROUTE_MODE = "route_mode"
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
+
+        private const val USB_ACCESSORY_DEV = "/dev/usb_accessory"
 
         @Volatile
         var instance: AccessoryIoService? = null
@@ -90,16 +97,19 @@ class AccessoryIoService : Service() {
         }
 
         val accessory = intent?.parcelableExtra<UsbAccessory>(UsbManager.EXTRA_ACCESSORY)
-        if (accessory == null) {
-            Log.e(TAG, "No accessory in intent")
-            starting.set(false)
-            stopSelf()
-            return START_NOT_STICKY
+        // 前回接続のストリーム/FDを解放（accessoryはParcelableメタデータなので影響なし）
+        closeAccessory()
+
+        val opened = if (accessory != null) {
+            Log.i(TAG, "Starting via USB_ACCESSORY_ATTACHED intent")
+            openAccessory(accessory)
+        } else {
+            Log.i(TAG, "No accessory in intent, trying direct /dev/usb_accessory open")
+            openAccessoryDirect()
         }
 
-        closeAccessory()
-        if (!openAccessory(accessory)) {
-            Log.e(TAG, "Failed to open accessory")
+        if (!opened) {
+            Log.e(TAG, "Failed to open accessory (both UsbManager and direct)")
             starting.set(false)
             stopSelf()
             return START_NOT_STICKY
@@ -150,7 +160,7 @@ class AccessoryIoService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     // =========================================================================
-    // Video forwarding: TCP(localhost:50200) 竊・USB OutputStream
+    // Video forwarding: TCP(localhost:50200) → USB OutputStream
     // =========================================================================
 
     private fun startVideoForward() {
@@ -158,40 +168,66 @@ class AccessoryIoService : Service() {
         videoForwardThread = Thread({
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
             Log.i(TAG, "Video forward thread started")
+
+            // ServerSocket は一度だけ作成し、再接続ループで使い回す
             try {
-                videoServerSocket = ServerSocket().also { it.reuseAddress = true; it.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), VIDEO_TCP_PORT), 1) }
-                Log.i(TAG, "TCP ServerSocket listening on localhost:$VIDEO_TCP_PORT")
-
-                // Accept one client (MirageCapture)
-                videoClientSocket = videoServerSocket?.accept()
-                Log.i(TAG, "Video client connected")
-                videoClientSocket?.tcpNoDelay = true
-                videoClientSocket?.receiveBufferSize = 256 * 1024
-
-                val clientIn = videoClientSocket?.inputStream ?: return@Thread
-                val buf = ByteArray(131072)
-                var totalBytes = 0L
-                var lastLogTime = System.currentTimeMillis()
-
-                while (running.get()) {
-                    val n = clientIn.read(buf)
-                    if (n < 0) break
-                    if (n == 0) continue
-
-                    outputStream?.write(buf, 0, n)
-                    totalBytes += n
-
-                    val now = System.currentTimeMillis()
-                    if (now - lastLogTime >= 5000) {
-                        Log.i(TAG, "Video fwd: ${totalBytes / 1024}KB total, last ${n}B")
-                        lastLogTime = now
-                    }
+                videoServerSocket = ServerSocket().also {
+                    it.reuseAddress = true
+                    it.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), VIDEO_TCP_PORT), 1)
                 }
+                Log.i(TAG, "TCP ServerSocket listening on localhost:$VIDEO_TCP_PORT")
             } catch (e: IOException) {
-                if (running.get()) Log.e(TAG, "Video forward error", e)
-            } finally {
-                Log.i(TAG, "Video forward thread ended")
+                Log.e(TAG, "Failed to bind VideoForward ServerSocket", e)
+                return@Thread
             }
+
+            // 外側ループ: MirageCapture が再起動するたびに accept() を繰り返す
+            while (running.get()) {
+                try {
+                    Log.i(TAG, "VideoForward: waiting for MirageCapture on :$VIDEO_TCP_PORT...")
+                    val client = videoServerSocket?.accept() ?: break
+                    videoClientSocket = client
+                    client.tcpNoDelay = true
+                    client.receiveBufferSize = 256 * 1024
+                    Log.i(TAG, "VideoForward: MirageCapture connected")
+
+                    // 内側ループ: 1接続のデータ転送
+                    try {
+                        val clientIn = client.inputStream
+                        val buf = ByteArray(131072)
+                        var totalBytes = 0L
+                        var lastLogTime = System.currentTimeMillis()
+
+                        while (running.get()) {
+                            val n = clientIn.read(buf)
+                            if (n < 0) {
+                                Log.i(TAG, "VideoForward: MirageCapture disconnected (EOF)")
+                                break
+                            }
+                            if (n == 0) continue
+                            outputStream?.write(buf, 0, n)
+                            totalBytes += n
+                            val now = System.currentTimeMillis()
+                            if (now - lastLogTime >= 5000) {
+                                Log.i(TAG, "VideoForward: ${totalBytes / 1024}KB total")
+                                lastLogTime = now
+                            }
+                        }
+                    } finally {
+                        // 切断クリーンアップ (ServerSocket は維持して次の接続を待つ)
+                        try { client.close() } catch (_: Exception) {}
+                        videoClientSocket = null
+                        if (running.get()) {
+                            Log.i(TAG, "VideoForward: ready for next MirageCapture connection")
+                        }
+                    }
+                } catch (e: IOException) {
+                    if (!running.get()) break
+                    Log.w(TAG, "VideoForward: accept error (${e.message}), retry in 1s")
+                    try { Thread.sleep(1000) } catch (_: InterruptedException) { break }
+                }
+            }
+            Log.i(TAG, "Video forward thread ended")
         }, "VideoForward").also { it.start() }
     }
 
@@ -225,12 +261,54 @@ class AccessoryIoService : Service() {
 
     private fun openAccessory(accessory: UsbAccessory): Boolean {
         val usbManager = getSystemService(UsbManager::class.java)
-        fileDescriptor = usbManager.openAccessory(accessory) ?: return false
-        val fd = fileDescriptor!!.fileDescriptor
-        inputStream = FileInputStream(fd)
-        outputStream = FileOutputStream(fd)
-        Log.i(TAG, "Accessory opened: ${accessory.manufacturer}/${accessory.model}")
-        return true
+        fileDescriptor = usbManager.openAccessory(accessory) ?: run {
+            Log.e(TAG, "UsbManager.openAccessory returned null, falling back to direct open")
+            return openAccessoryDirect()
+        }
+        return try {
+            val fd = fileDescriptor!!.fileDescriptor
+            inputStream = FileInputStream(fd)
+            outputStream = FileOutputStream(fd)
+            Log.i(TAG, "Accessory opened via UsbManager: ${accessory.manufacturer}/${accessory.model}")
+            true
+        } catch (e: Exception) {
+            // ストリーム生成失敗時はFDを閉じてリーク防止、直接オープンにフォールバック
+            Log.e(TAG, "Failed to create streams from UsbManager FD, falling back to direct open", e)
+            try { fileDescriptor?.close() } catch (_: Exception) {}
+            fileDescriptor = null
+            openAccessoryDirect()
+        }
+    }
+
+    /**
+     * Fallback: open /dev/usb_accessory directly (for ADB-launched service or when
+     * UsbManager.openAccessory() returns null despite device being in accessory mode).
+     * Requires the 'usb' group permission on /dev/usb_accessory (gid 1014, typical on AOSP).
+     */
+    private fun openAccessoryDirect(): Boolean {
+        return try {
+            val dev = File(USB_ACCESSORY_DEV)
+            if (!dev.exists()) {
+                Log.e(TAG, "Direct open failed: $USB_ACCESSORY_DEV does not exist")
+                return false
+            }
+            val fis = FileInputStream(dev)
+            val fos = try {
+                FileOutputStream(dev)
+            } catch (e: Exception) {
+                // SecurityException (権限不足) や IOException をキャッチしてFISをリーク防止
+                fis.close()
+                throw e
+            }
+            inputStream = fis
+            outputStream = fos
+            Log.i(TAG, "Accessory opened directly via $USB_ACCESSORY_DEV")
+            true
+        } catch (e: Exception) {
+            // IOException (デバイスI/Oエラー) + SecurityException (SELinux/権限拒否) 両方を処理
+            Log.e(TAG, "Direct open of $USB_ACCESSORY_DEV failed: ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
     }
 
     private fun closeAccessory() {
@@ -297,7 +375,7 @@ class AccessoryIoService : Service() {
     }
 
     private fun handleVideoFps(fps: Int) {
-        Log.i(TAG, "FPS 竊・$fps")
+        Log.i(TAG, "FPS → $fps")
         sendBroadcast(Intent(ACTION_VIDEO_FPS).setPackage("com.mirage.capture").putExtra(EXTRA_TARGET_FPS, fps))
     }
     private fun handleVideoIdr() {
@@ -305,7 +383,7 @@ class AccessoryIoService : Service() {
         sendBroadcast(Intent(ACTION_VIDEO_IDR).setPackage("com.mirage.capture"))
     }
     private fun handleVideoRoute(mode: Int, host: String, port: Int) {
-        Log.i(TAG, "Route: mode=$mode host=$host port=$port")
+        Log.i(TAG, "Route switch: mode=$mode host=$host port=$port")
         sendBroadcast(Intent(ACTION_VIDEO_ROUTE).setPackage("com.mirage.capture")
             .putExtra(EXTRA_ROUTE_MODE, mode).putExtra(EXTRA_HOST, host).putExtra(EXTRA_PORT, port))
     }
@@ -352,4 +430,3 @@ class AccessoryIoService : Service() {
         }
     }
 }
-

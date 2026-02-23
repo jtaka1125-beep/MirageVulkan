@@ -213,9 +213,9 @@ class H264Encoder(
                 val packets = sendQueue.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
                 val sender = senderRef.get()
                 for (pkt in packets) { sender.send(pkt) }
-                if (sender is UsbVideoSender) { sender.flushBatch() }
+                sender.flush() // FIX-3: interface経由、instanceof不要
                 for (sec in secondarySenders) {
-                    try { for (pkt in packets) { sec.send(pkt) } }
+                    try { for (pkt in packets) { sec.send(pkt) }; sec.flush() }
                     catch (e: Exception) { Log.w(TAG, "Secondary sender error: ${e.message}") }
                 }
             } catch (e: InterruptedException) { break }

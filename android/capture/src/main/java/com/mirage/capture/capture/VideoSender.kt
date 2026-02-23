@@ -23,4 +23,10 @@ interface VideoSender {
      * Close the sender and release resources.
      */
     fun close()
+
+    /**
+     * Flush buffered data at frame boundary.
+     * Default is no-op for non-buffered implementations.
+     */
+    fun flush() {}
 }

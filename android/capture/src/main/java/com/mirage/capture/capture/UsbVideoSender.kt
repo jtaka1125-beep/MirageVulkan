@@ -71,6 +71,8 @@ class UsbVideoSender(
      * Flush all buffered VID0 packets in one USB write.
      * Called by H264Encoder after all packets for a frame are sent.
      */
+    override fun flush() = flushBatch()
+
     fun flushBatch() {
         if (batchOffset == 0) return
 
