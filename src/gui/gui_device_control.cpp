@@ -295,6 +295,11 @@ std::vector<DeviceControlInfo> getAllDeviceControlInfo() {
         info.has_adb = !dev.usb_connections.empty() || !dev.wifi_connections.empty();
         info.adb_type = getADBConnectionType(dev.hardware_id);
         info.ip_address = dev.ip_address;
+        info.screen_width = dev.screen_width;
+        info.screen_height = dev.screen_height;
+        info.android_version = dev.android_version;
+        info.sdk_level = dev.sdk_level;
+        info.battery_level = dev.battery_level;
         result.push_back(info);
     }
 
@@ -318,6 +323,11 @@ DeviceControlInfo getDeviceControlInfo(const std::string& device_id) {
         info.has_adb = !dev_info.usb_connections.empty() || !dev_info.wifi_connections.empty();
         info.adb_type = getADBConnectionType(device_id);
         info.ip_address = dev_info.ip_address;
+        info.screen_width = dev_info.screen_width;
+        info.screen_height = dev_info.screen_height;
+        info.android_version = dev_info.android_version;
+        info.sdk_level = dev_info.sdk_level;
+        info.battery_level = dev_info.battery_level;
     }
 
     return info;
@@ -435,6 +445,24 @@ void renderDeviceControlPanel() {
 
             // Device name
             ImGui::Text("%s", dev.display_name.c_str());
+            // Detail row: battery, resolution, Android version
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+            if (dev.battery_level >= 0) {
+                ImVec4 bat_col = dev.battery_level > 20
+                    ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f)
+                    : ImVec4(0.95f, 0.3f, 0.3f, 1.0f);
+                ImGui::SameLine();
+                ImGui::TextColored(bat_col, "[%d%%]", dev.battery_level);
+            }
+            if (dev.screen_width > 0) {
+                ImGui::SameLine();
+                ImGui::Text("%dx%d", dev.screen_width, dev.screen_height);
+            }
+            if (!dev.android_version.empty()) {
+                ImGui::SameLine();
+                ImGui::Text("A%s", dev.android_version.c_str());
+            }
+            ImGui::PopStyleColor();
             ImGui::SameLine(200);
 
             // AOA status

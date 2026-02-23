@@ -53,6 +53,12 @@ struct DeviceControlInfo {
     bool has_adb;
     std::string adb_type;  // "usb", "wifi", "none"
     std::string ip_address;
+    // Device details (from AdbDeviceManager::UniqueDevice)
+    int screen_width = 0;
+    int screen_height = 0;
+    std::string android_version;
+    int sdk_level = 0;
+    int battery_level = -1;  // -1 = unknown
 };
 
 // Get control info for all devices
