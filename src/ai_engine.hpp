@@ -130,14 +130,20 @@ public:
     void resetDeviceVision(const std::string& device_id);
     void resetAllVision();
 
-    // VisionDecisionConfig読み出し
+    // VisionDecisionConfig 読み書き
     struct VDEConfig {
-        int confirm_count = 3;
-        int cooldown_ms = 2000;
-        int debounce_window_ms = 500;
-        int error_recovery_ms = 3000;
+        int   confirm_count      = 3;
+        int   cooldown_ms        = 2000;
+        int   debounce_window_ms = 500;
+        int   error_recovery_ms  = 3000;
+        // 改善D: EWMA
+        bool  enable_ewma        = false;
+        float ewma_alpha         = 0.40f;
+        float ewma_confirm_thr   = 0.60f;
     };
     VDEConfig getVDEConfig() const;
+    // VisionDecisionConfig の変更（GUIスライダー等から呼ぶ）
+    void setVDEConfig(const VDEConfig& cfg);
 
     // 全デバイスの状態一覧 (device_id → VisionState as int)
     std::vector<std::pair<std::string, int>> getAllDeviceVisionStates() const;

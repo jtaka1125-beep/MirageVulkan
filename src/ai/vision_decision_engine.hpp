@@ -48,6 +48,10 @@ struct VisionDecisionConfig {
     int cooldown_ms = 2000;          // COOLDOWN→IDLE までの冷却時間(ms)
     int debounce_window_ms = 500;    // デバウンスウィンドウ(ms)
     int error_recovery_ms = 3000;    // ERROR_RECOVERY最大滞在時間(ms)
+    // ── 改善D: Temporal Consistency Filter ──
+    bool  enable_ewma      = false;  // EWMA平滑化 ON/OFF（デフォルトOFF=後方互換）
+    float ewma_alpha       = 0.40f;  // 平滑化係数 (0=強平滑, 1=生スコアそのまま)
+    float ewma_confirm_thr = 0.60f;  // EWMA が この値以上でないと CONFIRMED 不可
 };
 
 // =============================================================================
@@ -107,6 +111,9 @@ struct DeviceVisionState {
     std::chrono::steady_clock::time_point cooldown_start;  // COOLDOWN開始時刻
     std::chrono::steady_clock::time_point error_start;     // ERROR_RECOVERY開始時刻
     std::string cooldown_template_id;      // COOLDOWN中のテンプレートID
+    // ── 改善D: EWMA ──
+    float ewma_score = 0.0f;              // テンプレート存在感の指数移動平均
+    std::string ewma_template_id;          // EWMA追跡中のテンプレートID
 };
 
 // =============================================================================

@@ -208,6 +208,16 @@ public:
             auto addResult = addTemplateFromFile(full_path, entry.name, entry.template_id);
             if (addResult.is_ok()) {
                 count++;
+                // 改善E: マニフェストのROIをマッチャーに反映
+                if (entry.roi_w > 0.0f && vk_matcher_) {
+                    vk_matcher_->setTemplateRoiNorm(entry.name,
+                        entry.roi_x, entry.roi_y,
+                        entry.roi_w, entry.roi_h);
+                    MLOG_DEBUG("ai", "ROI設定: %s (%.2f,%.2f)+(%.2f x %.2f)",
+                               entry.name.c_str(),
+                               entry.roi_x, entry.roi_y,
+                               entry.roi_w, entry.roi_h);
+                }
             } else {
                 MLOG_WARN("ai", "テンプレート読み込みスキップ: %s (%s)",
                           entry.name.c_str(), addResult.error().message.c_str());
@@ -429,12 +439,29 @@ public:
         AIEngine::VDEConfig result;
         if (vision_engine_) {
             auto& c = vision_engine_->config();
-            result.confirm_count = c.confirm_count;
-            result.cooldown_ms = c.cooldown_ms;
+            result.confirm_count      = c.confirm_count;
+            result.cooldown_ms        = c.cooldown_ms;
             result.debounce_window_ms = c.debounce_window_ms;
-            result.error_recovery_ms = c.error_recovery_ms;
+            result.error_recovery_ms  = c.error_recovery_ms;
+            result.enable_ewma        = c.enable_ewma;
+            result.ewma_alpha         = c.ewma_alpha;
+            result.ewma_confirm_thr   = c.ewma_confirm_thr;
         }
         return result;
+    }
+
+    void setVDEConfig(const AIEngine::VDEConfig& cfg) {
+        if (vision_engine_) {
+            mirage::ai::VisionDecisionConfig vc;
+            vc.confirm_count      = cfg.confirm_count;
+            vc.cooldown_ms        = cfg.cooldown_ms;
+            vc.debounce_window_ms = cfg.debounce_window_ms;
+            vc.error_recovery_ms  = cfg.error_recovery_ms;
+            vc.enable_ewma        = cfg.enable_ewma;
+            vc.ewma_alpha         = cfg.ewma_alpha;
+            vc.ewma_confirm_thr   = cfg.ewma_confirm_thr;
+            vision_engine_->setConfig(vc);
+        }
     }
 
     std::vector<std::pair<std::string, int>> getAllDeviceVisionStates() const {
@@ -898,6 +925,10 @@ std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() co
     return impl_->getAllDeviceVisionStates();
 }
 
+void AIEngine::setVDEConfig(const VDEConfig& cfg) {
+    if (impl_) impl_->setVDEConfig(cfg);
+}
+
 } // namespace mirage::ai
 
 #else // !USE_AI
@@ -943,6 +974,7 @@ int AIEngine::getDeviceVisionState(const std::string&) const { return 0; }
 void AIEngine::resetDeviceVision(const std::string&) {}
 void AIEngine::resetAllVision() {}
 AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
+void AIEngine::setVDEConfig(const VDEConfig&) {}
 std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const { return {}; }
 
 } // namespace mirage::ai

@@ -298,8 +298,22 @@ void initializeRouting() {
     g_bandwidth_monitor = std::make_unique<::gui::BandwidthMonitor>();
     g_route_controller = std::make_unique<::gui::RouteController>();
 
-    // TCP-onlyモード設定（USB映像なし、MirageCapture VID0使用）
-    g_route_controller->setTcpOnlyMode(true);
+    // TCP-only mode determined after USB device registration
+
+    // Set TCP-only mode based on USB device availability.
+    // USB AOA (dual-channel) is preferred when devices are available.
+    {
+        bool hasUsbDevices = g_hybrid_cmd && (g_hybrid_cmd->device_count() > 0);
+        g_route_controller->setTcpOnlyMode(!hasUsbDevices);
+        if (hasUsbDevices) {
+            MLOG_INFO("gui", "RouteController: USB AOA mode (%d device(s)) - dual-channel active",
+                      g_hybrid_cmd->device_count());
+        } else {
+            MLOG_INFO("gui", "RouteController: TCP-only mode (no USB devices available)");
+        }
+    }
+
+    // TCP-only mode is set dynamically below based on USB device availability
 
     // FPS command callback
     g_route_controller->setFpsCommandCallback([](const std::string& device_id, int fps) {

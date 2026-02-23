@@ -211,6 +211,13 @@ bool loadManifestJson(const std::string& path_utf8, TemplateManifest& out, std::
         findU64(o, "mtime_utc", e.mtime_utc);
         findU32(o, "crc32", e.crc32);
         findString(o, "tags", e.tags);
+        if (o.contains("roi")) {
+            auto& roi = o["roi"];
+            e.roi_x = roi.value("x", 0.0f);
+            e.roi_y = roi.value("y", 0.0f);
+            e.roi_w = roi.value("w", 0.0f);
+            e.roi_h = roi.value("h", 0.0f);
+        }
         out.entries.push_back(std::move(e));
     }
     if (out.root_dir.empty()) out.root_dir = "templates";
@@ -236,7 +243,12 @@ bool saveManifestJson(const std::string& path_utf8, const TemplateManifest& m, s
         ss << "      \"h\": " << e.h << ",\n";
         ss << "      \"mtime_utc\": " << e.mtime_utc << ",\n";
         ss << "      \"crc32\": " << e.crc32 << ",\n";
-        ss << "      \"tags\": \"" << jsonEscape(e.tags) << "\"\n";
+        ss << "      \"tags\": \"" << jsonEscape(e.tags) << "\"";  
+        if (e.roi_w > 0.0f || e.roi_h > 0.0f) {
+            ss << ",\n      \"roi\": { \"x\": " << e.roi_x << ", \"y\": " << e.roi_y
+               << ", \"w\": " << e.roi_w << ", \"h\": " << e.roi_h << " }";
+        }
+        ss << "\n";
         ss << "    }" << (i + 1 < m.entries.size() ? "," : "") << "\n";
     }
     ss << "  ]\n";

@@ -125,7 +125,11 @@ VisionDecision VisionDecisionEngine::update(
     const VisionMatch* best = findBestMatch(matches);
 
     if (!best) {
-        // マッチなし
+        // マッチなし — 改善D: EWMAを減衰
+        if (config_.enable_ewma && !ds.ewma_template_id.empty()) {
+            ds.ewma_score = (1.0f - config_.ewma_alpha) * ds.ewma_score;
+        }
+
         if (ds.state == VisionState::DETECTED) {
             VisionState old_state = ds.state;
             transitionTo(ds, VisionState::IDLE);
@@ -150,6 +154,17 @@ VisionDecision VisionDecisionEngine::update(
     if (isDebounced(device_id, best->template_id, now)) {
         decision.state = ds.state;
         return decision;
+    }
+
+    // === 改善D: EWMA 更新 ===
+    // テンプレートが切り替わったらEWMAをリセット
+    if (config_.enable_ewma) {
+        if (ds.ewma_template_id != best->template_id) {
+            ds.ewma_score = 0.0f;
+            ds.ewma_template_id = best->template_id;
+        }
+        // 存在(1.0)方向にEWMAを更新
+        ds.ewma_score = config_.ewma_alpha * 1.0f + (1.0f - config_.ewma_alpha) * ds.ewma_score;
     }
 
     // === 状態遷移ロジック ===
@@ -180,7 +195,11 @@ VisionDecision VisionDecisionEngine::update(
                 // 同一テンプレート連続検出
                 ds.consecutive_count++;
 
-                if (ds.consecutive_count >= config_.confirm_count) {
+                // 改善D: EWMAゲート（enable_ewma=trueのとき ewma_confirm_thr 以上必要）
+                bool ewma_ok = !config_.enable_ewma ||
+                               (ds.ewma_score >= config_.ewma_confirm_thr);
+
+                if (ds.consecutive_count >= config_.confirm_count && ewma_ok) {
                     // DETECTED → CONFIRMED
                     VisionState old_state = ds.state;
                     transitionTo(ds, VisionState::CONFIRMED);

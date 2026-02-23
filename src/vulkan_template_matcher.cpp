@@ -17,6 +17,8 @@ struct NccPushConstants {
     float   threshold;
     int32_t search_width;
     int32_t search_height;
+    int32_t search_x;   // 改善E: ROI オフセット
+    int32_t search_y;
 };
 
 // Push constants for SAT-based NCC shader
@@ -29,6 +31,8 @@ struct SatNccPushConstants {
     float   threshold;
     int32_t search_width;
     int32_t search_height;
+    int32_t search_x;   // 改善E: ROI オフセット
+    int32_t search_y;
     float   sum_t;
     float   sum_tt;
     float   inv_n;
@@ -705,9 +709,11 @@ bool VulkanTemplateMatcher::dispatchNcc(VkDescriptorSet desc_set,
                                          VulkanImage* src, VulkanImage* tpl,
                                          int src_w, int src_h,
                                          int tpl_w, int tpl_h,
-                                         int template_id, float threshold) {
-    int search_w = src_w - tpl_w + 1;
-    int search_h = src_h - tpl_h + 1;
+                                         int template_id, float threshold,
+                                         int search_x, int search_y,
+                                         int search_w_override, int search_h_override) {
+    int search_w = (search_w_override > 0) ? search_w_override : (src_w - tpl_w + 1);
+    int search_h = (search_h_override > 0) ? search_h_override : (src_h - tpl_h + 1);
     if (search_w <= 0 || search_h <= 0) return true;
 
     updateNccDescSetImages(desc_set, src, tpl);
@@ -717,6 +723,7 @@ bool VulkanTemplateMatcher::dispatchNcc(VkDescriptorSet desc_set,
     pc.tpl_width = tpl_w;  pc.tpl_height = tpl_h;
     pc.template_id = template_id;  pc.threshold = threshold;
     pc.search_width = search_w;  pc.search_height = search_h;
+    pc.search_x = search_x;  pc.search_y = search_y;  // 改善E
 
     ncc_pipeline_->bind(cmd_buf_);
     ncc_pipeline_->bindDescriptorSet(cmd_buf_, desc_set);
@@ -734,12 +741,14 @@ bool VulkanTemplateMatcher::dispatchNcc(VkDescriptorSet desc_set,
 }
 
 bool VulkanTemplateMatcher::dispatchSatNcc(GpuTemplate& tpl, VulkanImage* src,
-                                            int src_w, int src_h, int template_id) {
+                                            int src_w, int src_h, int template_id,
+                                            int search_x, int search_y,
+                                            int search_w_override, int search_h_override) {
     if (!sat_ncc_pipeline_ || !sat_built_ || !sat_s_ || !sat_ss_) return false;
     if (tpl.sat_desc_set == VK_NULL_HANDLE) return false;
 
-    int search_w = src_w - tpl.width + 1;
-    int search_h = src_h - tpl.height + 1;
+    int search_w = (search_w_override > 0) ? search_w_override : (src_w - tpl.width + 1);
+    int search_h = (search_h_override > 0) ? search_h_override : (src_h - tpl.height + 1);
     if (search_w <= 0 || search_h <= 0) return true;
 
     VkDescriptorImageInfo srcInfo{VK_NULL_HANDLE, src->imageView(), VK_IMAGE_LAYOUT_GENERAL};
@@ -767,13 +776,14 @@ bool VulkanTemplateMatcher::dispatchSatNcc(GpuTemplate& tpl, VulkanImage* src,
     pc.tpl_width = tpl.width;  pc.tpl_height = tpl.height;
     pc.template_id = template_id;  pc.threshold = config_.default_threshold;
     pc.search_width = search_w;  pc.search_height = search_h;
+    pc.search_x = search_x;  pc.search_y = search_y;  // 改善E
     pc.sum_t = tpl.sum_t;  pc.sum_tt = tpl.sum_tt;
     pc.inv_n = 1.0f / n;  pc.denom_t = tpl.denom_t;
 
     sat_ncc_pipeline_->bind(cmd_buf_);
     sat_ncc_pipeline_->bindDescriptorSet(cmd_buf_, tpl.sat_desc_set);
     sat_ncc_pipeline_->pushConstants(cmd_buf_, &pc, sizeof(pc));
-    sat_ncc_pipeline_->dispatch(cmd_buf_, (search_w + 15) / 16, (search_h + 15) / 16, 1);
+    sat_ncc_pipeline_->dispatch(cmd_buf_, (search_w + 15) / 16, (search_h + 15) / 16, 1);  // 改善E: ROIサイズでディスパッチ
 
     VkMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -936,7 +946,20 @@ direct_match:
             if (!tpl->image) continue;
 
             if (sat_built_ && tpl->sat_desc_set != VK_NULL_HANDLE) {
-                dispatchSatNcc(*tpl, gray_image, width, height, id);
+                { // 改善E: ROI（正規化→ピクセル変換 or ピクセル直接）
+                    int sx, sy, sw, sh;
+                    if (tpl->roi_norm_w > 0.0f) {
+                        sx = static_cast<int>(tpl->roi_norm_x * width);
+                        sy = static_cast<int>(tpl->roi_norm_y * height);
+                        sw = static_cast<int>(tpl->roi_norm_w * width);
+                        sh = static_cast<int>(tpl->roi_norm_h * height);
+                    } else {
+                        sx = tpl->roi_x; sy = tpl->roi_y;
+                        sw = (tpl->roi_w > 0) ? tpl->roi_w : -1;
+                        sh = (tpl->roi_h > 0) ? tpl->roi_h : -1;
+                    }
+                    dispatchSatNcc(*tpl, gray_image, width, height, id, sx, sy, sw, sh);
+                }
             } else {
                 dispatchNcc(tpl->ncc_desc_set, gray_image, tpl->image.get(),
                            width, height, tpl->width, tpl->height, id,
@@ -1012,5 +1035,37 @@ void VulkanTemplateMatcher::clearAll() {
     temp_src_h_ = 0;
     next_id_ = 0;
 }
+bool VulkanTemplateMatcher::setTemplateRoiNorm(const std::string& name,
+                                                float nx, float ny,
+                                                float nw, float nh) {
+    for (auto& [id, tpl] : templates_) {
+        if (tpl->name == name) {
+            tpl->roi_norm_x = nx;
+            tpl->roi_norm_y = ny;
+            tpl->roi_norm_w = nw;
+            tpl->roi_norm_h = nh;
+            tpl->roi_x = 0; tpl->roi_y = 0;
+            tpl->roi_w = -1; tpl->roi_h = -1;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool VulkanTemplateMatcher::setTemplateRoi(const std::string& name,
+                                            int px_x, int px_y,
+                                            int px_w, int px_h) {
+    for (auto& [id, tpl] : templates_) {
+        if (tpl->name == name) {
+            tpl->roi_x = px_x; tpl->roi_y = px_y;
+            tpl->roi_w = px_w; tpl->roi_h = px_h;
+            tpl->roi_norm_w = 0.0f;
+            return true;
+        }
+    }
+    return false;
+}
+
+
 
 } // namespace mirage::vk

@@ -19,6 +19,8 @@ struct TemplateHandle {
     std::string source_path_utf8;
     std::string debug;
     int matcher_id = -1;                // VulkanTemplateMatcher 内のID
+    // 改善E: 検索ROI (正規化座標、roi_w=0 で全画面)
+    float roi_x = 0.0f, roi_y = 0.0f, roi_w = 0.0f, roi_h = 0.0f;
 };
 
 struct TemplateStoreConfig {

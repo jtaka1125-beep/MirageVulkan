@@ -14,6 +14,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <cstdio>
 
 namespace mirage::gui::ai_panel {
@@ -54,6 +55,28 @@ static ImVec4 visionStateColor(int state) {
 // パネル状態
 static float s_overlay_threshold = 0.80f;
 static bool s_overlay_enabled = true;
+
+// =============================================================================
+// スコア履歴リングバッファ (改善C)
+// =============================================================================
+static constexpr int SCORE_HISTORY_LEN = 90;  // 約3秒@30fps
+
+struct ScoreHistory {
+    float buf[SCORE_HISTORY_LEN] = {};
+    int   head  = 0;
+    int   count = 0;
+    void push(float v) {
+        buf[head] = v;
+        head = (head + 1) % SCORE_HISTORY_LEN;
+        if (count < SCORE_HISTORY_LEN) ++count;
+    }
+    float max_val() const {
+        float m = 0.0f;
+        for (int i = 0; i < count; ++i) m = m > buf[i] ? m : buf[i];
+        return m;
+    }
+};
+static std::unordered_map<std::string, ScoreHistory> s_score_histories;
 
 // =============================================================================
 // セクション1: AIエンジン制御
@@ -136,15 +159,97 @@ static void renderVisionStates() {
         g_ai_engine->resetAllVision();
     }
 
-    // VDE設定値表示
-    auto vde_cfg = g_ai_engine->getVDEConfig();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-        "confirm=%d  cooldown=%dms  debounce=%dms",
-        vde_cfg.confirm_count, vde_cfg.cooldown_ms, vde_cfg.debounce_window_ms);
+    // ----------------------------------------------------------------
+    // VDE設定スライダー (改善B)
+    // ----------------------------------------------------------------
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("VDE Config##vde_cfg")) {
+        auto vde_cfg = g_ai_engine->getVDEConfig();
+        bool changed = false;
+
+        ImGui::PushItemWidth(180);
+
+        changed |= ImGui::SliderInt("Confirm Count##vde", &vde_cfg.confirm_count, 1, 10);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("DETECTED -> CONFIRMED に必要な連続検出回数\n(少ない=速い反応, 多い=誤検出防止)");
+
+        changed |= ImGui::SliderInt("Cooldown (ms)##vde", &vde_cfg.cooldown_ms, 500, 10000);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("アクション実行後の冷却時間 (同一テンプレート再実行防止)");
+
+        changed |= ImGui::SliderInt("Debounce (ms)##vde", &vde_cfg.debounce_window_ms, 100, 2000);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("デバウンスウィンドウ (同一アクションの連打抑制)");
+
+        changed |= ImGui::SliderInt("Error Recovery (ms)##vde", &vde_cfg.error_recovery_ms, 500, 10000);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("ERROR_RECOVERY 状態の最大滞在時間");
+
+        ImGui::PopItemWidth();
+
+        // ── 改善D: EWMA ──
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Temporal Filter (EWMA)");
+        changed |= ImGui::Checkbox("Enable EWMA##vde", &vde_cfg.enable_ewma);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("フレーム間スコアをEWMA平滑化して瞬間ノイズを除去");
+
+        ImGui::BeginDisabled(!vde_cfg.enable_ewma);
+        ImGui::SetNextItemWidth(180);
+        changed |= ImGui::SliderFloat("EWMA Alpha##vde", &vde_cfg.ewma_alpha, 0.05f, 1.0f, "%.2f");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("平滑化係数: 0.05=超スムーズ, 1.0=生スコアそのまま");
+
+        ImGui::SetNextItemWidth(180);
+        changed |= ImGui::SliderFloat("EWMA Confirm Thr##vde", &vde_cfg.ewma_confirm_thr,
+                                      0.3f, 0.95f, "%.2f");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("CONFIRMED遷移に必要なEWMAスコアの最低値");
+        ImGui::EndDisabled();
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Temporal Filter (改善D)");
+
+        changed |= ImGui::Checkbox("Enable EWMA##vde", &vde_cfg.enable_ewma);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("指数移動平均でスコアを平滑化。\nノイズフレームや画面遷移中の誤検出を抑制。");
+
+        if (vde_cfg.enable_ewma) {
+            ImGui::SetNextItemWidth(180);
+            changed |= ImGui::SliderFloat("EWMA Alpha##vde", &vde_cfg.ewma_alpha, 0.1f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("平滑化係数 (0=強平滑/遅反応, 1=生スコア/即反応)\n推奨: 0.3~0.5");
+
+            ImGui::SetNextItemWidth(180);
+            changed |= ImGui::SliderFloat("EWMA Confirm Thr##vde", &vde_cfg.ewma_confirm_thr, 0.1f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("EWMAがこの値以上でないとCONFIRMED不可\n(閾値との二重ゲート)");
+        }
+
+        if (changed) {
+            g_ai_engine->setVDEConfig(vde_cfg);
+        }
+
+        // 現在値を小さく表示
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+            "confirm=%d  cool=%dms  db=%dms  err=%dms",
+            vde_cfg.confirm_count, vde_cfg.cooldown_ms,
+            vde_cfg.debounce_window_ms, vde_cfg.error_recovery_ms);
+        if (vde_cfg.enable_ewma) {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                "ewma: alpha=%.2f  confirm_thr=%.2f",
+                vde_cfg.ewma_alpha, vde_cfg.ewma_confirm_thr);
+        }
+        if (vde_cfg.enable_ewma) {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                "ewma: alpha=%.2f  confirm_thr=%.2f",
+                vde_cfg.ewma_alpha, vde_cfg.ewma_confirm_thr);
+        }
+    }
 }
 
 // =============================================================================
-// セクション3: テンプレートマッチ一覧
+// セクション3: テンプレートマッチ一覧 (改善C: スコア履歴グラフ追加)
 // =============================================================================
 
 static void renderMatchResults() {
@@ -154,12 +259,17 @@ static void renderMatchResults() {
 
     if (matches.empty()) {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "マッチなし");
+        // スコア履歴はゼロ更新（非表示にしない、ゆっくりフェードアウト的挙動）
         return;
     }
 
     ImGui::Text("%d matches:", (int)matches.size());
 
     for (const auto& m : matches) {
+        // スコア履歴更新 (改善C)
+        auto& hist = s_score_histories[m.template_id];
+        hist.push(m.score);
+
         // スコアに応じた色
         bool above_threshold = (m.score >= s_overlay_threshold);
         ImVec4 color = above_threshold
@@ -183,6 +293,33 @@ static void renderMatchResults() {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
             "(%d,%d)", m.center_x, m.center_y);
+
+        // スコア履歴グラフ (改善C)
+        if (hist.count > 1) {
+            char plot_id[64];
+            snprintf(plot_id, sizeof(plot_id), "##score_%s", m.template_id.c_str());
+
+            // 閾値ラインを示すオーバーレイテキスト
+            char plot_overlay[16];
+            snprintf(plot_overlay, sizeof(plot_overlay), "%.0f%%", m.score * 100.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_FrameBg,      ImVec4(0.1f, 0.1f, 0.15f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_PlotLines,
+                above_threshold ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
+                                : ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+            ImGui::SameLine(160);
+            ImGui::PlotLines(plot_id,
+                hist.buf, SCORE_HISTORY_LEN, hist.head,
+                plot_overlay,
+                0.0f, 1.0f,
+                ImVec2(120, 28));
+            ImGui::PopStyleColor(2);
+
+            // 閾値ラインの注釈（グラフ右に小さく）
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f),
+                "thr=%.0f%%", s_overlay_threshold * 100.0f);
+        }
     }
 }
 
@@ -240,7 +377,12 @@ static void renderOverlaySettings() {
 
     ImGui::SameLine(120);
     ImGui::SetNextItemWidth(150);
-    ImGui::SliderFloat("Threshold##overlay", &s_overlay_threshold, 0.5f, 1.0f, "%.2f");
+    if (ImGui::SliderFloat("Threshold##overlay", &s_overlay_threshold, 0.5f, 1.0f, "%.2f")) {
+        // 閾値変更時にスコア履歴をクリア（古い判定基準が混在しないように）
+        s_score_histories.clear();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("マッチング判定閾値。変更するとスコア履歴がリセットされます。");
 }
 
 // =============================================================================
@@ -252,12 +394,11 @@ void renderAIPanel() {
 
     static bool first_frame = true;
     ImGuiIO& io = ImGui::GetIO();
-    float panel_width = 340.0f;
+    float panel_width = 380.0f;  // グラフ追加分で少し広く
 
     if (first_frame) {
-        // Device Controlパネルの下に配置
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - panel_width - 10, 200));
-        ImGui::SetNextWindowCollapsed(true);  // 初期状態は折りたたみ
+        ImGui::SetNextWindowCollapsed(true);
         first_frame = false;
     }
 
@@ -269,13 +410,13 @@ void renderAIPanel() {
     // セクション1: エンジン制御
     renderEngineControl();
 
-    // セクション2: VisionDecisionEngine
+    // セクション2: VisionDecisionEngine (スライダー付き)
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Vision Decision Engine")) {
         renderVisionStates();
     }
 
-    // セクション3: テンプレートマッチ一覧
+    // セクション3: テンプレートマッチ一覧 (スコアグラフ付き)
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Template Matches", ImGuiTreeNodeFlags_DefaultOpen)) {
         renderMatchResults();
@@ -298,7 +439,6 @@ void renderAIPanel() {
 
 void init() {
     MLOG_INFO("ai_panel", "AI Panel 初期化");
-    // LearningMode作成（まだ存在しない場合）
     if (!g_learning_mode) {
         g_learning_mode = std::make_unique<mirage::ai::LearningMode>();
         MLOG_INFO("ai_panel", "LearningMode 作成完了");
@@ -307,7 +447,7 @@ void init() {
 
 void shutdown() {
     MLOG_INFO("ai_panel", "AI Panel シャットダウン");
-    // LearningMode停止はMirageContext::shutdownで実施
+    s_score_histories.clear();
 }
 
 } // namespace mirage::gui::ai_panel

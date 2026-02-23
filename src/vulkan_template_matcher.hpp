@@ -52,6 +52,14 @@ struct GpuTemplate {
     float sum_t = 0.0f;
     float sum_tt = 0.0f;
     float denom_t = 0.0f;
+
+    // 改善E: 検索ROI ピクセル座標（roi_w=-1 で全画面）
+    int roi_x = 0, roi_y = 0, roi_w = -1, roi_h = -1;
+    // 改善E: 正規化ROI（0.0-1.0）- マニフェスト設定用。matchGpu時にフレームサイズで変換
+    float roi_norm_x = 0.0f;
+    float roi_norm_y = 0.0f;
+    float roi_norm_w = 0.0f;  // 0 = 正規化ROI無効（ピクセルROIまたは全画面）
+    float roi_norm_h = 0.0f;
 };
 
 class VulkanTemplateMatcher {
@@ -75,6 +83,15 @@ public:
     void clearAll();
     bool isInitialized() const { return initialized_; }
 
+    // 改善E: テンプレートROI設定
+    // 正規化座標版（0.0-1.0）- フレームサイズに依存しない
+    bool setTemplateRoiNorm(const std::string& name,
+                            float norm_x, float norm_y,
+                            float norm_w, float norm_h);
+    // ピクセル直接指定版
+    bool setTemplateRoi(const std::string& name,
+                        int px_x, int px_y, int px_w, int px_h);
+
     struct Stats {
         uint64_t match_calls = 0;
         double last_time_ms = 0.0;
@@ -86,11 +103,16 @@ private:
     mirage::Result<void> buildPyramid(GpuTemplate& tpl);
     bool buildSourcePyramid(VulkanImage* src, int width, int height);
     bool buildSAT(VulkanImage* gray_image, int width, int height);
-    bool dispatchNcc(VkDescriptorSet desc_set, VulkanImage* src, VulkanImage* tpl,
+    bool dispatchNcc(VkDescriptorSet desc_set,
+                     VulkanImage* src, VulkanImage* tpl,
                      int src_w, int src_h, int tpl_w, int tpl_h,
-                     int template_id, float threshold);
+                     int template_id, float threshold,
+                     int search_x = 0, int search_y = 0,
+                     int search_w_override = -1, int search_h_override = -1);
     bool dispatchSatNcc(GpuTemplate& tpl, VulkanImage* src,
-                        int src_w, int src_h, int template_id);
+                        int src_w, int src_h, int template_id,
+                        int search_x = 0, int search_y = 0,
+                        int search_w_override = -1, int search_h_override = -1);
     bool readResults(std::vector<VkMatchResult>& results);
     void resetCounter();
     VkDescriptorSet allocateNccDescSet();
@@ -109,16 +131,15 @@ private:
     std::unique_ptr<VulkanComputePipeline> ncc_pipeline_;
 
     // SAT pipelines (Opt E)
-    std::unique_ptr<VulkanComputePipeline> prefix_h_pipeline_;   // horizontal prefix sum
-    std::unique_ptr<VulkanComputePipeline> prefix_v_pipeline_;   // vertical prefix sum
-    std::unique_ptr<VulkanComputePipeline> sat_ncc_pipeline_;    // SAT-based NCC
-    // Two descriptor sets each: [0]=SAT_S, [1]=SAT_SS for single-submit buildSAT
+    std::unique_ptr<VulkanComputePipeline> prefix_h_pipeline_;
+    std::unique_ptr<VulkanComputePipeline> prefix_v_pipeline_;
+    std::unique_ptr<VulkanComputePipeline> sat_ncc_pipeline_;
     VkDescriptorSet prefix_h_desc_[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
     VkDescriptorSet prefix_v_desc_[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
 
     // SAT images (reused per frame)
-    std::unique_ptr<VulkanImage> sat_s_;    // SAT of source values
-    std::unique_ptr<VulkanImage> sat_ss_;   // SAT of source^2 values
+    std::unique_ptr<VulkanImage> sat_s_;
+    std::unique_ptr<VulkanImage> sat_ss_;
     int sat_w_ = 0;
     int sat_h_ = 0;
     bool sat_built_ = false;
