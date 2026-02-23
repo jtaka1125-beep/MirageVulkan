@@ -1,0 +1,23 @@
+TOTAL_LINES=34
+RETURN_CODE=0
+---LAST 20 LINES---
+[ 73%] Built target test_hybrid_sender
+[ 75%] Built target test_gui_logic
+[ 76%] Built target test_result
+[ 78%] Built target test_route_controller
+[ 79%] Built target test_adb_device_manager
+[ 80%] Built target test_usb_command
+[ 81%] Built target test_template_manifest
+[ 83%] Built target test_template_capture
+[ 84%] Built target test_ui_finder_parse
+[ 85%] Built target test_action_mapper
+[ 86%] Built target test_vision_decision_engine
+[ 87%] Built target test_frame_analyzer_unit
+[ 90%] Built target test_ai_e2e
+[ 93%] Built target test_template_versioning
+[ 94%] Built target test_ai_improvements_nqr
+[ 96%] Built target test_bandwidth_monitor
+[ 98%] Built target test_device_transform
+[ 99%] Built target test_config_loader
+[ 99%] Built target mirage_vulkan
+[100%] Built target mirage_vulkan_debug
