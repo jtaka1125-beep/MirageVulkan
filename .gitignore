@@ -55,11 +55,19 @@ analysis/
 # Auto-generated session files
 .session_context.md
 
-# One-off fix/patch scripts
+# One-off fix/patch scripts (root level)
 fix_*.py
 patch_*.py
 apply_*.py
 *.patch
+
+# One-off fix/patch scripts (scripts/ subdir)
+scripts/_fix_*.py
+scripts/_patch_*.py
+scripts/_debug_*.py
+scripts/_rewrite_*.py
+scripts/_test_*.py
+scripts/install_result.json
 
 # tools/ temporary data
 tools/scrcpy-server-*
