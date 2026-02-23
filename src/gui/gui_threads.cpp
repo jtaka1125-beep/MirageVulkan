@@ -485,50 +485,10 @@ void deviceUpdateThread() {
             }
         }
 
-        // Update video frames from multi-device receiver (メイン優先)
+        // Note: g_multi_receiver frame delivery is handled by framePollThread via setFrameCallback
+        // (gui_init.cpp). Polling get_latest_frame here races with has_new_frame_ flag causing
+        // frame starvation. Stats-only update here.
         if (g_multi_receiver && g_multi_receiver->running()) {
-            // メインデバイスID取得
-            std::string main_id;
-            if (gui) {
-                main_id = gui->getMainDevice();
-            }
-
-            auto device_ids = g_multi_receiver->getDeviceIds();
-
-            // メイン=毎回(60fps)、サブ=2回に1回(~30fps)
-            static int sub_frame_counter = 0;
-            sub_frame_counter++;
-            bool process_sub = (sub_frame_counter % 2 == 0);
-
-            for (const auto& hw_id : device_ids) {
-                bool is_main = (hw_id == main_id);
-
-                // サブデバイスはスキップ (2回に1回だけ処理)
-                if (!is_main && !process_sub) continue;
-
-                ::gui::MirrorFrame frame;
-                if (g_multi_receiver->get_latest_frame(hw_id, frame)) {
-                    if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-                        if (!g_multi_devices_added[hw_id]) {
-                            ::gui::AdbDeviceManager::UniqueDevice dev_info;
-                            std::string display_name = hw_id;
-                            if (g_adb_manager && g_adb_manager->getUniqueDevice(hw_id, dev_info)) {
-                                display_name = dev_info.display_name;
-                            }
-
-                            gui->addDevice(hw_id, display_name);
-                            mirage::dispatcher().registerDevice(hw_id, display_name, "multi");
-                            g_multi_devices_added[hw_id] = true;
-                            gui->logInfo(u8"映像受信開始: " + display_name);
-                        }
-
-                        mirage::dispatcher().dispatchFrame(hw_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
-                        mirage::dispatcher().dispatchStatus(hw_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
-                    }
-                }
-            }
-
-            // Stats更新 (全デバイス分、500msごと)
             auto stats = g_multi_receiver->getStats();
             for (const auto& ds : stats) {
                 if (ds.receiving) {
