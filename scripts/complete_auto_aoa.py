@@ -6,6 +6,7 @@
 1. 権限設定（通知、Accessibility）
 2. WinUSBドライバ自動インストール（wdi-simple.exe使用）
 3. AOA切替
+4. AOA許可ダイアログ自動承認 (uiautomator)
 
 Usage:
   python scripts/complete_auto_aoa.py
@@ -32,6 +33,7 @@ import argparse
 import ctypes
 import json
 import re
+import xml.etree.ElementTree as ET
 
 # Project root: scripts/complete_auto_aoa.py -> ../
 MIRAGE_HOME = os.environ.get(
@@ -39,8 +41,13 @@ MIRAGE_HOME = os.environ.get(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 
-PACKAGE = "com.mirage.android"
-ACCESSIBILITY_SERVICE = "com.mirage.android.access.MirageAccessibilityService"
+# 2-APK split (2026-02-24): accessory handles AOA, capture handles video
+PACKAGE_ACCESSORY = "com.mirage.accessory"
+PACKAGE_CAPTURE   = "com.mirage.capture"
+ACCESSIBILITY_SERVICE = "com.mirage.accessory.access.MirageAccessibilityService"
+
+# Legacy alias for permission setup (kept for apps still using old package on device)
+PACKAGE = PACKAGE_ACCESSORY
 
 # AOA switch: MirageComplete/build/aoa_switch.exe
 AOA_SWITCH_PATH = os.path.join(MIRAGE_HOME, "build", "aoa_switch.exe")
@@ -113,11 +120,12 @@ def get_devices():
 
 def setup_android_permissions(serial):
     """Android側の権限を全て設定"""
-    print(f"  [1] 通知権限...")
-    run_adb(['shell', 'cmd', 'appops', 'set', PACKAGE, 'POST_NOTIFICATION', 'allow'], serial)
+    print(f"  [1] 通知権限 (accessory + capture)...")
+    for pkg in [PACKAGE_ACCESSORY, PACKAGE_CAPTURE]:
+        run_adb(['shell', 'cmd', 'appops', 'set', pkg, 'POST_NOTIFICATION', 'allow'], serial)
 
-    print(f"  [2] Accessibility...")
-    full_service = f"{PACKAGE}/{ACCESSIBILITY_SERVICE}"
+    print(f"  [2] Accessibility (MirageAccessory)...")
+    full_service = f"{PACKAGE_ACCESSORY}/{ACCESSIBILITY_SERVICE}"
     current = shell("settings get secure enabled_accessibility_services", serial)
     if full_service not in (current or ""):
         if current and current != "null" and current.strip():
@@ -128,19 +136,26 @@ def setup_android_permissions(serial):
         run_adb(['shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1'], serial)
 
     print(f"  [3] ランタイム権限...")
-    permissions = [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.POST_NOTIFICATIONS",
-    ]
-    for perm in permissions:
-        run_adb(['shell', 'pm', 'grant', PACKAGE, perm], serial)
+    for pkg in [PACKAGE_ACCESSORY, PACKAGE_CAPTURE]:
+        permissions = [
+            "android.permission.RECORD_AUDIO",
+            "android.permission.POST_NOTIFICATIONS",
+        ]
+        for perm in permissions:
+            run_adb(['shell', 'pm', 'grant', pkg, perm], serial)
 
     appops = ["SYSTEM_ALERT_WINDOW", "RUN_IN_BACKGROUND", "RUN_ANY_IN_BACKGROUND"]
-    for op in appops:
-        run_adb(['shell', 'appops', 'set', PACKAGE, op, 'allow'], serial)
+    for pkg in [PACKAGE_ACCESSORY, PACKAGE_CAPTURE]:
+        for op in appops:
+            run_adb(['shell', 'appops', 'set', pkg, op, 'allow'], serial)
 
-    print(f"  [4] アプリ起動...")
-    run_adb(['shell', 'am', 'start', '-n', f'{PACKAGE}/.ui.MainActivity'], serial)
+    print(f"  [4] バッテリー最適化除外...")
+    for pkg in [PACKAGE_ACCESSORY, PACKAGE_CAPTURE]:
+        run_adb(['shell', 'dumpsys', 'deviceidle', 'whitelist', f'+{pkg}'], serial)
+
+    print(f"  [5] MirageAccessory 起動...")
+    run_adb(['shell', 'am', 'start', '-n',
+             f'{PACKAGE_ACCESSORY}/.ui.AccessoryActivity'], serial)
 
     print("      Done")
 
@@ -270,16 +285,168 @@ def switch_to_aoa():
         print(f"    エラー: {e}")
         return False
 
+# ===== Phase 5: AOA許可ダイアログ自動承認 =====
+
+def _parse_bounds(bounds_str):
+    """'[x1,y1][x2,y2]' -> center (cx, cy)"""
+    m = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+    if len(m) < 2:
+        return None, None
+    x1, y1 = int(m[0][0]), int(m[0][1])
+    x2, y2 = int(m[1][0]), int(m[1][1])
+    return (x1 + x2) // 2, (y1 + y2) // 2
+
+def _dump_ui(serial):
+    """uiautomator dump → XML文字列を返す"""
+    run_adb(['shell', 'uiautomator', 'dump', '/sdcard/ui_dump.xml'], serial)
+    ok, out, _ = run_adb(['shell', 'cat', '/sdcard/ui_dump.xml'], serial)
+    if ok and out.strip().startswith('<'):
+        return out
+    return None
+
+def _find_node(root, **attrs):
+    """XML treeからattribsに一致する最初のnodeを返す"""
+    for node in root.iter('node'):
+        match = all(
+            kw.replace('_', '-') in node.attrib and val.lower() in node.attrib[kw.replace('_', '-')].lower()
+            for kw, val in attrs.items()
+        )
+        if match:
+            return node
+    return None
+
+def approve_aoa_dialog(serial, timeout=15):
+    """
+    AOAアクセサリ許可ダイアログを uiautomator で自動承認。
+
+    Androidが表示するダイアログ例:
+      「このUSBアクセサリへのアクセスを許可しますか?」
+      □ このアプリに常に使用する  [キャンセル] [OK]
+
+    手順:
+      1. uiautomator dump でUI取得
+      2. 「常に」チェックボックスを ON にする
+      3. OK/許可 ボタンをタップ
+
+    Returns:
+      True  = ダイアログ検出&承認成功
+      False = ダイアログが見つからない or タイムアウト
+    """
+    print(f"\n[DIALOG] AOA許可ダイアログ自動承認 (serial={serial or 'auto'}, timeout={timeout}s)...")
+
+    # ダイアログ検出に使うキーワード (日本語/英語どちらにも対応)
+    DIALOG_KEYWORDS = [
+        "usb", "accessory", "アクセサリ", "allow", "permission", "許可"
+    ]
+    OK_KEYWORDS = ["ok", "allow", "許可", "はい"]
+    ALWAYS_KEYWORDS = ["always", "常に"]
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        xml_str = _dump_ui(serial)
+        if not xml_str:
+            time.sleep(1)
+            continue
+
+        try:
+            root = ET.fromstring(xml_str)
+        except ET.ParseError:
+            time.sleep(1)
+            continue
+
+        # ダイアログが出ているか確認（テキストにキーワードが含まれるnode）
+        all_texts = [
+            (n.attrib.get('text', '') + n.attrib.get('content-desc', '')).lower()
+            for n in root.iter('node')
+        ]
+        dialog_present = any(
+            any(kw in t for kw in DIALOG_KEYWORDS)
+            for t in all_texts
+        )
+        if not dialog_present:
+            print(f"    ダイアログ未検出 ({int(deadline - time.time())}s残) - 待機中...")
+            time.sleep(2)
+            continue
+
+        print("    ダイアログ検出!")
+
+        # 「常に使用する」チェックボックス → まだチェックされていなければON
+        always_node = None
+        for node in root.iter('node'):
+            txt = (node.attrib.get('text', '') + node.attrib.get('content-desc', '')).lower()
+            if any(kw in txt for kw in ALWAYS_KEYWORDS):
+                always_node = node
+                break
+
+        if always_node is not None:
+            checked = always_node.attrib.get('checked', 'false').lower()
+            if checked != 'true':
+                cx, cy = _parse_bounds(always_node.attrib.get('bounds', ''))
+                if cx is not None:
+                    print(f"    「常に使用」チェックボックス タップ ({cx},{cy})")
+                    run_adb(['shell', 'input', 'tap', str(cx), str(cy)], serial)
+                    time.sleep(0.5)
+            else:
+                print("    「常に使用」既にチェック済み")
+        else:
+            print("    「常に使用」チェックボックス: 見つからずスキップ")
+
+        # OK/許可 ボタンをタップ
+        ok_node = None
+        for node in root.iter('node'):
+            txt = (node.attrib.get('text', '') + node.attrib.get('content-desc', '')).lower()
+            cls = node.attrib.get('class', '')
+            clickable = node.attrib.get('clickable', 'false').lower() == 'true'
+            if clickable and any(kw in txt for kw in OK_KEYWORDS):
+                ok_node = node
+                break
+
+        if ok_node is not None:
+            cx, cy = _parse_bounds(ok_node.attrib.get('bounds', ''))
+            if cx is not None:
+                print(f"    OK/許可 ボタン タップ ({cx},{cy})")
+                run_adb(['shell', 'input', 'tap', str(cx), str(cy)], serial)
+                time.sleep(1)
+                print("    承認完了!")
+                return True
+            else:
+                print("    [WARN] OKボタンのboundsが取得できません")
+        else:
+            # フォールバック: Enter/Spaceキーで承認
+            print("    [WARN] OKボタン特定失敗 → Enterキーで承認試行")
+            run_adb(['shell', 'input', 'keyevent', '66'], serial)  # KEYCODE_ENTER
+            time.sleep(1)
+            return True
+
+    print(f"    [WARN] {timeout}s以内にダイアログが検出されませんでした")
+    return False
+
+
+def approve_aoa_dialog_all(timeout=15):
+    """全ADBデバイスに対してAOA許可ダイアログ承認を試みる"""
+    devices = get_devices()
+    if not devices:
+        print("    ADBデバイスなし")
+        return
+
+    for serial, model in devices:
+        print(f"\n  [{model} / {serial}]")
+        approve_aoa_dialog(serial, timeout=timeout)
+
+
 # ===== Main =====
 
 def main():
+    global WDI_SIMPLE_PATH
     parser = argparse.ArgumentParser(description='完全自動AOAセットアップ')
     parser.add_argument('--wdi-path', default=WDI_SIMPLE_PATH,
                         help='wdi-simple.exe のパス (環境変数 WDI_PATH でも指定可)')
+    parser.add_argument('--dialog-only', action='store_true',
+                        help='AOA許可ダイアログ承認のみ実行（デバイス接続済みの場合）')
+    parser.add_argument('--dialog-timeout', type=int, default=15,
+                        help='ダイアログ待機タイムアウト秒数 (default: 15)')
     args = parser.parse_args()
 
-    # 引数で上書き
-    global WDI_SIMPLE_PATH
     if args.wdi_path:
         WDI_SIMPLE_PATH = args.wdi_path
 
@@ -290,6 +457,12 @@ def main():
     print(f"  AOA_SWITCH:  {AOA_SWITCH_PATH}")
     print(f"  WDI_SIMPLE:  {WDI_SIMPLE_PATH or '(未指定)'}")
     print(f"  ADB:         {ADB}")
+
+    # --dialog-only: ダイアログ承認のみ（管理者不要）
+    if args.dialog_only:
+        print("\n[MODE] ダイアログ承認のみ")
+        approve_aoa_dialog_all(timeout=args.dialog_timeout)
+        return
 
     # 管理者チェック
     if not is_admin():
@@ -328,8 +501,6 @@ def main():
         print(f"  - {dev.get('InstanceId', 'Unknown')}")
 
     # Phase 3: WinUSBインストール & AOA切替
-    # Note: setup_aoa_winusb.bat は同等の処理を PowerShell (install_aoa_winusb.ps1) で実行
-    # Note: aoa_workflow.bat は wdi-simple を直接呼び出すが、デバイスシリアルがハードコード
     print("\n" + "=" * 60)
     print("Phase 3: WinUSBインストール & AOA切替")
     print("=" * 60)
@@ -338,7 +509,6 @@ def main():
         for dev in android_usb:
             vid = dev['vid']
             pid = dev['pid']
-
             print(f"\n--- {dev['name']} ---")
             install_winusb(vid, pid)
 
@@ -351,9 +521,17 @@ def main():
         else:
             print("\n[OK] 既にAOAモードのデバイスがあります")
 
-    # Phase 4: 結果確認
+    # Phase 4: AOA許可ダイアログ自動承認
+    # AOA切替直後にAndroidが「このUSBアクセサリへのアクセスを許可しますか?」を表示する。
+    # uiautomatorで「常に使用」チェック後にOKをタップ。
     print("\n" + "=" * 60)
-    print("Phase 4: 最終確認")
+    print("Phase 4: AOA許可ダイアログ自動承認")
+    print("=" * 60)
+    approve_aoa_dialog_all(timeout=args.dialog_timeout)
+
+    # Phase 5: 結果確認
+    print("\n" + "=" * 60)
+    print("Phase 5: 最終確認")
     print("=" * 60)
 
     time.sleep(3)
@@ -378,10 +556,12 @@ def main():
         print("\n考えられる原因:")
         print("  1. WinUSBドライバが正しくインストールされていない")
         print("  2. USBを抜き差しする必要がある")
+        print("  3. AOAダイアログを手動で承認してください")
         print("\n手動で試す場合:")
         print("  1. USBケーブルを抜く")
         print("  2. 3秒待つ")
         print("  3. USBケーブルを差し直す")
+        print("  4. ダイアログが出たら「常に使用」にチェックして「OK」")
     print("=" * 60)
 
     input("\nPress Enter to exit...")
