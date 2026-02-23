@@ -892,7 +892,9 @@ void GuiApplication::vulkanBeginFrame() {
         MLOG_ERROR("vkframe", "Fence wait error: %d", (int)fence_r);
         return;
     }
-    vkResetFences(dev, 1, &vk_in_flight_[fi]);
+    // NOTE: vkResetFences moved to endFrame, just before vkQueueSubmit.
+    // Resetting before acquire is wrong: if acquire fails, fence stays
+    // UNSIGNALED and the next vkWaitForFences blocks for 3 seconds.
 
     uint32_t imageIndex;
     VkResult r = vkAcquireNextImageKHR(dev, vk_swapchain_->swapchain(),
@@ -909,7 +911,9 @@ void GuiApplication::vulkanBeginFrame() {
         vkDestroySemaphore(dev, vk_image_available_[fi], nullptr);
         VkSemaphoreCreateInfo sci{}; sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         vkCreateSemaphore(dev, &sci, nullptr, &vk_image_available_[fi]);
-        vk_current_frame_ = (vk_current_frame_ + 1) % VK_MAX_FRAMES_IN_FLIGHT;
+        // Do NOT advance vk_current_frame_ here.
+        // endFrame will also advance it when !frame_valid_ → net +2 mod 2 = 0 (bug).
+        // Leave fi unchanged; fence is still SIGNALED so next iteration retries immediately.
         return;
     }
 
@@ -964,9 +968,10 @@ void GuiApplication::vulkanEndFrame() {
     static std::atomic<int> end_frame_count{0};
     int efc = end_frame_count.fetch_add(1);
 
-    // Guard: if beginFrame failed (frame_valid_ is false), skip rendering
+    // Guard: if beginFrame failed (frame_valid_ is false), skip rendering.
+    // Do NOT advance vk_current_frame_ here - beginFrame also does not advance
+    // on failure, so we retry the same fi next iteration (fence is still SIGNALED).
     if (!frame_valid_) {
-        vk_current_frame_ = (vk_current_frame_ + 1) % VK_MAX_FRAMES_IN_FLIGHT;
         return;
     }
 
@@ -988,6 +993,8 @@ void GuiApplication::vulkanEndFrame() {
     si.pCommandBuffers = &cmd;
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &vk_render_finished_[fi];
+    // Reset fence HERE (correct Vulkan pattern: reset only right before submit)
+    vkResetFences(dev, 1, &vk_in_flight_[fi]);
     VkResult sr = vkQueueSubmit(vk_context_->graphicsQueue(), 1, &si, vk_in_flight_[fi]);
 
     // If submit failed, don't try to present - it would use invalid semaphores
