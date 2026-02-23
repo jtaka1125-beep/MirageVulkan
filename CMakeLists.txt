@@ -1,10 +1,10 @@
-# =============================================================================
+﻿# =============================================================================
 # MirageVulkan - Vulkan Video Unified Pipeline
 # =============================================================================
 # Features:
 #   - Vulkan Video H.264 decode (zero-copy GPU pipeline)
 #   - FFmpeg fallback (D3D11VA HW accel)
-#   - YUV→RGBA compute shader conversion
+#   - YUV竊坦GBA compute shader conversion
 #   - ImGui + Vulkan rendering
 #   - Multi-device Android mirroring
 # =============================================================================
@@ -285,9 +285,9 @@ else()
     message(STATUS "Tesseract OCR disabled")
 endif()
 
-# MIRAGE_OCR_ENABLED alias → USE_OCRと同期
+# MIRAGE_OCR_ENABLED alias 竊・USE_OCR縺ｨ蜷梧悄
 if(MIRAGE_OCR_ENABLED AND NOT USE_OCR)
-    message(STATUS "MIRAGE_OCR_ENABLED=ON → USE_OCR also enabled")
+    message(STATUS "MIRAGE_OCR_ENABLED=ON 竊・USE_OCR also enabled")
     set(USE_OCR ON CACHE BOOL "" FORCE)
 endif()
 
@@ -300,8 +300,8 @@ else()
     message(STATUS "AI Engine disabled (stub mode)")
 endif()
 
-# OBJECT ライブラリは target_link_directories の PUBLIC 伝播をサポートしないため
-# 消費側ターゲットに直接設定する必要がある
+# OBJECT 繝ｩ繧､繝悶Λ繝ｪ縺ｯ target_link_directories 縺ｮ PUBLIC 莨晄眺繧偵し繝昴・繝医＠縺ｪ縺・◆繧・
+# 豸郁ｲｻ蛛ｴ繧ｿ繝ｼ繧ｲ繝・ヨ縺ｫ逶ｴ謗･險ｭ螳壹☆繧句ｿ・ｦ√′縺ゅｋ
 if(USE_FFMPEG)
     target_link_directories(mirage_vulkan PRIVATE ${FFMPEG_LIBRARY_DIRS})
 endif()
@@ -355,8 +355,8 @@ target_include_directories(mirage_vulkan_debug PRIVATE
     ${IMGUI_DIR}/backends
 )
 
-# OBJECT ライブラリは target_link_directories の PUBLIC 伝播をサポートしないため
-# 消費側ターゲットに直接設定する必要がある
+# OBJECT 繝ｩ繧､繝悶Λ繝ｪ縺ｯ target_link_directories 縺ｮ PUBLIC 莨晄眺繧偵し繝昴・繝医＠縺ｪ縺・◆繧・
+# 豸郁ｲｻ蛛ｴ繧ｿ繝ｼ繧ｲ繝・ヨ縺ｫ逶ｴ謗･險ｭ螳壹☆繧句ｿ・ｦ√′縺ゅｋ
 if(USE_FFMPEG)
     target_link_directories(mirage_vulkan_debug PRIVATE ${FFMPEG_LIBRARY_DIRS})
 endif()
@@ -562,7 +562,7 @@ if(BUILD_TESTS)
         target_link_libraries(test_template_manifest PRIVATE gtest)
         target_compile_definitions(test_template_manifest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-        # TemplateCapture test (CPU only, RGBA→Gray8 conversion)
+        # TemplateCapture test (CPU only, RGBA竊竪ray8 conversion)
         add_executable(test_template_capture
             tests/test_template_capture.cpp
             src/ai/template_capture.cpp
@@ -590,7 +590,7 @@ if(BUILD_TESTS)
         target_link_libraries(test_action_mapper PRIVATE gtest)
         target_compile_definitions(test_action_mapper PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-        # VisionDecisionEngine test (CPU only, 状態遷移ロジック)
+        # VisionDecisionEngine test (CPU only, 迥ｶ諷矩・遘ｻ繝ｭ繧ｸ繝・け)
         add_executable(test_vision_decision_engine
             tests/test_vision_decision_engine.cpp
             src/ai/vision_decision_engine.cpp
@@ -623,7 +623,7 @@ if(BUILD_TESTS)
         add_test(NAME ActionMapperTest COMMAND test_action_mapper)
         add_test(NAME VisionDecisionEngineTest COMMAND test_vision_decision_engine)
 
-        # FrameAnalyzer CPUロジック ユニットテスト (Tesseract不要)
+        # FrameAnalyzer CPU繝ｭ繧ｸ繝・け 繝ｦ繝九ャ繝医ユ繧ｹ繝・(Tesseract荳崎ｦ・
         add_executable(test_frame_analyzer_unit
             tests/test_frame_analyzer_unit.cpp
         )
@@ -634,7 +634,7 @@ if(BUILD_TESTS)
         )
         add_test(NAME FrameAnalyzerUnitTest COMMAND test_frame_analyzer_unit)
 
-        # AI E2E統合テスト (GPU不要、モック使用)
+        # AI E2E邨ｱ蜷医ユ繧ｹ繝・(GPU荳崎ｦ√√Δ繝・け菴ｿ逕ｨ)
         add_executable(test_ai_e2e
             tests/test_ai_e2e.cpp
             src/ai/template_capture.cpp
@@ -646,7 +646,7 @@ if(BUILD_TESTS)
         target_compile_definitions(test_ai_e2e PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_test(NAME AIE2ETest COMMAND test_ai_e2e)
 
-        # 改善P: テンプレートバージョニングテスト
+        # 謾ｹ蝟П: 繝・Φ繝励Ξ繝ｼ繝医ヰ繝ｼ繧ｸ繝ｧ繝九Φ繧ｰ繝・せ繝・
         add_executable(test_template_versioning
             tests/test_template_versioning.cpp
             src/ai/template_store.cpp
@@ -668,8 +668,18 @@ if(BUILD_TESTS)
         target_compile_definitions(test_template_store PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_test(NAME TemplateStoreTest COMMAND test_template_store)
 
+        # WinUsbChecker pure-function unit tests (WUC-1 through WUC-14)
+        add_executable(test_winusb_checker
+            tests/test_winusb_checker.cpp
+            src/winusb_checker.cpp
+        )
+        target_include_directories(test_winusb_checker PRIVATE src)
+        target_link_libraries(test_winusb_checker PRIVATE gtest Shell32)
+        target_compile_definitions(test_winusb_checker PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME WinUsbCheckerTest COMMAND test_winusb_checker)
 
-        # 改善N/Q/R: AI improvements struct/logic tests
+
+        # 謾ｹ蝟Н/Q/R: AI improvements struct/logic tests
         add_executable(test_ai_improvements_nqr
             tests/test_ai_improvements_nqr.cpp
         )
