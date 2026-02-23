@@ -28,15 +28,14 @@ CMakeFiles/
 # Logs
 *.log
   
-# Phase 1 Migration  
-android/.gradle/  
-android/build/  
-android/app/build/  
-android/local.properties  
-android/capture/  
-scripts/__pycache__/  
-*.apk  
-*.keystore  
+# Phase 1 Migration
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/capture/
+scripts/__pycache__/
+*.keystore
   
 # Phase 2 Migration  
 macro_editor_venv/  
@@ -47,7 +46,7 @@ driver_installer/*.exe
 macro_editor_venv/  
 *.pyc  
 __pycache__/  
-"*.idsig"  
+*.idsig  
 logs/  
 screenshots/  
 analysis/  
