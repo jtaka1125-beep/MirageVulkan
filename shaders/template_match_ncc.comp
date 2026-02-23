@@ -29,6 +29,8 @@ layout(push_constant) uniform PushConstants {
     float threshold;
     int search_width;
     int search_height;
+    int search_x;   // 改善E: ROI offset
+    int search_y;
 };
 
 layout(set = 0, binding = 0, r8) uniform readonly image2D srcImage;
@@ -58,12 +60,12 @@ void main() {
     uint tid = ly * 16 + lx;           // 0..255
 
     // Candidate position for this thread
-    int cx = int(gl_WorkGroupID.x) * 16 + int(lx);
-    int cy = int(gl_WorkGroupID.y) * 16 + int(ly);
+    int cx = int(gl_WorkGroupID.x) * 16 + int(lx) + search_x;
+    int cy = int(gl_WorkGroupID.y) * 16 + int(ly) + search_y;
 
     // Tile origin in source image
-    int tile_x = int(gl_WorkGroupID.x) * 16;
-    int tile_y = int(gl_WorkGroupID.y) * 16;
+    int tile_x = int(gl_WorkGroupID.x) * 16 + search_x;
+    int tile_y = int(gl_WorkGroupID.y) * 16 + search_y;
 
     // Tile dimensions needed: 16 + tpl_width - 1, 16 + tpl_height - 1
     int tile_w = 16 + tpl_width;
@@ -126,7 +128,7 @@ void main() {
 
     // === NCC computation per thread ===
     // Each thread handles one candidate position (cx, cy)
-    if (cx >= search_width || cy >= search_height) return;
+    if (cx >= search_x + search_width || cy >= search_y + search_height) return;
 
     // Offset within the shared memory tile
     int ox = int(lx);  // cx - tile_x

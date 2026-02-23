@@ -774,7 +774,8 @@ bool VulkanTemplateMatcher::dispatchSatNcc(GpuTemplate& tpl, VulkanImage* src,
     SatNccPushConstants pc{};
     pc.src_width = src_w;  pc.src_height = src_h;
     pc.tpl_width = tpl.width;  pc.tpl_height = tpl.height;
-    pc.template_id = template_id;  pc.threshold = config_.default_threshold;
+    pc.template_id = template_id;
+    pc.threshold = (tpl.threshold > 0.0f) ? tpl.threshold : config_.default_threshold;  // 改善J
     pc.search_width = search_w;  pc.search_height = search_h;
     pc.search_x = search_x;  pc.search_y = search_y;  // 改善E
     pc.sum_t = tpl.sum_t;  pc.sum_tt = tpl.sum_tt;
@@ -1060,6 +1061,16 @@ bool VulkanTemplateMatcher::setTemplateRoi(const std::string& name,
             tpl->roi_x = px_x; tpl->roi_y = px_y;
             tpl->roi_w = px_w; tpl->roi_h = px_h;
             tpl->roi_norm_w = 0.0f;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool VulkanTemplateMatcher::setTemplateThreshold(const std::string& name, float threshold) {
+    for (auto& [id, tpl] : templates_) {
+        if (tpl->name == name) {
+            tpl->threshold = threshold;
             return true;
         }
     }

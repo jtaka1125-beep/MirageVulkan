@@ -53,6 +53,9 @@ struct GpuTemplate {
     float sum_tt = 0.0f;
     float denom_t = 0.0f;
 
+    // 改善J: テンプレート個別閾値 (0.0 = global default 使用)
+    float threshold = 0.0f;
+
     // 改善E: 検索ROI ピクセル座標（roi_w=-1 で全画面）
     int roi_x = 0, roi_y = 0, roi_w = -1, roi_h = -1;
     // 改善E: 正規化ROI（0.0-1.0）- マニフェスト設定用。matchGpu時にフレームサイズで変換
@@ -82,6 +85,9 @@ public:
     int getTemplateCount() const { return static_cast<int>(templates_.size()); }
     void clearAll();
     bool isInitialized() const { return initialized_; }
+
+    // 改善J: テンプレート個別閾値設定 (0.0 でグローバル閾値に戻す)
+    bool setTemplateThreshold(const std::string& name, float threshold);
 
     // 改善E: テンプレートROI設定
     // 正規化座標版（0.0-1.0）- フレームサイズに依存しない

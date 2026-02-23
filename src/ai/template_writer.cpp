@@ -4,7 +4,7 @@
 #include "ai/template_writer.hpp"
 #include "mirage_log.hpp"
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// STB_IMAGE_WRITE_IMPLEMENTATION is defined in gui_frame_capture_impl.cpp
 #include "stb_image_write.h"
 
 static constexpr const char* TAG = "TplWriter";

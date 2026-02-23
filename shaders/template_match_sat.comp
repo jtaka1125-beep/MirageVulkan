@@ -30,6 +30,8 @@ layout(push_constant) uniform PushConstants {
     float threshold;
     int search_width;
     int search_height;
+    int search_x;   // 改善E: ROI オフセット
+    int search_y;
     float sum_t;       // precomputed: sum of template values
     float sum_tt;      // precomputed: sum of template values squared
     float inv_n;       // 1.0 / (tpl_width * tpl_height)
@@ -62,8 +64,9 @@ shared float s_tpl[48][48];
 shared int s_skip;
 
 void main() {
-    int cx = int(gl_WorkGroupID.x) * 16 + int(gl_LocalInvocationID.x);
-    int cy = int(gl_WorkGroupID.y) * 16 + int(gl_LocalInvocationID.y);
+    // 改善E: ROI オフセットを適用
+    int cx = int(gl_WorkGroupID.x) * 16 + int(gl_LocalInvocationID.x) + search_x;
+    int cy = int(gl_WorkGroupID.y) * 16 + int(gl_LocalInvocationID.y) + search_y;
     uint tid = gl_LocalInvocationID.y * 16 + gl_LocalInvocationID.x;
 
     // Early exit: check if denom_t is valid
@@ -83,7 +86,8 @@ void main() {
     }
     barrier();
 
-    if (cx >= search_width || cy >= search_height) return;
+    // 改善E: ROI 終端チェック
+    if (cx >= search_x + search_width || cy >= search_y + search_height) return;
 
     // Use SAT for sum_s and sum_ss (O(1) per candidate)
     int x0 = cx;

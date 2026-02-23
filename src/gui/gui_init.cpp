@@ -690,7 +690,7 @@ void initializeAI() {
             return false;
         });
     } else {
-        if (gui) gui->logWarning(u8"AI engine failed: " + ai_error);
+        if (gui) gui->logWarning(u8"AI engine failed to initialize");
         g_ai_engine.reset();
     }
 }

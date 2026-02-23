@@ -164,6 +164,7 @@ public:
     SubscriptionHandle& operator=(const SubscriptionHandle&) = delete;
 
     void release() { unsub_ = nullptr; } // detach: subscription lives forever
+    explicit operator bool() const { return static_cast<bool>(unsub_); } // activeチェック
 
 private:
     std::function<void()> unsub_;

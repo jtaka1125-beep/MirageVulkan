@@ -164,6 +164,19 @@ static bool findU32(const std::string& j, const std::string& key, uint32_t& out)
     return true;
 }
 
+static bool findFloat(const std::string& j, const std::string& key, float& out) {
+    auto k = "\"" + key + "\"";
+    auto pos = j.find(k);
+    if (pos == std::string::npos) return false;
+    pos = j.find(':', pos);
+    if (pos == std::string::npos) return false;
+    pos++;
+    while (pos < j.size() && (j[pos] == ' ' || j[pos] == '\n' || j[pos] == '\r' || j[pos] == '\t')) pos++;
+    char* e = nullptr;
+    out = std::strtof(j.c_str() + pos, &e);
+    return e && e != j.c_str() + pos;
+}
+
 static std::vector<std::string> splitObjectsInArray(const std::string& j, const std::string& arrayKey) {
     std::vector<std::string> objs;
     auto k = "\"" + arrayKey + "\"";
@@ -190,6 +203,25 @@ static std::vector<std::string> splitObjectsInArray(const std::string& j, const 
     return objs;
 }
 
+// Extract sub-object string for a given key: "key": { ... }
+static std::string findSubObject(const std::string& j, const std::string& key) {
+    auto k = "\"" + key + "\"";
+    auto pos = j.find(k);
+    if (pos == std::string::npos) return {};
+    pos = j.find('{', pos);
+    if (pos == std::string::npos) return {};
+    int depth = 0;
+    for (size_t i = pos; i < j.size(); ++i) {
+        if (j[i] == '{') ++depth;
+        else if (j[i] == '}') {
+            --depth;
+            if (depth == 0) return j.substr(pos, i - pos + 1);
+        }
+    }
+    return {};
+}
+
+
 bool loadManifestJson(const std::string& path_utf8, TemplateManifest& out, std::string* err) {
     out = {};
     auto j = readAll(path_utf8);
@@ -211,12 +243,15 @@ bool loadManifestJson(const std::string& path_utf8, TemplateManifest& out, std::
         findU64(o, "mtime_utc", e.mtime_utc);
         findU32(o, "crc32", e.crc32);
         findString(o, "tags", e.tags);
-        if (o.contains("roi")) {
-            auto& roi = o["roi"];
-            e.roi_x = roi.value("x", 0.0f);
-            e.roi_y = roi.value("y", 0.0f);
-            e.roi_w = roi.value("w", 0.0f);
-            e.roi_h = roi.value("h", 0.0f);
+        findFloat(o, "threshold", e.threshold);
+        {
+            auto roi_str = findSubObject(o, "roi");
+            if (!roi_str.empty()) {
+                findFloat(roi_str, "x", e.roi_x);
+                findFloat(roi_str, "y", e.roi_y);
+                findFloat(roi_str, "w", e.roi_w);
+                findFloat(roi_str, "h", e.roi_h);
+            }
         }
         out.entries.push_back(std::move(e));
     }
@@ -244,6 +279,7 @@ bool saveManifestJson(const std::string& path_utf8, const TemplateManifest& m, s
         ss << "      \"mtime_utc\": " << e.mtime_utc << ",\n";
         ss << "      \"crc32\": " << e.crc32 << ",\n";
         ss << "      \"tags\": \"" << jsonEscape(e.tags) << "\"";  
+        if (e.threshold > 0.0f) ss << ",\n      \"threshold\": " << e.threshold;
         if (e.roi_w > 0.0f || e.roi_h > 0.0f) {
             ss << ",\n      \"roi\": { \"x\": " << e.roi_x << ", \"y\": " << e.roi_y
                << ", \"w\": " << e.roi_w << ", \"h\": " << e.roi_h << " }";

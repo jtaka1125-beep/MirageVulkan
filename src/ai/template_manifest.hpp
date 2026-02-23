@@ -19,6 +19,8 @@ struct TemplateEntry {
     uint64_t mtime_utc = 0;
     uint32_t crc32 = 0;
     std::string tags;
+    // 改善J: テンプレート個別閾値 (0 = global default_threshold 使用)
+    float threshold = 0.0f;
     // 改善E: 検索ROI (正規化座標 0.0-1.0、roi_w=0 で全画面)
     float roi_x = 0.0f;
     float roi_y = 0.0f;
