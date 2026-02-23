@@ -181,6 +181,229 @@ void adbDetectionThread() {
 }
 
 // =============================================================================
+// Device Update Thread — Static Helpers
+// =============================================================================
+
+// スロットレシーバーからのフレーム取得・AI処理
+static void updateSlotReceiverFrames(const std::shared_ptr<gui::GuiApplication>& gui) {
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        if (g_receivers[i]) {
+            ::gui::MirrorFrame frame;
+            if (g_receivers[i]->get_latest_frame(frame)) {
+                if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
+                    std::string id = "slot_" + std::to_string(i);
+                    mirage::dispatcher().dispatchFrame(id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
+
+#ifdef USE_AI
+                    if (g_ai_engine && g_ai_enabled) {
+                        static bool s_async_started=false;
+                        if(!s_async_started){g_ai_engine->setAsyncMode(true);s_async_started=true;}
+                        g_ai_engine->processFrameAsync(i, frame.rgba.data(), frame.width, frame.height);
+                        // Push match results to GUI overlays
+                        if (gui) {
+                            auto matches = g_ai_engine->getLastMatches();
+                            if (!matches.empty()) {
+                                std::vector<DeviceInfo::MatchOverlay> overlays;
+                                overlays.reserve(matches.size());
+                                for (const auto& m : matches) {
+                                    DeviceInfo::MatchOverlay o;
+                                    o.template_id = m.template_id;
+                                    o.label = m.label;
+                                    o.x = m.x; o.y = m.y;
+                                    o.w = m.w; o.h = m.h;
+                                    o.score = m.score;
+                                    o.color = 0;
+                                    overlays.push_back(o);
+                                }
+                                gui->updateDeviceOverlays(id, overlays);
+                            }
+                        }
+                    }
+#endif
+                }
+            }
+        }
+    }
+}
+
+// USBデバイス登録・フレーム取得・ハイブリッド/マルチレシーバー統計更新
+static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplication>& gui) {
+    // Update video frames from all USB devices (multi-device mode)
+    if (g_hybrid_cmd) {
+        auto device_ids = g_hybrid_cmd->get_device_ids();
+
+        // Register all USB devices
+        for (const auto& device_id : device_ids) {
+            if (g_registered_usb_devices.find(device_id) == g_registered_usb_devices.end()) {
+                // Resolve USB serial to hardware_id for device unification
+                std::string resolved_id = device_id;
+                std::string display_name = "USB:" + device_id.substr(0, std::min(size_t(8), device_id.size()));
+                if (g_adb_manager) {
+                    std::string hw_id = g_adb_manager->resolveUsbSerial(device_id);
+                    if (!hw_id.empty()) {
+                        resolved_id = hw_id;
+                        ::gui::AdbDeviceManager::UniqueDevice dev_info;
+                        if (g_adb_manager->getUniqueDevice(hw_id, dev_info)) {
+                            display_name = dev_info.display_name;
+                        }
+                    }
+                }
+                // Skip if already registered under resolved hardware_id
+                if (g_multi_devices_added.count(resolved_id) || g_registered_usb_devices.count(resolved_id)) {
+                    g_registered_usb_devices.insert(device_id); // Mark original as handled
+                    continue;
+                }
+                mirage::dispatcher().registerDevice(resolved_id, display_name, "usb");
+                g_registered_usb_devices.insert(device_id);
+                g_registered_usb_devices.insert(resolved_id);
+
+                if (!g_main_device_set) {
+                    gui->setMainDevice(resolved_id);
+                    g_main_device_set = true;
+                }
+            }
+        }
+
+        // Get frames from per-device decoders
+        struct FrameUpdate {
+            std::string device_id;
+            ::gui::MirrorFrame frame;
+            uint64_t frames_decoded;
+            uint64_t packets_received;
+        };
+        std::vector<FrameUpdate> frame_updates;
+
+        {
+            std::lock_guard<std::mutex> lock(g_usb_decoders_mutex);
+            for (auto& [device_id, decoder] : g_usb_decoders) {
+                if (!decoder) continue;
+
+                ::gui::MirrorFrame frame;
+                if (decoder->get_latest_frame(frame)) {
+                    if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
+                        FrameUpdate update;
+                        update.device_id = device_id;
+                        update.frame = std::move(frame);
+                        update.frames_decoded = decoder->frames_decoded();
+                        update.packets_received = decoder->packets_received();
+                        frame_updates.push_back(std::move(update));
+                    }
+                }
+            }
+        }
+
+        for (auto& update : frame_updates) {
+            // Resolve USB serial to hardware_id for device unification
+            std::string resolved_id = update.device_id;
+            if (g_adb_manager) {
+                std::string hw_id = g_adb_manager->resolveUsbSerial(update.device_id);
+                if (!hw_id.empty()) resolved_id = hw_id;
+            }
+            if (g_registered_usb_devices.find(update.device_id) == g_registered_usb_devices.end() &&
+                !g_multi_devices_added.count(resolved_id) && !g_registered_usb_devices.count(resolved_id)) {
+                std::string display_name = "USB:" + update.device_id.substr(0, std::min(size_t(8), update.device_id.size()));
+                if (g_adb_manager) {
+                    ::gui::AdbDeviceManager::UniqueDevice dev_info;
+                    if (g_adb_manager->getUniqueDevice(resolved_id, dev_info)) {
+                        display_name = dev_info.display_name;
+                    }
+                }
+                mirage::dispatcher().registerDevice(resolved_id, display_name, "usb");
+                g_registered_usb_devices.insert(update.device_id);
+                g_registered_usb_devices.insert(resolved_id);
+                if (!g_main_device_set) {
+                    gui->setMainDevice(resolved_id);
+                    g_main_device_set = true;
+                }
+            }
+            // スライディングウィンドウFPS計算（1秒間隔で更新）
+            float fps = 0.0f;
+            {
+                struct FpsState {
+                    uint64_t prev_frames = 0;
+                    std::chrono::steady_clock::time_point prev_time = std::chrono::steady_clock::now();
+                    float last_fps = 0.0f;
+                };
+                static std::unordered_map<std::string, FpsState> fps_tracker;
+                auto& st = fps_tracker[update.device_id];
+                auto now_fps = std::chrono::steady_clock::now();
+                double elapsed_sec = std::chrono::duration<double>(now_fps - st.prev_time).count();
+                if (elapsed_sec >= 1.0) {
+                    uint64_t delta_frames = update.frames_decoded - st.prev_frames;
+                    st.last_fps = static_cast<float>(delta_frames / elapsed_sec);
+                    st.prev_frames = update.frames_decoded;
+                    st.prev_time = now_fps;
+                }
+                fps = st.last_fps;
+            }
+            mirage::dispatcher().dispatchFrame(resolved_id, update.frame.rgba.data(), update.frame.width, update.frame.height, update.frame.frame_id);
+            mirage::dispatcher().dispatchStatus(resolved_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive), fps, 0, 0);
+        }
+    }
+
+    // Fallback: Update from hybrid receiver if no per-device decoders active
+    // NOTE: g_hybrid_receiver is currently always nullptr (MirageCapture TCP path
+    // handles video via g_usb_decoders + g_multi_receiver). This block is kept
+    // for future compatibility if HybridReceiver is re-enabled.
+    if (g_hybrid_receiver && g_hybrid_receiver->running() && g_usb_decoders.empty()) {
+        ::gui::MirrorFrame frame;
+        if (g_hybrid_receiver->get_latest_frame(frame)) {
+            if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
+                if (!g_fallback_device_added) {
+                    mirage::dispatcher().registerDevice(g_fallback_device_id, "Hybrid Device", "hybrid");
+                    gui->setMainDevice(g_fallback_device_id);
+                    g_fallback_device_added = true;
+                }
+                mirage::dispatcher().dispatchFrame(g_fallback_device_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
+                mirage::dispatcher().dispatchStatus(g_fallback_device_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
+            }
+        }
+    }
+
+    // Note: g_multi_receiver frame delivery is handled by framePollThread via setFrameCallback
+    // (gui_init.cpp). Polling get_latest_frame here races with has_new_frame_ flag causing
+    // frame starvation. Stats-only update here.
+    if (g_multi_receiver && g_multi_receiver->running()) {
+        auto stats = g_multi_receiver->getStats();
+        for (const auto& ds : stats) {
+            if (ds.receiving) {
+                mirage::dispatcher().dispatchStatus(ds.hardware_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive), ds.fps, 0.0f, ds.bandwidth_mbps);
+            } else {
+                mirage::dispatcher().dispatchStatus(ds.hardware_id, static_cast<int>(mirage::gui::DeviceStatus::Idle));
+            }
+        }
+    }
+}
+
+// TCPビデオレシーバーからのフレーム取得（ADB forwardモード）
+static void updateTcpReceiverFrames([[maybe_unused]] const std::shared_ptr<gui::GuiApplication>& gui) {
+    // DISABLED: Using TCP direct mode via restart_as_tcp instead
+    // if (g_tcp_video_receiver && g_tcp_video_receiver->running()) {
+    //     auto device_ids = g_tcp_video_receiver->getDeviceIds();
+    //     for (const auto& hw_id : device_ids) {
+    //         ::gui::MirrorFrame frame;
+    //         if (g_tcp_video_receiver->get_latest_frame(hw_id, frame)) {
+    //             if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
+    //                 if (!g_multi_devices_added[hw_id]) {
+    //                     ::gui::AdbDeviceManager::UniqueDevice dev_info;
+    //                     std::string display_name = hw_id;
+    //                     if (g_adb_manager && g_adb_manager->getUniqueDevice(hw_id, dev_info)) {
+    //                         display_name = dev_info.display_name;
+    //                     }
+    //                     gui->addDevice(hw_id, display_name);
+    //                     mirage::dispatcher().registerDevice(hw_id, display_name, "tcp");
+    //                     g_multi_devices_added[hw_id] = true;
+    //                     gui->logInfo(u8"TCP映像受信開始: " + display_name);
+    //                 }
+    //                 mirage::dispatcher().dispatchFrame(hw_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
+    //                 mirage::dispatcher().dispatchStatus(hw_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
+    //             }
+    //         }
+    //     }
+    // }
+}
+
+// =============================================================================
 // Device Update Thread
 // =============================================================================
 
@@ -315,217 +538,9 @@ void deviceUpdateThread() {
             lastStatsTime = now;
         }
 
-        // Update video frames from slot receivers
-        for (int i = 0; i < MAX_SLOTS; i++) {
-            if (g_receivers[i]) {
-                ::gui::MirrorFrame frame;
-                if (g_receivers[i]->get_latest_frame(frame)) {
-                    if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-                        std::string id = "slot_" + std::to_string(i);
-                        mirage::dispatcher().dispatchFrame(id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
-
-#ifdef USE_AI
-                        if (g_ai_engine && g_ai_enabled) {
-                            static bool s_async_started=false;
-                            if(!s_async_started){g_ai_engine->setAsyncMode(true);s_async_started=true;}
-                            g_ai_engine->processFrameAsync(i, frame.rgba.data(), frame.width, frame.height);
-                            // Push match results to GUI overlays
-                            if (gui) {
-                                auto matches = g_ai_engine->getLastMatches();
-                                if (!matches.empty()) {
-                                    std::vector<DeviceInfo::MatchOverlay> overlays;
-                                    overlays.reserve(matches.size());
-                                    for (const auto& m : matches) {
-                                        DeviceInfo::MatchOverlay o;
-                                        o.template_id = m.template_id;
-                                        o.label = m.label;
-                                        o.x = m.x; o.y = m.y;
-                                        o.w = m.w; o.h = m.h;
-                                        o.score = m.score;
-                                        o.color = 0;
-                                        overlays.push_back(o);
-                                    }
-                                    gui->updateDeviceOverlays(id, overlays);
-                                }
-                            }
-                        }
-#endif
-                    }
-                }
-            }
-        }
-
-        // Update video frames from all USB devices (multi-device mode)
-        if (g_hybrid_cmd) {
-            auto device_ids = g_hybrid_cmd->get_device_ids();
-
-            // Register all USB devices
-            for (const auto& device_id : device_ids) {
-                if (g_registered_usb_devices.find(device_id) == g_registered_usb_devices.end()) {
-                    // Resolve USB serial to hardware_id for device unification
-                    std::string resolved_id = device_id;
-                    std::string display_name = "USB:" + device_id.substr(0, std::min(size_t(8), device_id.size()));
-                    if (g_adb_manager) {
-                        std::string hw_id = g_adb_manager->resolveUsbSerial(device_id);
-                        if (!hw_id.empty()) {
-                            resolved_id = hw_id;
-                            ::gui::AdbDeviceManager::UniqueDevice dev_info;
-                            if (g_adb_manager->getUniqueDevice(hw_id, dev_info)) {
-                                display_name = dev_info.display_name;
-                            }
-                        }
-                    }
-                    // Skip if already registered under resolved hardware_id
-                    if (g_multi_devices_added.count(resolved_id) || g_registered_usb_devices.count(resolved_id)) {
-                        g_registered_usb_devices.insert(device_id); // Mark original as handled
-                        continue;
-                    }
-                    mirage::dispatcher().registerDevice(resolved_id, display_name, "usb");
-                    g_registered_usb_devices.insert(device_id);
-                    g_registered_usb_devices.insert(resolved_id);
-
-                    if (!g_main_device_set) {
-                        gui->setMainDevice(resolved_id);
-                        g_main_device_set = true;
-                    }
-                }
-            }
-
-            // Get frames from per-device decoders
-            struct FrameUpdate {
-                std::string device_id;
-                ::gui::MirrorFrame frame;
-                uint64_t frames_decoded;
-                uint64_t packets_received;
-            };
-            std::vector<FrameUpdate> frame_updates;
-
-            {
-                std::lock_guard<std::mutex> lock(g_usb_decoders_mutex);
-                for (auto& [device_id, decoder] : g_usb_decoders) {
-                    if (!decoder) continue;
-
-                    ::gui::MirrorFrame frame;
-                    if (decoder->get_latest_frame(frame)) {
-                        if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-                            FrameUpdate update;
-                            update.device_id = device_id;
-                            update.frame = std::move(frame);
-                            update.frames_decoded = decoder->frames_decoded();
-                            update.packets_received = decoder->packets_received();
-                            frame_updates.push_back(std::move(update));
-                        }
-                    }
-                }
-            }
-
-            for (auto& update : frame_updates) {
-                // Resolve USB serial to hardware_id for device unification
-                std::string resolved_id = update.device_id;
-                if (g_adb_manager) {
-                    std::string hw_id = g_adb_manager->resolveUsbSerial(update.device_id);
-                    if (!hw_id.empty()) resolved_id = hw_id;
-                }
-                if (g_registered_usb_devices.find(update.device_id) == g_registered_usb_devices.end() &&
-                    !g_multi_devices_added.count(resolved_id) && !g_registered_usb_devices.count(resolved_id)) {
-                    std::string display_name = "USB:" + update.device_id.substr(0, std::min(size_t(8), update.device_id.size()));
-                    if (g_adb_manager) {
-                        ::gui::AdbDeviceManager::UniqueDevice dev_info;
-                        if (g_adb_manager->getUniqueDevice(resolved_id, dev_info)) {
-                            display_name = dev_info.display_name;
-                        }
-                    }
-                    mirage::dispatcher().registerDevice(resolved_id, display_name, "usb");
-                    g_registered_usb_devices.insert(update.device_id);
-                    g_registered_usb_devices.insert(resolved_id);
-                    if (!g_main_device_set) {
-                        gui->setMainDevice(resolved_id);
-                        g_main_device_set = true;
-                    }
-                }
-                // スライディングウィンドウFPS計算（1秒間隔で更新）
-                float fps = 0.0f;
-                {
-                    struct FpsState {
-                        uint64_t prev_frames = 0;
-                        std::chrono::steady_clock::time_point prev_time = std::chrono::steady_clock::now();
-                        float last_fps = 0.0f;
-                    };
-                    static std::unordered_map<std::string, FpsState> fps_tracker;
-                    auto& st = fps_tracker[update.device_id];
-                    auto now_fps = std::chrono::steady_clock::now();
-                    double elapsed_sec = std::chrono::duration<double>(now_fps - st.prev_time).count();
-                    if (elapsed_sec >= 1.0) {
-                        uint64_t delta_frames = update.frames_decoded - st.prev_frames;
-                        st.last_fps = static_cast<float>(delta_frames / elapsed_sec);
-                        st.prev_frames = update.frames_decoded;
-                        st.prev_time = now_fps;
-                    }
-                    fps = st.last_fps;
-                }
-                mirage::dispatcher().dispatchFrame(resolved_id, update.frame.rgba.data(), update.frame.width, update.frame.height, update.frame.frame_id);
-                mirage::dispatcher().dispatchStatus(resolved_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive), fps, 0, 0);
-            }
-        }
-
-        // Fallback: Update from hybrid receiver if no per-device decoders active
-        // NOTE: g_hybrid_receiver is currently always nullptr (MirageCapture TCP path
-        // handles video via g_usb_decoders + g_multi_receiver). This block is kept
-        // for future compatibility if HybridReceiver is re-enabled.
-        if (g_hybrid_receiver && g_hybrid_receiver->running() && g_usb_decoders.empty()) {
-            ::gui::MirrorFrame frame;
-            if (g_hybrid_receiver->get_latest_frame(frame)) {
-                if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-                    if (!g_fallback_device_added) {
-                        mirage::dispatcher().registerDevice(g_fallback_device_id, "Hybrid Device", "hybrid");
-                        gui->setMainDevice(g_fallback_device_id);
-                        g_fallback_device_added = true;
-                    }
-                    mirage::dispatcher().dispatchFrame(g_fallback_device_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
-                    mirage::dispatcher().dispatchStatus(g_fallback_device_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
-                }
-            }
-        }
-
-        // Note: g_multi_receiver frame delivery is handled by framePollThread via setFrameCallback
-        // (gui_init.cpp). Polling get_latest_frame here races with has_new_frame_ flag causing
-        // frame starvation. Stats-only update here.
-        if (g_multi_receiver && g_multi_receiver->running()) {
-            auto stats = g_multi_receiver->getStats();
-            for (const auto& ds : stats) {
-                if (ds.receiving) {
-                    mirage::dispatcher().dispatchStatus(ds.hardware_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive), ds.fps, 0.0f, ds.bandwidth_mbps);
-                } else {
-                    mirage::dispatcher().dispatchStatus(ds.hardware_id, static_cast<int>(mirage::gui::DeviceStatus::Idle));
-                }
-            }
-        }
-
-        // DISABLED: Using TCP direct mode via restart_as_tcp instead
-        // Update video frames from TCP video receiver (ADB forward mode)
-        // if (g_tcp_video_receiver && g_tcp_video_receiver->running()) {
-        //     auto device_ids = g_tcp_video_receiver->getDeviceIds();
-        //     for (const auto& hw_id : device_ids) {
-        //         ::gui::MirrorFrame frame;
-        //         if (g_tcp_video_receiver->get_latest_frame(hw_id, frame)) {
-        //             if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-        //                 if (!g_multi_devices_added[hw_id]) {
-        //                     ::gui::AdbDeviceManager::UniqueDevice dev_info;
-        //                     std::string display_name = hw_id;
-        //                     if (g_adb_manager && g_adb_manager->getUniqueDevice(hw_id, dev_info)) {
-        //                         display_name = dev_info.display_name;
-        //                     }
-        //                     gui->addDevice(hw_id, display_name);
-        //                     mirage::dispatcher().registerDevice(hw_id, display_name, "tcp");
-        //                     g_multi_devices_added[hw_id] = true;
-        //                     gui->logInfo(u8"TCP映像受信開始: " + display_name);
-        //                 }
-        //                 mirage::dispatcher().dispatchFrame(hw_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
-        //                 mirage::dispatcher().dispatchStatus(hw_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
-        //             }
-        //         }
-        //     }
-        // }
+        updateSlotReceiverFrames(gui);
+        registerAndUpdateUsbDevices(gui);
+        updateTcpReceiverFrames(gui);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
