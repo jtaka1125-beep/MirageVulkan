@@ -657,6 +657,18 @@ if(BUILD_TESTS)
         target_compile_definitions(test_template_versioning PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_test(NAME TemplateVersioningTest COMMAND test_template_versioning)
 
+        # TemplateStore CRUD unit tests (TS-1 through TS-12)
+        add_executable(test_template_store
+            tests/test_template_store.cpp
+            src/ai/template_store.cpp
+            src/stb_image_impl.cpp
+        )
+        target_include_directories(test_template_store PRIVATE src)
+        target_link_libraries(test_template_store PRIVATE gtest)
+        target_compile_definitions(test_template_store PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME TemplateStoreTest COMMAND test_template_store)
+
+
         # 改善N/Q/R: AI improvements struct/logic tests
         add_executable(test_ai_improvements_nqr
             tests/test_ai_improvements_nqr.cpp
