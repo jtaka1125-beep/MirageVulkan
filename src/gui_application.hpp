@@ -343,6 +343,9 @@ public:
     // ADB Device Manager integration
     void setAdbDeviceManager(::gui::AdbDeviceManager* manager) { adb_manager_ = manager; }
 
+    // Frame capture (saves decoded RGBA directly to PNG, bypasses Vulkan BitBlt limitation)
+    void requestFrameCapture(const std::string& device_id);
+
     // Screenshot capture and display
     void captureScreenshot(const std::string& device_id);
     bool hasScreenshot() const { return !screenshot_data_.empty(); }
@@ -502,6 +505,10 @@ private:
 
     // ADB Device Manager
     ::gui::AdbDeviceManager* adb_manager_ = nullptr;
+
+    // Frame capture members
+    std::atomic<bool> capture_frame_requested_{false};
+    std::string capture_frame_device_id_;
 
     // Screenshot popup
     bool show_screenshot_popup_ = false;

@@ -24,7 +24,7 @@ namespace mirage::gui {
 using namespace mirage::gui::state;
 
 // =============================================================================
-// Screenshot Capture
+// Screenshot Capture (ADB-based)
 // =============================================================================
 
 void GuiApplication::captureScreenshot(const std::string& device_id) {
@@ -77,7 +77,6 @@ void GuiApplication::captureScreenshot(const std::string& device_id) {
     show_screenshot_popup_ = true;
 
     // Clear PNG data after texture creation to reduce memory usage
-    // (PNG data is no longer needed once texture is on GPU)
     screenshot_data_.clear();
     screenshot_data_.shrink_to_fit();
 
@@ -161,6 +160,16 @@ void GuiApplication::renderScreenshotPopup() {
         screenshot_vk_texture_.reset(); screenshot_vk_ds_ = VK_NULL_HANDLE;
         screenshot_data_.clear();
     }
+}
+
+// =============================================================================
+// Frame Capture (saves decoded RGBA directly to PNG, avoids Vulkan BitBlt issue)
+// =============================================================================
+
+void GuiApplication::requestFrameCapture(const std::string& device_id) {
+    capture_frame_device_id_ = device_id;
+    capture_frame_requested_.store(true);
+    MLOG_INFO("capture", "Frame capture requested for device: %s", device_id.c_str());
 }
 
 } // namespace mirage::gui

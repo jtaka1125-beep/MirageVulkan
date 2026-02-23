@@ -147,10 +147,12 @@ void GuiApplication::renderLeftPanel() {
     ImGui::Text(u8"\u64cd\u4f5c");
     ImGui::Separator();
 
-    float half_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    float avail_w = ImGui::GetContentRegionAvail().x;
+    float third_w = (avail_w - ImGui::GetStyle().ItemSpacing.x * 2) / 3.0f;
+    float half_w = (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
     // Row 1: Screenshot + Auto Setup
-    if (ImGui::Button(u8"\u30b9\u30af\u30ea\u30fc\u30f3\u30b7\u30e7\u30c3\u30c8", ImVec2(half_w, 0))) {
+    if (ImGui::Button(u8"\u30b9\u30af\u30ea\u30fc\u30f3\u30b7\u30e7\u30c3\u30c8", ImVec2(third_w, 0))) {
         // Capture from main device, fallback to first available
         if (adb_manager_) {
             std::string target;
@@ -174,12 +176,29 @@ void GuiApplication::renderLeftPanel() {
 
     ImGui::SameLine();
 
+    // Frame Capture: saves decoded mirror frame directly to PNG
+    if (ImGui::Button(u8"\u30d5\u30ec\u30fc\u30e0\u4fdd\u5b58", ImVec2(third_w, 0))) {
+        std::string target;
+        {
+            std::lock_guard<std::mutex> lock(devices_mutex_);
+            target = main_device_id_;
+        }
+        if (!target.empty()) {
+            requestFrameCapture(target);
+            logInfo(u8"\u30d5\u30ec\u30fc\u30e0\u30ad\u30e3\u30d7\u30c1\u30e3\u30ea\u30af\u30a8\u30b9\u30c8: " + target);
+        } else {
+            logWarning(u8"\u30e1\u30a4\u30f3\u30c7\u30d0\u30a4\u30b9\u306a\u3057");
+        }
+    }
+
+    ImGui::SameLine();
+
     // Auto Setup button (disabled while running)
     if (s_auto_setup_running) {
         ImGui::BeginDisabled();
-        ImGui::Button(u8"Auto Setup...", ImVec2(half_w, 0));
+        ImGui::Button(u8"Auto Setup...", ImVec2(third_w, 0));
         ImGui::EndDisabled();
-    } else if (ImGui::Button(u8"Auto Setup", ImVec2(half_w, 0))) {
+    } else if (ImGui::Button(u8"Auto Setup", ImVec2(third_w, 0))) {
         if (adb_manager_) {
             auto devices = adb_manager_->getUniqueDevices();
             if (!devices.empty()) {

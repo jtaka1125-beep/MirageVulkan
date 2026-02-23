@@ -21,6 +21,9 @@
 #include "mirage_config.hpp"
 #include "config_loader.hpp"
 
+
+
+
 // ImGui Win32 message handler
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -417,6 +420,20 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
     device.frame_count++;
     device.last_frame_time = getCurrentTimeMs();
     device.last_texture_update_ms.store(device.last_frame_time, std::memory_order_relaxed);
+
+    // Frame capture: save decoded RGBA to PNG if requested for this device
+    if (capture_frame_requested_.load() && capture_frame_device_id_ == id) {
+        capture_frame_requested_.store(false);
+        char appdata[MAX_PATH] = {};
+        ExpandEnvironmentStringsA("%APPDATA%", appdata, MAX_PATH);
+        std::string out_path = std::string(appdata) +
+                               "\\MirageSystem\\capture_" +
+                               id.substr(0, 8) + "_" +
+                               std::to_string(device.last_frame_time) + ".png";
+        // Defined in gui_frame_capture_impl.cpp
+        extern bool mirageGuiSavePng(const char*, int, int, const uint8_t*);
+        mirageGuiSavePng(out_path.c_str(), width, height, rgba_ptr);
+    }
 }
 
 // Thread-safe frame queue - can be called from any thread
