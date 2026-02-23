@@ -331,28 +331,25 @@ std::string AdbDeviceManager::getHardwareId(const std::string& adb_id) {
 }
 
 void AdbDeviceManager::refresh() {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Save port assignments before clearing (these are set by startScreenCapture)
+    // Phase 1: ポート割り当てを保存（要ロック）
     std::unordered_map<std::string, int> saved_tcp_ports;
     std::unordered_map<std::string, int> saved_assigned_ports;
-    for (const auto& [hw_id, ud] : unique_devices_) {
-        if (ud.assigned_tcp_port > 0) {
-            saved_tcp_ports[hw_id] = ud.assigned_tcp_port;
-        }
-        if (ud.assigned_port > 0) {
-            saved_assigned_ports[hw_id] = ud.assigned_port;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [hw_id, ud] : unique_devices_) {
+            if (ud.assigned_tcp_port > 0) {
+                saved_tcp_ports[hw_id] = ud.assigned_tcp_port;
+            }
+            if (ud.assigned_port > 0) {
+                saved_assigned_ports[hw_id] = ud.assigned_port;
+            }
         }
     }
 
-    // Clear old data
-    devices_.clear();
-    unique_devices_.clear();
-
-    // Get all ADB devices
+    // Phase 2: I/O実行（ロック不要 — adbCommand/getDevicePropはmutex_不使用）
     auto adb_ids = parseAdbDevices();
 
-    // Collect device info
+    std::map<std::string, DeviceInfo> new_devices;
     for (const auto& adb_id : adb_ids) {
         DeviceInfo info;
         info.adb_id = adb_id;
@@ -383,8 +380,42 @@ void AdbDeviceManager::refresh() {
             }
         }
 
-        devices_[adb_id] = info;
+        // --- Android version / SDK ---
+        info.android_version = getDeviceProp(adb_id, "ro.build.version.release");
+        {
+            std::string sdk_str = getDeviceProp(adb_id, "ro.build.version.sdk");
+            if (!sdk_str.empty()) {
+                try { info.sdk_level = std::stoi(sdk_str); } catch (...) {}
+            }
+        }
+
+        // --- Screen resolution & density ---
+        {
+            std::string wm = adbCommand(adb_id, "shell wm size");
+            parseScreenSize(wm, info.screen_width, info.screen_height);
+            std::string density_out = adbCommand(adb_id, "shell wm density");
+            // "Physical density: 480" or "Override density: 420"
+            size_t colon = density_out.rfind(':');
+            if (colon != std::string::npos) {
+                std::string num = density_out.substr(colon + 1);
+                try { info.screen_density = std::stoi(num); } catch (...) {}
+            }
+        }
+
+        // --- Battery level ---
+        {
+            std::string bat = adbCommand(adb_id, "shell dumpsys battery");
+            info.battery_level = parseBatteryLevel(bat);
+        }
+
+        new_devices[adb_id] = info;
     }
+
+    // Phase 3: ロック取得してデータ更新
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    devices_ = std::move(new_devices);
+    unique_devices_.clear();
 
     // =========================================================================
     // hardware_id統一パス: android_id取得失敗のUSBデバイスをWiFiデバイスと照合
@@ -469,6 +500,15 @@ void AdbDeviceManager::refresh() {
         unique.hardware_id = info.hardware_id;
         unique.model = info.model;
         unique.display_name = info.manufacturer + " " + info.model;
+        unique.screen_width = info.screen_width;
+        unique.screen_height = info.screen_height;
+        unique.screen_density = info.screen_density;
+        unique.android_version = info.android_version;
+        unique.sdk_level = info.sdk_level;
+        if (info.battery_level >= 0 || unique.battery_level < 0)
+            unique.battery_level = info.battery_level;
+        if (info.conn_type == ConnectionType::USB && unique.usb_serial.empty())
+            unique.usb_serial = info.adb_id;
 
         if (info.conn_type == ConnectionType::USB) {
             unique.usb_connections.push_back(adb_id);
@@ -926,6 +966,77 @@ std::string AdbDeviceManager::resolveUsbSerial(const std::string& usb_serial) {
     }
 
     return "";
+}
+
+void AdbDeviceManager::queryScreenInfo(const std::string& adb_id) {
+    // デバイス存在確認 & hardware_id取得 (ロック内)
+    std::string hardware_id;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = devices_.find(adb_id);
+        if (it == devices_.end()) return;
+        hardware_id = it->second.hardware_id;
+    }
+
+    // ブロッキングI/Oはロック外で実行
+    std::string wm = adbCommand(adb_id, "shell wm size");
+    std::string bat = adbCommand(adb_id, "shell dumpsys battery");
+
+    int screen_w = 0, screen_h = 0;
+    parseScreenSize(wm, screen_w, screen_h);
+    int battery = parseBatteryLevel(bat);
+
+    // 結果をロック内で書き込み
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = devices_.find(adb_id);
+    if (it == devices_.end()) return;  // refresh()で消えた可能性
+    auto& info = it->second;
+    info.screen_width = screen_w;
+    info.screen_height = screen_h;
+    info.battery_level = battery;
+
+    // unique deviceも更新
+    auto uit = unique_devices_.find(hardware_id);
+    if (uit != unique_devices_.end()) {
+        uit->second.screen_width = screen_w;
+        uit->second.screen_height = screen_h;
+        uit->second.battery_level = battery;
+    }
+}
+
+// static
+int AdbDeviceManager::parseBatteryLevel(const std::string& s) {
+    // "dumpsys battery" output contains line: "  level: 78"
+    size_t pos = s.find("level:");
+    if (pos == std::string::npos) return -1;
+    pos += 6; // skip "level:"
+    // skip whitespace
+    while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) pos++;
+    if (pos >= s.size()) return -1;
+    try {
+        size_t end;
+        int v = std::stoi(s.substr(pos), &end);
+        if (v >= 0 && v <= 100) return v;
+    } catch (...) {}
+    return -1;
+}
+
+// static
+bool AdbDeviceManager::parseScreenSize(const std::string& s, int& w, int& h) {
+    // "wm size" output: "Physical size: 1080x2400" or "Override size: 1080x2400"
+    size_t pos = s.find('x');
+    if (pos == std::string::npos || pos == 0) return false;
+    // find start of width number (go back from 'x')
+    size_t w_end = pos;
+    size_t w_start = w_end;
+    while (w_start > 0 && std::isdigit((unsigned char)s[w_start - 1])) w_start--;
+    if (w_start == w_end) return false;
+    try {
+        w = std::stoi(s.substr(w_start, w_end - w_start));
+        h = std::stoi(s.substr(pos + 1));
+        return (w > 0 && h > 0);
+    } catch (...) {}
+    return false;
 }
 
 } // namespace gui

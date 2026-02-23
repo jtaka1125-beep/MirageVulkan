@@ -119,6 +119,10 @@ public:
     void clearTemplates();
 
     // フレーム処理（手動呼び出し用、EventBus経由でも自動呼び出しされる）
+    // 改善O: 非同期処理 — スロット別ワーカースレッド
+    void processFrameAsync(int slot, const uint8_t* rgba, int width, int height);
+    void setAsyncMode(bool enable);
+    bool isAsyncMode() const;
     AIAction processFrame(int slot, const uint8_t* rgba, int width, int height);
 
     // コールバック設定

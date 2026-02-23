@@ -38,6 +38,7 @@ public:
         int screen_density = 0;       // DPI (例: 240)
         std::string android_version;  // "15" (ro.build.version.release)
         int sdk_level = 0;            // 35 (ro.build.version.sdk)
+        int battery_level = -1;       // バッテリー残量 % (-1=不明)
 
         // For duplicate detection
         std::string unique_key() const { return hardware_id.empty() ? adb_id : hardware_id; }
@@ -63,6 +64,7 @@ public:
         int screen_density = 0;
         std::string android_version;
         int sdk_level = 0;
+        int battery_level = -1;       // バッテリー残量 % (-1=不明)
 
         std::string usb_serial;         // USB physical serial (e.g. "A9250700479")
 
@@ -158,6 +160,12 @@ private:
 
     // Extract IP from WiFi ADB ID
     std::string extractIp(const std::string& adb_id);
+
+    // Parse battery level from dumpsys battery output
+    static int parseBatteryLevel(const std::string& dumpsys_output);
+
+    // Parse screen resolution from wm size output  (e.g. "Physical size: 1080x2400")
+    static bool parseScreenSize(const std::string& wm_output, int& w, int& h);
 
     mutable std::mutex mutex_;
     std::map<std::string, DeviceInfo> devices_;           // adb_id -> DeviceInfo

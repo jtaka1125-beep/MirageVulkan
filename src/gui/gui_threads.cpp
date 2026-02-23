@@ -326,7 +326,9 @@ void deviceUpdateThread() {
 
 #ifdef USE_AI
                         if (g_ai_engine && g_ai_enabled) {
-                            g_ai_engine->processFrame(i, frame.rgba.data(), frame.width, frame.height);
+                            static bool s_async_started=false;
+                            if(!s_async_started){g_ai_engine->setAsyncMode(true);s_async_started=true;}
+                            g_ai_engine->processFrameAsync(i, frame.rgba.data(), frame.width, frame.height);
                             // Push match results to GUI overlays
                             if (gui) {
                                 auto matches = g_ai_engine->getLastMatches();
