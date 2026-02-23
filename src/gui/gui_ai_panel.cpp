@@ -512,6 +512,73 @@ static void renderOverlaySettings() {
 // メインパネル描画
 // =============================================================================
 
+// OCR Keyword Mapping Editor (改善N)
+static void renderOcrKeywordEditor() {
+    if (!g_ai_engine) return;
+    ImGui::PushID("ocrN");
+    ImGui::TextColored(ImVec4(0.8f,0.8f,0.4f,1.0f),"OCR Keyword Mapping (改善N)");
+    ImGui::SameLine(); ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("keyword->action rules for OCR text detection\ntap:<id> / back / wait");
+    auto kws = g_ai_engine->getOcrKeywords();
+    static int s_sel=-1; static char s_kw[128]=""; static char s_ac[128]="tap:";
+    int th=(int)kws.size()*22+28; if(th<28)th=28; if(th>150)th=150;
+    if (ImGui::BeginTable("ocr_t",3,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollY,ImVec2(0,(float)th))) {
+        ImGui::TableSetupColumn("Keyword",ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("##d",    ImGuiTableColumnFlags_WidthFixed,24.f);
+        ImGui::TableHeadersRow();
+        for (int i=0;i<(int)kws.size();++i) {
+            ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+            if (ImGui::Selectable(kws[i].first.c_str(),s_sel==i,
+                    ImGuiSelectableFlags_SpanAllColumns|ImGuiSelectableFlags_AllowOverlap)) {
+                s_sel=i;
+                snprintf(s_kw,sizeof(s_kw),"%s",kws[i].first.c_str());
+                snprintf(s_ac,sizeof(s_ac),"%s",kws[i].second.c_str());
+            }
+            ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(kws[i].second.c_str());
+            ImGui::TableSetColumnIndex(2); ImGui::PushID(i);
+            if (ImGui::SmallButton("x")){
+                g_ai_engine->removeOcrKeyword(kws[i].first);
+                if(s_sel==i){s_sel=-1;s_kw[0]='\0';snprintf(s_ac,5,"tap:");}
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(140); ImGui::InputText("Keyword##oN",s_kw,sizeof(s_kw));
+    ImGui::SameLine(); ImGui::SetNextItemWidth(140); ImGui::InputText("Action##oN",s_ac,sizeof(s_ac));
+    ImGui::SameLine();
+    bool ok=s_kw[0]!='\0'&&s_ac[0]!='\0';
+    if(!ok)ImGui::BeginDisabled();
+    if(ImGui::Button("Register##oN")){
+        g_ai_engine->registerOcrKeyword(std::string(s_kw),std::string(s_ac));
+        s_sel=-1;s_kw[0]='\0';snprintf(s_ac,5,"tap:");
+    }
+    if(!ok)ImGui::EndDisabled();
+    ImGui::SameLine();
+    if(ImGui::Button("Clear##oN"))ImGui::OpenPopup("ocr_cl");
+    if(ImGui::BeginPopupModal("ocr_cl",nullptr,ImGuiWindowFlags_AlwaysAutoResize)){
+        ImGui::Text("Delete all OCR keywords?");
+        if(ImGui::Button("Yes",ImVec2(70,0))){
+            for(auto&kv:kws)g_ai_engine->removeOcrKeyword(kv.first);
+            s_sel=-1;ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if(ImGui::Button("Cancel",ImVec2(70,0)))ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::Spacing(); ImGui::TextDisabled("Preset:");
+    struct P{const char*l,*k,*a;};
+    static const P pre[]={
+        {"OK","OK","tap:OK"},{"Cancel","Cancel","tap:Cancel"},
+        {"Close","Close","tap:Close"},{"Retry","Retry","tap:Retry"}};
+    for(auto&pr:pre){ImGui::SameLine();ImGui::PushID(pr.l);
+        if(ImGui::SmallButton(pr.l))g_ai_engine->registerOcrKeyword(pr.k,pr.a);
+        ImGui::PopID();}
+    ImGui::PopID();
+}
+
 void renderAIPanel() {
     if (!g_ai_engine) return;
 

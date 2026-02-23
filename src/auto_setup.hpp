@@ -73,7 +73,7 @@ public:
     // host: PC IP for UDP target (not used for scrcpy, kept for API compat)
     // port: UDP port that MirrorReceiver is listening on
     // =========================================================================
-    SetupStepResult start_screen_capture(const std::string& host, int port, bool is_main = true) {
+    SetupStepResult start_screen_capture(const std::string& host, int /*port*/, bool /*is_main*/ = true) {
         (void)host; // host/port kept for API compatibility (MirageCapture uses TCP directly)
         SetupStepResult result;
 

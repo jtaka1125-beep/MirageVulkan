@@ -72,8 +72,36 @@ public:
         return ScreenState::NORMAL;
     }
 
+    // OCRテキストベースのアクションマッピング
+    void registerTextAction(const std::string& keyword, const std::string& action) {
+        text_actions_[keyword] = action;
+    }
+
+    void removeTextAction(const std::string& keyword) {
+        text_actions_.erase(keyword);
+    }
+
+    bool hasTextAction(const std::string& keyword) const {
+        return text_actions_.find(keyword) != text_actions_.end();
+    }
+
+    std::string getTextAction(const std::string& keyword) const {
+        auto it = text_actions_.find(keyword);
+        return (it != text_actions_.end()) ? it->second : std::string{};
+    }
+
+    std::vector<std::string> getTextKeywords() const {
+        std::vector<std::string> keys;
+        keys.reserve(text_actions_.size());
+        for (const auto& [k, v] : text_actions_) {
+            keys.push_back(k);
+        }
+        return keys;
+    }
+
 private:
     std::unordered_map<std::string, std::string> actions_;
+    std::unordered_map<std::string, std::string> text_actions_;
 };
 
 // =============================================================================
@@ -497,6 +525,21 @@ public:
         config_.jitter_min_ms = std::max(0, min_ms);
         config_.jitter_max_ms = std::max(0, max_ms);
         MLOG_INFO("ai", "ジッター設定: %d~%dms", min_ms, max_ms);
+    }
+
+    // 改善N
+    void registerOcrKeyword(const std::string& kw, const std::string& act) {
+        if (action_mapper_) action_mapper_->registerTextAction(kw, act);
+    }
+    void removeOcrKeyword(const std::string& kw) {
+        if (action_mapper_) action_mapper_->removeTextAction(kw);
+    }
+    std::vector<std::pair<std::string,std::string>> getOcrKeywords() const {
+        std::vector<std::pair<std::string,std::string>> r;
+        if (!action_mapper_) return r;
+        for (const auto& k : action_mapper_->getTextKeywords())
+            r.push_back({k, action_mapper_->getTextAction(k)});
+        return r;
     }
 
     void startHotReload() {
@@ -1046,6 +1089,17 @@ void AIEngine::setJitterConfig(int min_ms, int max_ms) {
     if (impl_) impl_->setJitterConfig(min_ms, max_ms);
 }
 
+void AIEngine::registerOcrKeyword(const std::string& kw, const std::string& act) {
+    if (impl_) impl_->registerOcrKeyword(kw, act);
+}
+void AIEngine::removeOcrKeyword(const std::string& kw) {
+    if (impl_) impl_->removeOcrKeyword(kw);
+}
+std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const {
+    if (!impl_) return {};
+    return impl_->getOcrKeywords();
+}
+
 void AIEngine::setHotReload(bool enable, int interval_ms) {
     if (impl_) impl_->setHotReload(enable, interval_ms);
 }
@@ -1097,6 +1151,9 @@ void AIEngine::resetAllVision() {}
 AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
 void AIEngine::setVDEConfig(const VDEConfig&) {}
 void AIEngine::setJitterConfig(int, int) {}
+void AIEngine::registerOcrKeyword(const std::string&, const std::string&) {}
+void AIEngine::removeOcrKeyword(const std::string&) {}
+std::vector<std::pair<std::string,std::string>> AIEngine::getOcrKeywords() const { return {}; }
 void AIEngine::setHotReload(bool, int) {}
 std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() const { return {}; }
 

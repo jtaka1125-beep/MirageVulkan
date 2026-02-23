@@ -49,8 +49,8 @@ std::vector<uint8_t> buildTapPayload(int x, int y, int screen_w, int screen_h) {
 }
 
 // Helper: build SWIPE command payload
-std::vector<uint8_t> buildSwipePayload(int x1, int y1, int x2, int y2, int duration_ms) {
-    std::vector<uint8_t> payload(20);
+std::vector<uint8_t> buildSwipePayload(int x1, int y1, int x2, int y2, int duration_ms, int screen_w = 0, int screen_h = 0) {
+    std::vector<uint8_t> payload(28); // ISSUE-18
 
     payload[0] = x1 & 0xFF;
     payload[1] = (x1 >> 8) & 0xFF;
@@ -76,6 +76,8 @@ std::vector<uint8_t> buildSwipePayload(int x1, int y1, int x2, int y2, int durat
     payload[17] = (duration_ms >> 8) & 0xFF;
     payload[18] = (duration_ms >> 16) & 0xFF;
     payload[19] = (duration_ms >> 24) & 0xFF;
+    payload[20] = screen_w & 0xFF; payload[21]=(screen_w>>8)&0xFF; payload[22]=(screen_w>>16)&0xFF; payload[23]=(screen_w>>24)&0xFF;
+    payload[24] = screen_h & 0xFF; payload[25]=(screen_h>>8)&0xFF; payload[26]=(screen_h>>16)&0xFF; payload[27]=(screen_h>>24)&0xFF;
 
     return payload;
 }
@@ -109,7 +111,7 @@ inline uint32_t readLE32(const uint8_t* p) {
 TEST(UsbCommand, TapPayloadStructure) {
     auto payload = buildTapPayload(100, 200, 1080, 1920);
 
-    EXPECT_EQ(payload.size(), 20u);
+    EXPECT_EQ(payload.size(), 20u);  // TAP = 20 bytes
     EXPECT_EQ(readLE32(&payload[0]), 100u);   // x
     EXPECT_EQ(readLE32(&payload[4]), 200u);   // y
     EXPECT_EQ(readLE32(&payload[8]), 1080u);  // screen_w
@@ -129,7 +131,7 @@ TEST(UsbCommand, TapFullPacket) {
     EXPECT_EQ(hdr.version, PROTOCOL_VERSION);
     EXPECT_EQ(hdr.cmd, CMD_TAP);
     EXPECT_EQ(hdr.seq, 42u);
-    EXPECT_EQ(hdr.payload_len, 20u);
+    EXPECT_EQ(hdr.payload_len, 28u);  // ISSUE-18
 }
 
 TEST(UsbCommand, TapLargeCoordinates) {
@@ -157,12 +159,14 @@ TEST(UsbCommand, TapZeroCoordinates) {
 TEST(UsbCommand, SwipePayloadStructure) {
     auto payload = buildSwipePayload(100, 200, 300, 400, 500);
 
-    EXPECT_EQ(payload.size(), 20u);
+    EXPECT_EQ(payload.size(), 28u);  // ISSUE-18
     EXPECT_EQ(readLE32(&payload[0]), 100u);   // x1
     EXPECT_EQ(readLE32(&payload[4]), 200u);   // y1
     EXPECT_EQ(readLE32(&payload[8]), 300u);   // x2
     EXPECT_EQ(readLE32(&payload[12]), 400u);  // y2
     EXPECT_EQ(readLE32(&payload[16]), 500u);  // duration_ms
+    EXPECT_EQ(readLE32(&payload[20]), 0u);    // screen_w (default 0)
+    EXPECT_EQ(readLE32(&payload[24]), 0u);    // screen_h (default 0)
 }
 
 TEST(UsbCommand, SwipeFullPacket) {
@@ -173,7 +177,7 @@ TEST(UsbCommand, SwipeFullPacket) {
     EXPECT_TRUE(parse_header(packet.data(), packet.size(), hdr));
     EXPECT_EQ(hdr.cmd, CMD_SWIPE);
     EXPECT_EQ(hdr.seq, 123u);
-    EXPECT_EQ(hdr.payload_len, 20u);
+    EXPECT_EQ(hdr.payload_len, 28u);  // ISSUE-18
 }
 
 TEST(UsbCommand, SwipeLongDuration) {

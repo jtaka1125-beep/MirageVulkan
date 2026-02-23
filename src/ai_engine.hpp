@@ -169,6 +169,10 @@ public:
     void setVDEConfig(const VDEConfig& cfg);
     // 改善L: ジッター設定 (0,0 で無効)
     void setJitterConfig(int min_ms, int max_ms);
+    // 改善N: OCRキーワードマッピング
+    void registerOcrKeyword(const std::string& keyword, const std::string& action);
+    void removeOcrKeyword(const std::string& keyword);
+    std::vector<std::pair<std::string,std::string>> getOcrKeywords() const;
     void setHotReload(bool enable, int interval_ms = 1000);
 
     // 全デバイスの状態一覧 (device_id → VisionState as int)
