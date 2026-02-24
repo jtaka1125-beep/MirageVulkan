@@ -182,14 +182,20 @@ Blockly.defineBlocksWithJsonArray([
   },
   {
     "type": "adb_container",
-    "message0": "📦 %1",
+    "message0": "📦 %1  🎯 %2",
     "args0": [
-      {"type": "field_input", "name": "NAME", "text": "操作グループ"}
+      {"type": "field_input", "name": "NAME", "text": "操作グループ"},
+      {"type": "field_dropdown", "name": "DEVICE", "options": [
+        ["メイン(DEVICE_ID)", "__main__"],
+        ["A9#956 (192.168.0.6:5555)", "192.168.0.6:5555"],
+        ["A9#479 (192.168.0.8:5555)", "192.168.0.8:5555"],
+        ["X1    (192.168.0.3:5555)", "192.168.0.3:5555"]
+      ]}
     ],
     "message1": "%1",
     "args1": [{"type": "input_statement", "name": "STEPS"}],
     "previousStatement": null, "nextStatement": null, "colour": 230,
-    "tooltip": "操作をグループ化。折りたたみ可能。"
+    "tooltip": "操作をグループ化。デバイスを個別指定可能。"
   },
   {
     "type": "adb_screen_record",
