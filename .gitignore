@@ -79,4 +79,15 @@ nul
  
 # Third-party tools (tracked) 
 !driver_installer/tools/wdi/wdi-simple.exe
-`n# Runtime state`nimgui.ini`nRESULTS.txt`n/tmp_*.txt`n/tmp_check/`n
+
+# Runtime state
+imgui.ini
+RESULTS.txt
+
+# Temporary TCP test files
+/read_tcp.py
+/tmp_tcp_capture.py
+/tcp_dump.txt
+/tmp_*.py
+/tmp_*.txt
+/tmp_check/
