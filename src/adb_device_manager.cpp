@@ -1,4 +1,4 @@
-#include "adb_device_manager.hpp"
+﻿#include "adb_device_manager.hpp"
 #include "auto_setup.hpp"
 #include <cstdio>
 #include <cstring>
@@ -69,15 +69,30 @@ std::string execCommandHidden(const std::string& cmd) {
         CloseHandle(hWritePipe);
         hWritePipe = nullptr;
 
-        // Read output
+        // Non-blocking read with 8s timeout (prevents hanging on unresponsive ADB)
+        const DWORD EXEC_TIMEOUT_MS = 8000;
+        DWORD start_tick = GetTickCount();
         char buffer[4096];
-        DWORD bytesRead;
-        while (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0) {
-            buffer[bytesRead] = '\0';
-            result += buffer;
+        while (true) {
+            DWORD available = 0;
+            if (!PeekNamedPipe(hReadPipe, nullptr, 0, nullptr, &available, nullptr)) break;
+            if (available > 0) {
+                DWORD bytesRead = 0;
+                DWORD toRead = (available < sizeof(buffer) - 1) ? available : sizeof(buffer) - 1;
+                ReadFile(hReadPipe, buffer, toRead, &bytesRead, nullptr);
+                if (bytesRead > 0) { buffer[bytesRead] = '\0'; result += buffer; }
+            } else {
+                DWORD status = STILL_ACTIVE;
+                GetExitCodeProcess(pi.hProcess, &status);
+                if (status != STILL_ACTIVE) break;
+                if (GetTickCount() - start_tick > EXEC_TIMEOUT_MS) {
+                    TerminateProcess(pi.hProcess, 1);
+                    break;
+                }
+                Sleep(25);
+            }
         }
-
-        WaitForSingleObject(pi.hProcess, 30000);
+        WaitForSingleObject(pi.hProcess, 1000);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
     }
