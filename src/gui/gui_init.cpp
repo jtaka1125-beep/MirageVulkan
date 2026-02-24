@@ -455,7 +455,6 @@ void initializeRouting() {
     g_bandwidth_monitor = std::make_unique<::gui::BandwidthMonitor>();
     g_route_controller = std::make_unique<::gui::RouteController>();
 
-    // TCP-only mode determined after USB device registration
 
     // Set TCP-only mode based on USB device availability.
     // USB AOA (dual-channel) is preferred when devices are available.
@@ -470,7 +469,6 @@ void initializeRouting() {
         }
     }
 
-    // TCP-only mode is set dynamically below based on USB device availability
 
     // FPS command callback
     g_route_controller->setFpsCommandCallback([](const std::string& device_id, int fps) { onFpsCommand(device_id, fps); });
