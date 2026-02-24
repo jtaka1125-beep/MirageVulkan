@@ -579,6 +579,20 @@ void wifiAdbWatchdogThread() {
                     "-p com.mirage.capture --ei max_size 2000");
                 MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", wifi_id.c_str());
             }
+
+            // C) ScreenCaptureService 死活監視
+            if (!dev.wifi_connections.empty()) {
+                const auto& wifi_id = dev.wifi_connections[0];
+                std::string svc = g_adb_manager->adbCommand(wifi_id,
+                    "shell dumpsys activity services com.mirage.capture");
+                if (svc.find("ScreenCaptureService") == std::string::npos) {
+                    MLOG_INFO("watchdog", "ScreenCaptureService dead on %s, restarting...",
+                              dev.display_name.c_str());
+                    g_adb_manager->adbCommand(wifi_id,
+                        "shell am start -n com.mirage.capture/.ui.CaptureActivity "
+                        "--ez auto_mirror true --es mirror_mode tcp --ei mirror_port 50100");
+                }
+            }
         }
     }
     MLOG_INFO("watchdog", "WiFi ADB watchdog stopped");
