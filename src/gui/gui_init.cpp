@@ -48,29 +48,70 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
     std::string ui_check = g_adb_manager->adbCommand(adb_id, "shell dumpsys activity top");
     if (ui_check.find("MediaProjectionPermissionActivity") != std::string::npos ||
         ui_check.find("GrantPermissionsActivity") != std::string::npos) {
-        // Parse screen resolution to compute tap coordinates
-        std::string wm_size = g_adb_manager->adbCommand(adb_id, "shell wm size");
-        int screen_w = 1080, screen_h = 1920;
-        auto parse_wh = [](const std::string& s, int& w, int& h) {
-            size_t pos = s.find(": ");
-            if (pos == std::string::npos) return false;
-            pos += 2;
-            size_t x_pos = s.find('x', pos);
-            if (x_pos == std::string::npos) return false;
-            try { w = std::stoi(s.substr(pos, x_pos - pos));
-                  h = std::stoi(s.substr(x_pos + 1)); return true; }
-            catch (...) { return false; }
-        };
-        size_t override_pos = wm_size.find("Override size");
-        size_t physical_pos = wm_size.find("Physical size");
-        if (override_pos != std::string::npos) parse_wh(wm_size.substr(override_pos), screen_w, screen_h);
-        else if (physical_pos != std::string::npos) parse_wh(wm_size.substr(physical_pos), screen_w, screen_h);
-        int tap_x = static_cast<int>(screen_w * 0.73f);
-        int tap_y = static_cast<int>(screen_h * 0.61f);
-        g_adb_manager->adbCommand(adb_id,
-            "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y));
-        MLOG_INFO("gui", "Auto-tapped MediaProjection dialog on %s (%dx%d -> %d,%d)",
-                  display_name.c_str(), screen_w, screen_h, tap_x, tap_y);
+        // uiautomator dumpで"Start now"/"今すぐ開始"ボタンを探す
+        bool tapped = false;
+        std::string ui_xml = g_adb_manager->adbCommand(adb_id,
+            "shell uiautomator dump /dev/stdout");
+        if (!ui_xml.empty()) {
+            // "Start now" / "今すぐ開始" / "START NOW" のboundsを検索
+            for (const char* label : {"Start now", "START NOW",
+                                      "\xe4\xbb\x8a\xe3\x81\x99\xe3\x81\x90\xe9\x96\x8b\xe5\xa7\x8b"}) {
+                size_t label_pos = ui_xml.find(label);
+                if (label_pos == std::string::npos) continue;
+                // 該当ノードのbounds属性を探す: bounds="[x1,y1][x2,y2]"
+                size_t bounds_pos = ui_xml.find("bounds=\"", label_pos);
+                // bounds属性が前方にある場合も考慮（ノード開始タグ内）
+                if (bounds_pos == std::string::npos || bounds_pos - label_pos > 500) {
+                    // label_posから逆方向にboundsを探す
+                    size_t node_start = ui_xml.rfind("<node", label_pos);
+                    if (node_start != std::string::npos)
+                        bounds_pos = ui_xml.find("bounds=\"", node_start);
+                }
+                if (bounds_pos != std::string::npos && bounds_pos < label_pos + 500) {
+                    // パース: bounds="[x1,y1][x2,y2]"
+                    size_t b_start = ui_xml.find('[', bounds_pos);
+                    if (b_start != std::string::npos) {
+                        int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+                        if (sscanf(ui_xml.c_str() + b_start, "[%d,%d][%d,%d]",
+                                   &x1, &y1, &x2, &y2) == 4) {
+                            int tap_x = (x1 + x2) / 2;
+                            int tap_y = (y1 + y2) / 2;
+                            g_adb_manager->adbCommand(adb_id,
+                                "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y));
+                            MLOG_INFO("gui", "Auto-tapped '%s' on %s (bounds [%d,%d][%d,%d] -> %d,%d)",
+                                      label, display_name.c_str(), x1, y1, x2, y2, tap_x, tap_y);
+                            tapped = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // フォールバック: uiautomatorで見つからなかった場合は固定比率でtap
+        if (!tapped) {
+            std::string wm_size = g_adb_manager->adbCommand(adb_id, "shell wm size");
+            int screen_w = 1080, screen_h = 1920;
+            auto parse_wh = [](const std::string& s, int& w, int& h) {
+                size_t pos = s.find(": ");
+                if (pos == std::string::npos) return false;
+                pos += 2;
+                size_t x_pos = s.find('x', pos);
+                if (x_pos == std::string::npos) return false;
+                try { w = std::stoi(s.substr(pos, x_pos - pos));
+                      h = std::stoi(s.substr(x_pos + 1)); return true; }
+                catch (...) { return false; }
+            };
+            size_t override_pos = wm_size.find("Override size");
+            size_t physical_pos = wm_size.find("Physical size");
+            if (override_pos != std::string::npos) parse_wh(wm_size.substr(override_pos), screen_w, screen_h);
+            else if (physical_pos != std::string::npos) parse_wh(wm_size.substr(physical_pos), screen_w, screen_h);
+            int tap_x = static_cast<int>(screen_w * 0.73f);
+            int tap_y = static_cast<int>(screen_h * 0.61f);
+            g_adb_manager->adbCommand(adb_id,
+                "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y));
+            MLOG_INFO("gui", "Auto-tapped MediaProjection dialog (fallback) on %s (%dx%d -> %d,%d)",
+                      display_name.c_str(), screen_w, screen_h, tap_x, tap_y);
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     }
 

@@ -553,6 +553,32 @@ void wifiAdbWatchdogThread() {
                     g_adb_manager->refresh();
                 }
             }
+
+            // A) A9系デバイス（Npad以外）のA11y自動設定
+            if (!dev.wifi_connections.empty() &&
+                dev.display_name.find("Npad") == std::string::npos) {
+                const auto& wifi_id = dev.wifi_connections[0];
+                std::string a11y = g_adb_manager->adbCommand(wifi_id,
+                    "shell settings get secure enabled_accessibility_services");
+                if (a11y.find("MirageAccessibilityService") == std::string::npos) {
+                    g_adb_manager->adbCommand(wifi_id,
+                        "shell settings put secure enabled_accessibility_services "
+                        "com.mirage.accessory/.access.MirageAccessibilityService");
+                    g_adb_manager->adbCommand(wifi_id,
+                        "shell settings put secure accessibility_enabled 1");
+                    MLOG_INFO("watchdog", "A11y re-enabled on %s", dev.display_name.c_str());
+                }
+            }
+
+            // B) Npad X1のmax_sizeブロードキャスト（adaptive downscale防止）
+            if (dev.display_name.find("Npad X1") != std::string::npos &&
+                !dev.wifi_connections.empty()) {
+                const auto& wifi_id = dev.wifi_connections[0];
+                g_adb_manager->adbCommand(wifi_id,
+                    "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE "
+                    "-p com.mirage.capture --ei max_size 2000");
+                MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", wifi_id.c_str());
+            }
         }
     }
     MLOG_INFO("watchdog", "WiFi ADB watchdog stopped");
