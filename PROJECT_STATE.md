@@ -1,5 +1,5 @@
 # MirageSystem Project State
-# Updated: 2026-02-24 Session 5
+# Updated: 2026-02-24 Session 6
 # Read at session start, updated at session end.
 
 ## Current Phase: GUI Refactoring + Code Quality
@@ -8,7 +8,24 @@
 - AOA full-path verification: requires physical USB connection (currently WiFi-only)
 - WiFi ADB screenshot latency: A9 devices can still spike >8s in some conditions
 
-## Completed 2026-02-24 Session 5 (This Session)
+## Completed 2026-02-24 Session 6 (This Session)
+### GUI Refactoring continued (gui_init.cpp 711→724 lines total with new helpers)
+- Extracted registerDevicesForRouteController() from initializeRouting() (commit 350d9fa)
+  - Unified USB-AOA and TCP-only registration branches into single named static function
+  - Added std::any_of for X1 detection (replaces raw loop)
+  - initializeRouting() now reads as 5 linear setup calls
+- Removed 2 stale comments from initializeRouting() (commit ca15423)
+### Fixes
+- fix: add -p com.mirage.capture to FPS broadcast in onDeviceSelected() (commit 881719c)
+  - Was broadcasting to ALL apps instead of only MirageCapture
+- complete_auto_aoa.py: added approve_aoa_dialog() function (commit 5352d15)
+  - uiautomator dump -> find AOA permission dialog -> check 'always use' -> tap OK
+  - --dialog-only flag for standalone approval; --dialog-timeout parameter
+  - Fixed package refs: com.mirage.accessory + com.mirage.capture (2-APK split)
+### Code Quality
+- gui_device_control.cpp (539 lines): reviewed, already clean - no further extraction needed
+
+## Completed 2026-02-24 Session 5
 ### GUI Refactoring (gui_init.cpp 734→711 lines, gui_threads.cpp 591→563 lines)
 - gui_init.cpp: 6 static helpers total extracted (all initializeGUI/initializeRouting callbacks)
   - onFpsCommand() + onRouteCommand() from initializeRouting() (commit 88b3c49)
@@ -49,20 +66,21 @@
 
 ## Next Priorities (Ordered)
 1. AOA full-path test: connect USB, run deploy_apk.py, verify tap commands arrive [BLOCKED: physical USB]
-2. AOA dialog auto-approval (uiautomator approach): add to MirageAutoSetup scripts
-3. gui_device_control.cpp: check if any further extraction useful (539 lines, already clean)
-4. Multi-device video pipeline stress test [BLOCKED: physical USB]
-5. Migration Phase 2: driver_installer/ integration, bt_auto_pair, adb_video_capture
+2. Multi-device video pipeline stress test [BLOCKED: physical USB]
+3. Migration Phase 2: driver_installer/ integration, bt_auto_pair, adb_video_capture
+4. gui_ai_panel.cpp (659 lines): review renderLearningMode() (127 lines) for extraction
 
 ## GUI File Line Counts (current state)
 - gui_ai_panel.cpp:       659 (well-organized, many small static functions)
-- gui_init.cpp:           711 (all callbacks now single-line delegates)
+- gui_init.cpp:           724 (registerDevicesForRouteController added, all callbacks single-line)
 - gui_threads.cpp:        563 (frame helpers extracted)
-- gui_device_control.cpp: 539 (already clean, small named functions)
+- gui_device_control.cpp: 539 (reviewed - already clean, no further extraction needed)
 - gui_command.cpp:        356 (clean)
 - gui_window.cpp:         237 (clean)
 
 ## Key Decisions Log
+- 2026-02-24 Sess6: registerDevicesForRouteController() extracted; onDeviceSelected FPS broadcast fixed (-p flag missing)
+- 2026-02-24 Sess6: approve_aoa_dialog() added to complete_auto_aoa.py (uiautomator approach)
 - 2026-02-24: deploy_apk.py updated: app module removed, accessory pkg fixed
 - 2026-02-24: usb_device_discovery: allow_wait=false prevents main-thread blocking at startup
 - 2026-02-24: Dead scrcpy scripts and _fix_*.py temp patches removed from scripts/
