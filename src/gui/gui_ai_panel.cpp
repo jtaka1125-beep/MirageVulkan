@@ -364,42 +364,7 @@ static void renderMatchResults() {
 // セクション4: LearningMode制御
 // =============================================================================
 
-static void renderLearningMode() {
-    if (!g_learning_mode) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "LearningMode: 未初期化");
-        return;
-    }
-
-    // EventBus 購読を確保
-    ensureCapSub();
-
-    bool running = g_learning_mode->is_running();
-
-    // ── Start/Stop トグル ──────────────────────────────────────────
-    if (running) {
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
-        if (ImGui::Button("Stop Learning", ImVec2(120, 25))) g_learning_mode->stop();
-        ImGui::PopStyleColor(3);
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
-        if (ImGui::Button("Start Learning", ImVec2(120, 25))) g_learning_mode->start();
-        ImGui::PopStyleColor(3);
-    }
-    ImGui::SameLine();
-    ImGui::TextColored(
-        running ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-        running ? "Running" : "Stopped");
-
-    if (!running) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.3f, 1.0f),
-            "(*) Start Learning してからキャプチャしてください");
-        return;
-    }
-
+static void renderLearningCapture() {
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Template Capture (改善I)");
 
@@ -489,6 +454,45 @@ static void renderLearningMode() {
             : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
         ImGui::TextColored(result_col, "%s", s_cap.last_msg);
     }
+}
+
+static void renderLearningMode() {
+    if (!g_learning_mode) {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "LearningMode: 未初期化");
+        return;
+    }
+
+    // EventBus 購読を確保
+    ensureCapSub();
+
+    bool running = g_learning_mode->is_running();
+
+    // ── Start/Stop トグル ──────────────────────────────────────────
+    if (running) {
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
+        if (ImGui::Button("Stop Learning", ImVec2(120, 25))) g_learning_mode->stop();
+        ImGui::PopStyleColor(3);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
+        if (ImGui::Button("Start Learning", ImVec2(120, 25))) g_learning_mode->start();
+        ImGui::PopStyleColor(3);
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(
+        running ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+        running ? "Running" : "Stopped");
+
+    if (!running) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.3f, 1.0f),
+            "(*) Start Learning してからキャプチャしてください");
+        return;
+    }
+
+    renderLearningCapture();
 }
 
 // =============================================================================
