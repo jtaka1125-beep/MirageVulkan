@@ -383,6 +383,73 @@ static void onRouteCommand(const std::string& device_id,
     }
 }
 
+// =============================================================================
+// Device Registration for RouteController
+// =============================================================================
+// Registers USB-AOA devices (preferred) or TCP/WiFi devices (TCP-only fallback)
+// into the RouteController. Called once at startup.
+static void registerDevicesForRouteController() {
+    const int base_port = mirage::config::getConfig().network.video_base_port;
+
+    if (!g_route_controller->isTcpOnlyMode() && g_hybrid_cmd) {
+        // USB AOA mode: register by USB serial
+        auto device_ids = g_hybrid_cmd->get_device_ids();
+        int wifi_port = base_port;
+        bool first = true;
+        for (const auto& id : device_ids) {
+            g_route_controller->registerDevice(id, first, wifi_port);
+            wifi_port++;
+            first = false;
+        }
+        if (device_ids.empty()) {
+            MLOG_INFO("gui", "RouteController: no USB devices, operating in WiFi-only mode (ADB fallback active)");
+        } else {
+            MLOG_INFO("gui", "RouteController: registered %d USB device(s)", (int)device_ids.size());
+        }
+        return;
+    }
+
+    // TCP-only mode: register by ADB hardware_id (must match FrameDispatcher)
+    if (!g_adb_manager) {
+        MLOG_INFO("gui", "RouteController: no USB command sender, WiFi-only mode");
+        return;
+    }
+
+    auto devices = g_adb_manager->getUniqueDevices();
+    if (devices.empty()) {
+        MLOG_INFO("gui", "RouteController: no USB command sender, WiFi-only mode");
+        return;
+    }
+
+    // Clear any USB-serial registrations left from non-TCP-only path
+    if (g_hybrid_cmd) {
+        for (const auto& uid : g_hybrid_cmd->get_device_ids()) {
+            g_route_controller->unregisterDevice(uid);
+        }
+    }
+
+    // Prefer X1 as main device
+    auto isX1 = [](const auto& dev) {
+        if (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos) return true;
+        for (const auto& w : dev.wifi_connections)  { if (w.find("192.168.0.3:5555") != std::string::npos) return true; }
+        for (const auto& u : dev.usb_connections)   { if (u.find("93020523431940") != std::string::npos) return true; }
+        return (dev.display_name.find("Npad X1") != std::string::npos) ||
+               (dev.display_name.find("N-one Npad X1") != std::string::npos);
+    };
+
+    bool hasX1 = std::any_of(devices.begin(), devices.end(), isX1);
+    int wifi_port = base_port;
+    bool first = true;
+    for (const auto& dev : devices) {
+        const bool mainFlag = hasX1 ? isX1(dev) : first;
+        g_route_controller->registerDevice(dev.hardware_id, mainFlag, wifi_port);
+        MLOG_INFO("gui", "RouteController TCP_ONLY: registered %s (%s) main=%d",
+                  dev.hardware_id.c_str(), dev.display_name.c_str(), (int)mainFlag);
+        wifi_port++;
+        first = false;
+    }
+}
+
 void initializeRouting() {
     // Initialize routing even without USB devices - WiFi-only mode is valid
     g_bandwidth_monitor = std::make_unique<::gui::BandwidthMonitor>();
@@ -411,59 +478,7 @@ void initializeRouting() {
     // Route command callback
     g_route_controller->setRouteCommandCallback([](const std::string& device_id, ::gui::RouteController::VideoRoute route, const std::string& host, int port) { onRouteCommand(device_id, route, host, port); });
 
-    // Register USB devices if available
-    if (g_hybrid_cmd) {
-        auto device_ids = g_hybrid_cmd->get_device_ids();
-        int wifi_port = mirage::config::getConfig().network.video_base_port;
-        bool first = true;
-        for (const auto& id : device_ids) {
-            g_route_controller->registerDevice(id, first, wifi_port);
-            wifi_port++;
-            first = false;
-        }
-        if (device_ids.empty()) {
-            MLOG_INFO("gui", "RouteController: no USB devices, operating in WiFi-only mode (ADB fallback active)");
-        } else {
-            MLOG_INFO("gui", "RouteController: registered %d USB device(s)", (int)device_ids.size());
-        }
-    } else {
-        MLOG_INFO("gui", "RouteController: no USB command sender, WiFi-only mode");
-    }
-
-    // TCP-onlyモード: ADB hardware_idで登録（FrameDispatcherと一致させる）
-    if (g_route_controller->isTcpOnlyMode() && g_adb_manager) {
-        auto devices = g_adb_manager->getUniqueDevices();
-        if (!devices.empty()) {
-            // USB登録があればクリア（TCP-onlyではADB hardware_idを使う）
-            if (g_hybrid_cmd) {
-                auto usb_ids = g_hybrid_cmd->get_device_ids();
-                for (const auto& uid : usb_ids) {
-                    g_route_controller->unregisterDevice(uid);
-                }
-            }
-
-            int wifi_port = mirage::config::getConfig().network.video_base_port;
-            // Choose main device explicitly: prefer X1 (192.168.0.3:5555 / 93020523431940 / name match)
-            auto isX1 = [](const auto& dev){
-                if (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos) return true;
-                for (const auto& w : dev.wifi_connections) { if (w.find("192.168.0.3:5555") != std::string::npos) return true; }
-                for (const auto& u : dev.usb_connections) { if (u.find("93020523431940") != std::string::npos) return true; }
-                return (dev.display_name.find("Npad X1") != std::string::npos) || (dev.display_name.find("N-one Npad X1") != std::string::npos);
-            };
-
-            bool hasX1 = false;
-            for (const auto& dev : devices) { if (isX1(dev)) { hasX1 = true; break; } }
-
-            bool first = true;
-            for (const auto& dev : devices) {
-                const bool mainFlag = hasX1 ? isX1(dev) : first;
-                g_route_controller->registerDevice(dev.hardware_id, mainFlag, wifi_port);
-                MLOG_INFO("gui", "RouteController TCP_ONLY: registered %s (%s) main=%d",
-                          dev.hardware_id.c_str(), dev.display_name.c_str(), (int)mainFlag);
-                wifi_port++;
-                first = false;
-            }}
-    }
+    registerDevicesForRouteController();
 
     startRouteEvalThread();
 }
