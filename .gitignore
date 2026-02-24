@@ -79,3 +79,4 @@ nul
  
 # Third-party tools (tracked) 
 !driver_installer/tools/wdi/wdi-simple.exe
+`n# Runtime state`nimgui.ini`nRESULTS.txt`n/tmp_*.txt`n/tmp_check/`n
