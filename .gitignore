@@ -59,7 +59,11 @@ analysis/
 fix_*.py
 patch_*.py
 apply_*.py
+add_*.py
 *.patch
+
+# One-off patch scripts (src/ level)
+src/*_patch.py
 
 # One-off fix/patch scripts (scripts/ subdir)
 scripts/_fix_*.py

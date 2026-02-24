@@ -1,14 +1,21 @@
 # MirageSystem Project State
-# Updated: 2026-02-24 Session 7
+# Updated: 2026-02-24 Session 8
 # Read at session start, updated at session end.
 
-## Current Phase: GUI Refactoring COMPLETE + Code Quality Done
+## Current Phase: Migration Phase 3 COMPLETE + GUI Refactoring COMPLETE
 
 ## Active Blockers / Known Issues
 - AOA full-path verification: requires physical USB connection (currently WiFi-only)
 - WiFi ADB screenshot latency: A9 devices can still spike >8s in some conditions
 
-## Completed 2026-02-24 Session 7 (This Session)
+## Completed 2026-02-24 Session 8 (This Session)
+### Migration Phase 3 COMPLETE
+- Untracked files: add_multi_touch.py, src/adb_device_manager_patch.py → .gitignore (patch applied, disposable)
+- .gitignore: added `add_*.py`, `src/*_patch.py` patterns for one-off scripts
+- tools/: 9 debug PS scripts moved to tools/archive/ (freeze_probe, launch_gui_with_probe, remote_cycle, restore_windows, run_dev_logged, run_dev_logged2, show_inputhash, start_mirage_detached)
+- tools/scrcpy-server-v3.3.4: already excluded by `tools/scrcpy-server-*` pattern (not tracked)
+
+## Completed 2026-02-24 Session 7
 ### GUI Refactoring Final (gui_ai_panel.cpp 659→663 lines)
 - Extracted renderLearningCapture() from renderLearningMode() (commit a2320a9)
   - renderLearningMode(): Start/Stop UI + early return (~43 lines)
@@ -76,8 +83,7 @@
 ## Next Priorities (Ordered)
 1. AOA full-path test: connect USB, run deploy_apk.py, verify tap commands arrive [BLOCKED: physical USB]
 2. Multi-device video pipeline stress test [BLOCKED: physical USB]
-3. Migration Phase 3: cleanup tools/archive, finalize .gitignore, archive MirageComplete
-4. deploy_apk.py live test on all 3 devices (WiFi ADB)
+3. deploy_apk.py live test on all 3 devices (WiFi ADB)
 
 ## GUI File Line Counts (FINAL - Refactoring Complete)
 - gui_ai_panel.cpp:       663 (renderLearningCapture extracted, all functions <100 lines)
@@ -89,6 +95,7 @@
 - TOTAL:                 3492 lines
 
 ## Key Decisions Log
+- 2026-02-24 Sess8: Migration Phase 3 COMPLETE. tools/ archive finalized, .gitignore patterns added, untracked patch scripts excluded.
 - 2026-02-24 Sess7: GUI refactoring declared COMPLETE. All functions <100 lines (except renderLearningCapture 92, renderVisionStates 88). Migration Phase 2 verified complete.
 - 2026-02-24 Sess6: registerDevicesForRouteController() extracted; onDeviceSelected FPS broadcast fixed (-p flag missing)
 - 2026-02-24 Sess6: approve_aoa_dialog() added to complete_auto_aoa.py (uiautomator approach)
