@@ -570,7 +570,7 @@ static void onDeviceSelected(const std::string& device_id) {
         std::thread([devices, sel_id]() {
             for (const auto& dev : devices) {
                 int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
-                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS --ei fps "
+                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei fps "
                                   + std::to_string(target_fps);
                 if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
                 MLOG_INFO("gui", "FPS update (ADB): %s -> %d fps (%s)",
