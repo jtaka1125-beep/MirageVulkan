@@ -135,6 +135,11 @@ void adbDetectionThread() {
     g_adb_manager = std::make_unique<::gui::AdbDeviceManager>();
     g_adb_manager->refresh();
 
+    // Signal main thread that ADB is ready (devices are listed, window can be created)
+    g_adb_ready.store(true);
+    MLOG_INFO("adb", "ADB ready signaled (window creation unblocked)");
+
+    // Remaining device info and X1 initialization continues in background
     auto devices = g_adb_manager->getUniqueDevices();
 
         // Force X1 max_size periodically (prevents adaptive downscale to 1072 on TCP-only)
@@ -157,8 +162,6 @@ void adbDetectionThread() {
                 dev.wifi_connections.size(),
                 dev.ip_address.c_str());
     }
-
-    g_adb_ready.store(true);
 
     // Log to GUI if available
     auto gui = g_gui;
