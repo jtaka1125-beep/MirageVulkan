@@ -46,15 +46,20 @@ def run(cmd, cwd=None, timeout=300):
     return r
 
 
-def get_usb_devices():
-    """USB接続のデバイスシリアル一覧"""
+def get_devices():
+    """接続中デバイスシリアル一覧 (USB + WiFi ADB)"""
     r = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=10)
     devices = []
     for line in r.stdout.strip().split("\n")[1:]:
         parts = line.strip().split("\t")
-        if len(parts) >= 2 and parts[1] == "device" and ":" not in parts[0]:
+        if len(parts) >= 2 and parts[1] == "device":
             devices.append(parts[0])
     return devices
+
+
+def get_usb_devices():
+    """後方互換スタブ"""
+    return get_devices()
 
 
 def build_modules(modules, debug=False):
@@ -151,10 +156,10 @@ def main():
     args = parser.parse_args()
 
     target_modules = args.module or list(MODULES.keys())
-    devices = get_usb_devices()
+    devices = get_devices()
 
     if not devices:
-        print("USB接続のデバイスがありません")
+        print("デバイスが見つかりません (USB/WiFi ADB 未接続)")
         sys.exit(1)
 
     print("=" * 60)
