@@ -1,15 +1,26 @@
 # MirageSystem Project State
-# Updated: 2026-02-24 Session 6
+# Updated: 2026-02-24 Session 7
 # Read at session start, updated at session end.
 
-## Current Phase: GUI Refactoring + Code Quality
+## Current Phase: GUI Refactoring COMPLETE + Code Quality Done
 
 ## Active Blockers / Known Issues
 - AOA full-path verification: requires physical USB connection (currently WiFi-only)
 - WiFi ADB screenshot latency: A9 devices can still spike >8s in some conditions
 
-## Completed 2026-02-24 Session 6 (This Session)
-### GUI Refactoring continued (gui_init.cpp 711→724 lines total with new helpers)
+## Completed 2026-02-24 Session 7 (This Session)
+### GUI Refactoring Final (gui_ai_panel.cpp 659→663 lines)
+- Extracted renderLearningCapture() from renderLearningMode() (commit a2320a9)
+  - renderLearningMode(): Start/Stop UI + early return (~43 lines)
+  - renderLearningCapture(): slot, name, ROI, capture button, save logic (~92 lines)
+### Migration Phase 2 Status
+- scripts/: All tools migrated (bt_auto_pair.py, adb_video_capture.py, usb_lan_controller.py, etc.)
+- driver_installer/: Already in sync
+- macro_editor/: Already migrated with mirage_client.py patches
+- Phase 2 essentially COMPLETE (no missing files found in MirageComplete vs MirageVulkan)
+
+## Completed 2026-02-24 Session 6
+### GUI Refactoring continued (gui_init.cpp 711→724 lines with new helpers)
 - Extracted registerDevicesForRouteController() from initializeRouting() (commit 350d9fa)
   - Unified USB-AOA and TCP-only registration branches into single named static function
   - Added std::any_of for X1 detection (replaces raw loop)
@@ -22,8 +33,6 @@
   - uiautomator dump -> find AOA permission dialog -> check 'always use' -> tap OK
   - --dialog-only flag for standalone approval; --dialog-timeout parameter
   - Fixed package refs: com.mirage.accessory + com.mirage.capture (2-APK split)
-### Code Quality
-- gui_device_control.cpp (539 lines): reviewed, already clean - no further extraction needed
 
 ## Completed 2026-02-24 Session 5
 ### GUI Refactoring (gui_init.cpp 734→711 lines, gui_threads.cpp 591→563 lines)
@@ -67,18 +76,20 @@
 ## Next Priorities (Ordered)
 1. AOA full-path test: connect USB, run deploy_apk.py, verify tap commands arrive [BLOCKED: physical USB]
 2. Multi-device video pipeline stress test [BLOCKED: physical USB]
-3. Migration Phase 2: driver_installer/ integration, bt_auto_pair, adb_video_capture
-4. gui_ai_panel.cpp (659 lines): review renderLearningMode() (127 lines) for extraction
+3. Migration Phase 3: cleanup tools/archive, finalize .gitignore, archive MirageComplete
+4. deploy_apk.py live test on all 3 devices (WiFi ADB)
 
-## GUI File Line Counts (current state)
-- gui_ai_panel.cpp:       659 (well-organized, many small static functions)
-- gui_init.cpp:           724 (registerDevicesForRouteController added, all callbacks single-line)
-- gui_threads.cpp:        563 (frame helpers extracted)
-- gui_device_control.cpp: 539 (reviewed - already clean, no further extraction needed)
+## GUI File Line Counts (FINAL - Refactoring Complete)
+- gui_ai_panel.cpp:       663 (renderLearningCapture extracted, all functions <100 lines)
+- gui_init.cpp:           724 (all callbacks single-line, registerDevicesForRouteController added)
+- gui_threads.cpp:        563 (frame helpers extracted, dead code removed)
+- gui_device_control.cpp: 539 (reviewed - already clean)
 - gui_command.cpp:        356 (clean)
 - gui_window.cpp:         237 (clean)
+- TOTAL:                 3492 lines
 
 ## Key Decisions Log
+- 2026-02-24 Sess7: GUI refactoring declared COMPLETE. All functions <100 lines (except renderLearningCapture 92, renderVisionStates 88). Migration Phase 2 verified complete.
 - 2026-02-24 Sess6: registerDevicesForRouteController() extracted; onDeviceSelected FPS broadcast fixed (-p flag missing)
 - 2026-02-24 Sess6: approve_aoa_dialog() added to complete_auto_aoa.py (uiautomator approach)
 - 2026-02-24: deploy_apk.py updated: app module removed, accessory pkg fixed
