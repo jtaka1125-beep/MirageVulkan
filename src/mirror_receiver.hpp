@@ -108,6 +108,7 @@ public:
 
 private:
   std::function<void()> on_idr_needed_;
+  std::atomic<int64_t> last_idr_request_ms_{0};  // IDRリクエストスロットル
   void receive_thread(uint16_t port);
   void tcp_receive_thread(uint16_t tcp_port);
   void tcp_vid0_receive_thread(uint16_t tcp_port);
@@ -164,7 +165,7 @@ private:
   std::queue<NalUnit> nal_queue_;
   std::mutex nal_queue_mtx_;
   std::condition_variable nal_queue_cv_;
-  static constexpr size_t MAX_NAL_QUEUE_SIZE = 128;
+  static constexpr size_t MAX_NAL_QUEUE_SIZE = 512;
 
   // Enqueue NAL for async decode
   void enqueue_nal(const uint8_t* data, size_t len);

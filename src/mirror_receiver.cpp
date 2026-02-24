@@ -762,7 +762,15 @@ void MirrorReceiver::process_raw_h264(const uint8_t* data, size_t len) {
         MLOG_WARN("mirror", "Raw H.264 buffer overflow (%zu bytes), flushing + requesting IDR", raw_h264_buf_.size());
         raw_h264_buf_.clear();
         need_idr_.store(true);
-        if (on_idr_needed_) on_idr_needed_();
+        // IDRリクエストスロットル: 最低3000ms間隔
+        {
+          auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now().time_since_epoch()).count();
+          auto last = last_idr_request_ms_.load();
+          if (now_ms - last >= 3000 && last_idr_request_ms_.compare_exchange_strong(last, now_ms)) {
+            if (on_idr_needed_) on_idr_needed_();
+          }
+        }
       }
       return;
     }
@@ -897,8 +905,15 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
         have_fu_ = false;
         fu_buf_.clear();
         fu_have_last_seq_ = false;
-        // IDR要求コールバック（FU-Aギャップからの回復用）
-        if (on_idr_needed_) on_idr_needed_();
+        // IDR要求コールバック（FU-Aギャップからの回復用、スロットル付き）
+        {
+          auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now().time_since_epoch()).count();
+          auto last = last_idr_request_ms_.load();
+          if (now_ms - last >= 3000 && last_idr_request_ms_.compare_exchange_strong(last, now_ms)) {
+            if (on_idr_needed_) on_idr_needed_();
+          }
+        }
         // Do not enter global drop-until-IDR mode; just abandon this NAL.
         goto fu_done;
       }
