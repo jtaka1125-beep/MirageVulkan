@@ -17,7 +17,7 @@
 #include <mutex>
 #include <vector>
 
-// WinSock forward declaration を避け、SOCKET型だけ定義
+// WinSock forward declaration 繧帝∩縺代ヾOCKET蝙九□縺大ｮ夂ｾｩ
 #ifndef _WINSOCK2API_
 typedef unsigned long long SOCKET;
 #endif
@@ -32,7 +32,7 @@ public:
     MacroApiServer();
     ~MacroApiServer();
 
-    // サーバー起動・停止
+    // 繧ｵ繝ｼ繝舌・襍ｷ蜍輔・蛛懈ｭ｢
     bool start(int port = DEFAULT_PORT);
     void stop();
     bool is_running() const { return running_.load(); }
@@ -40,20 +40,22 @@ public:
     int client_count() const;
 
 private:
-    // サーバースレッド
+    // 繧ｵ繝ｼ繝舌・繧ｹ繝ｬ繝・ラ
     void server_loop();
     void handle_client(SOCKET client_sock);
 
-    // JSON-RPCディスパッチ
+    // JSON-RPC繝・ぅ繧ｹ繝代ャ繝・
     std::string dispatch(const std::string& json_line);
 
-    // コマンドハンドラ (JSON結果文字列を返す)
+    // 繧ｳ繝槭Φ繝峨ワ繝ｳ繝峨Λ (JSON邨先棡譁・ｭ怜・繧定ｿ斐☆)
     std::string handle_ping();
     std::string handle_list_devices();
     std::string handle_device_info(const std::string& device_id);
     std::string handle_tap(const std::string& device_id, int x, int y);
     std::string handle_swipe(const std::string& device_id, int x1, int y1, int x2, int y2, int duration_ms);
     std::string handle_long_press(const std::string& device_id, int x, int y, int duration_ms);
+    std::string handle_multi_touch(const std::string& device_id, int x1, int y1, int x2, int y2, int duration_ms);
+    std::string handle_pinch(const std::string& device_id, const std::string& direction, int cx, int cy, int d_start, int d_end);
     std::string handle_key(const std::string& device_id, int keycode);
     std::string handle_text(const std::string& device_id, const std::string& text);
     std::string handle_click_id(const std::string& device_id, const std::string& resource_id);
@@ -62,7 +64,7 @@ private:
     std::string handle_force_stop(const std::string& device_id, const std::string& package);
     std::string handle_screenshot(const std::string& device_id);
 
-    // OCRハンドラ
+    // OCR繝上Φ繝峨Λ
 #ifdef MIRAGE_OCR_ENABLED
     std::string handle_ocr_analyze(const std::string& device_id);
     std::string handle_ocr_find_text(const std::string& device_id, const std::string& query);
@@ -71,11 +73,11 @@ private:
     void ensure_ocr_initialized();
 #endif
 
-    // JSON応答ヘルパー
+    // JSON蠢懃ｭ斐・繝ｫ繝代・
     std::string make_result(int id, const std::string& result_json);
     std::string make_error(int id, int code, const std::string& message);
 
-    // デバイスID解決: hardware_id → preferred_adb_id
+    // 繝・ヰ繧､繧ｹID隗｣豎ｺ: hardware_id 竊・preferred_adb_id
     std::string resolve_device_id(const std::string& device_id);
 
     std::atomic<bool> running_{false};
@@ -83,9 +85,10 @@ private:
     SOCKET server_socket_ = ~0ULL;  // INVALID_SOCKET
     std::thread server_thread_;
 
-    // クライアント追跡
+    // 繧ｯ繝ｩ繧､繧｢繝ｳ繝郁ｿｽ霍｡
     mutable std::mutex clients_mutex_;
     std::vector<std::thread> client_threads_;
 };
 
 } // namespace mirage
+

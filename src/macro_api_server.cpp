@@ -335,6 +335,18 @@ std::string MacroApiServer::dispatch(const std::string& json_line) {
         if (method == "screenshot") {
             return make_result(id, handle_screenshot(device_id));
         }
+        if (method == "multi_touch") {
+            return make_result(id, handle_multi_touch(device_id,
+                params.value("x1", 0), params.value("y1", 0),
+                params.value("x2", 0), params.value("y2", 0),
+                params.value("duration_ms", 200)));
+        }
+        if (method == "pinch") {
+            return make_result(id, handle_pinch(device_id,
+                params.value("direction", std::string("in")),
+                params.value("cx", 540), params.value("cy", 960),
+                params.value("d_start", 400), params.value("d_end", 100)));
+        }
 
         // OCRメソッド
 #ifdef MIRAGE_OCR_ENABLED
@@ -532,6 +544,72 @@ std::string MacroApiServer::handle_long_press(const std::string& device_id,
         + std::to_string(duration_ms);
     run_adb_cmd(adb_id, cmd);
     return "{\"status\":\"ok\",\"via\":\"adb\"}";
+}
+
+std::string MacroApiServer::handle_multi_touch(const std::string& device_id,
+    int x1, int y1, int x2, int y2, int duration_ms) {
+    auto& hybrid = ctx().hybrid_cmd;
+
+    // AOA HID 2-finger simultaneous touch via AoaHidTouch::touch_down/move/up
+    // ADB cannot do true multi-touch.
+    auto* hid = hybrid->get_hid_for_device(device_id);
+    if (!hid) {
+        return R"({"status":"error","message":"multi_touch requires AOA HID - device not connected"})";
+    }
+
+    // Get device screen size for HID coordinate scaling
+    int sw = 1080, sh = 1920;
+    {
+        auto& mgr = ctx().adb_manager;
+        auto devices = mgr->getUniqueDevices();
+        for (auto& ud : devices) {
+            if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
+                if (ud.screen_width > 0)  sw = ud.screen_width;
+                if (ud.screen_height > 0) sh = ud.screen_height;
+                break;
+            }
+        }
+    }
+
+    // Scale to HID coordinate space [0, 32767]
+    auto to_hid_x = [&](int x) -> uint16_t { return (uint16_t)((int64_t)x * 32767 / sw); };
+    auto to_hid_y = [&](int y) -> uint16_t { return (uint16_t)((int64_t)y * 32767 / sh); };
+
+    hid->touch_down(0, to_hid_x(x1), to_hid_y(y1));
+    hid->touch_down(1, to_hid_x(x2), to_hid_y(y2));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+
+    hid->touch_up(0);
+    hid->touch_up(1);
+
+    return R"({"status":"ok","via":"aoa_hid","fingers":2})";
+}
+
+std::string MacroApiServer::handle_pinch(const std::string& device_id,
+    const std::string& direction, int cx, int cy, int d_start, int d_end) {
+    auto& hybrid = ctx().hybrid_cmd;
+
+    // Use existing send_pinch which drives AoaHidTouch internally
+    int sw = 1080, sh = 1920;
+    {
+        auto& mgr = ctx().adb_manager;
+        auto devices = mgr->getUniqueDevices();
+        for (auto& ud : devices) {
+            if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
+                if (ud.screen_width > 0)  sw = ud.screen_width;
+                if (ud.screen_height > 0) sh = ud.screen_height;
+                break;
+            }
+        }
+    }
+
+    int start = (direction == "in") ? d_start : d_end;
+    int end   = (direction == "in") ? d_end   : d_start;
+
+    bool ok = hybrid->send_pinch(device_id, cx, cy, start, end, sw, sh, 400);
+    if (ok) return R"({"status":"ok","via":"aoa_hid"})";
+    return R"({"status":"error","message":"pinch requires AOA HID"})";
 }
 
 std::string MacroApiServer::handle_key(const std::string& device_id, int keycode) {
