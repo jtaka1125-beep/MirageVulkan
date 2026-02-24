@@ -8,6 +8,7 @@ Usage:
     python deploy_apk.py --module accessory     # accessoryのみ
     python deploy_apk.py --skip-build           # ビルドスキップ（既存APKをデプロイ）
     python deploy_apk.py --debug                # debugビルド
+    python deploy_apk.py --no-backup            # バックアップをスキップ
 """
 
 import subprocess
@@ -153,6 +154,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="debugビルド")
     parser.add_argument("--no-start", action="store_true", help="アプリ起動しない")
     parser.add_argument("--no-permissions", action="store_true", help="権限設定スキップ")
+    parser.add_argument("--no-backup", action="store_true", help="デプロイ前バックアップをスキップ")
     args = parser.parse_args()
 
     target_modules = args.module or list(MODULES.keys())
@@ -170,10 +172,11 @@ def main():
     print("=" * 60)
 
     # バックアップ (デプロイ前に自動バックアップ)
-    backup_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "device_backup.py")
-    if os.path.exists(backup_script):
-        print("\n[BACKUP] デプロイ前バックアップ...")
-        run([sys.executable, backup_script, "--no-ab"], timeout=120)
+    if not args.no_backup:
+        backup_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "device_backup.py")
+        if os.path.exists(backup_script):
+            print("\n[BACKUP] デプロイ前バックアップ...")
+            run([sys.executable, backup_script, "--no-ab"], timeout=120)
 
     # ビルド
     if not args.skip_build:
