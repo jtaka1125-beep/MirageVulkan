@@ -1,4 +1,4 @@
-#include "route_controller.hpp"
+﻿#include "route_controller.hpp"
 #include "mirage_log.hpp"
 #include "config_loader.hpp"
 
@@ -54,11 +54,16 @@ RouteController::RouteDecision RouteController::evaluate(
 {
     RouteDecision decision = current_;
 
+    // FORCE_FIXED_FPS_POLICY: Keep main=60fps, sub=30fps regardless of route/bandwidth.
+    // Ensures main stays 60fps even when switching main device (double-click).
+    decision.main_fps = MAIN_FPS_HIGH;
+    decision.sub_fps  = SUB_FPS_HIGH;
+
     const State prev_state = state_;
     const RouteDecision prev_decision = current_;
     const auto now = std::chrono::steady_clock::now();
 
-    // ISSUE-6: EWMA smoothing  Esuppresses transient bandwidth/RTT spikes
+    // ISSUE-6: EWMA smoothing 窶・suppresses transient bandwidth/RTT spikes
     ewma_usb_bw_   = EWMA_ALPHA * usb.bandwidth_mbps    + (1.0f - EWMA_ALPHA) * ewma_usb_bw_;
     ewma_wifi_bw_  = EWMA_ALPHA * wifi.bandwidth_mbps   + (1.0f - EWMA_ALPHA) * ewma_wifi_bw_;
     ewma_rtt_      = EWMA_ALPHA * usb.ping_rtt_ms       + (1.0f - EWMA_ALPHA) * ewma_rtt_;
@@ -113,21 +118,21 @@ RouteController::RouteDecision RouteController::evaluate(
         );
     }
 
-    // TCP-only mode: USB統計を無視し、WiFi統計�EみでFPS制御
+    // TCP-only mode: USB邨ｱ險医ｒ辟｡隕悶＠縲仝iFi邨ｱ險茨ｿｽE縺ｿ縺ｧFPS蛻ｶ蠕｡
     if (tcp_only_mode_) {
         if (wifi_failed) {
-            // WiFi死亡 = TCP-onlyでは全経路死亡、最小FPSへ
+            // WiFi豁ｻ莠｡ = TCP-only縺ｧ縺ｯ蜈ｨ邨瑚ｷｯ豁ｻ莠｡縲∵怙蟆洲PS縺ｸ
             decision.main_fps = MAIN_FPS_LOW;
             decision.sub_fps = SUB_FPS_LOW;
             state_ = State::BOTH_DEGRADED;
         } else if (wifi_loss > 0.10f) {
-            // 高パケチE��ロス - 積極皁E��削渁E            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -10);
+            // 鬮倥ヱ繧ｱ繝・・ｽ・ｽ繝ｭ繧ｹ - 遨肴･ｵ逧・・ｽ・ｽ蜑頑ｸ・            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -10);
             decision.sub_fps = adjustFps(current_.sub_fps, SUB_FPS_LOW, -5);
         } else if (wifi_loss > 0.05f) {
-            // 中程度のロス - 段階的に削渁E            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -5);
+            // 荳ｭ遞句ｺｦ縺ｮ繝ｭ繧ｹ - 谿ｵ髫守噪縺ｫ蜑頑ｸ・            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -5);
             decision.sub_fps = adjustFps(current_.sub_fps, SUB_FPS_MED, -5);
         } else {
-            // WiFi正常 - 最大値に向けて増加
+            // WiFi豁｣蟶ｸ - 譛螟ｧ蛟､縺ｫ蜷代￠縺ｦ蠅怜刈
             decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_HIGH, 5);
             decision.sub_fps = adjustFps(current_.sub_fps, SUB_FPS_HIGH, 5);
             if (state_ != State::NORMAL) {
@@ -141,18 +146,22 @@ RouteController::RouteDecision RouteController::evaluate(
             }
         }
 
+        // FORCE_FIXED_FPS_POLICY
+        decision.main_fps = MAIN_FPS_HIGH;
+        decision.sub_fps  = SUB_FPS_HIGH;
+
         decision.video = VideoRoute::WIFI;
         decision.control = ControlRoute::USB;  // Keep control on USB for low-latency input
-        decision.state = state_;
+    decision.state = state_;
 
-        // 変更があれ�E適用
+        // 螟画峩縺後≠繧鯉ｿｽE驕ｩ逕ｨ
         if (decision.video != current_.video ||
             decision.main_fps != current_.main_fps ||
             decision.sub_fps != current_.sub_fps) {
             applyDecision(decision);
         }
 
-        // 状態変化ログ
+        // 迥ｶ諷句､牙喧繝ｭ繧ｰ
         if (prev_state != state_) {
             MLOG_INFO("RouteCtrl",
                 "TCP_ONLY STATE %s -> %s | wifi(bw=%.1f loss=%.2f alive=%d) MainFPS=%d SubFPS=%d",
@@ -161,7 +170,7 @@ RouteController::RouteDecision RouteController::evaluate(
                 decision.main_fps, decision.sub_fps);
         }
 
-        // 定期チE��チE��ログ
+        // 螳壽悄繝・・ｽ・ｽ繝・・ｽ・ｽ繝ｭ繧ｰ
         if (log_tick >= 10) {
             MLOG_INFO("RouteEval", "TCP_ONLY: State=%s WiFi=%.1fMbps(loss=%.2f,alive=%d) MainFPS=%d SubFPS=%d",
                       stateToStr(state_), wifi.bandwidth_mbps, wifi_loss, wifi.is_alive ? 1 : 0,
@@ -169,7 +178,7 @@ RouteController::RouteDecision RouteController::evaluate(
         }
 
         current_ = decision;
-        return decision;  // USB状態�EシンをスキチE�E
+        return decision;  // USB迥ｶ諷具ｿｽE繧ｷ繝ｳ繧偵せ繧ｭ繝・・ｽE
     }
 
     // State machine
@@ -346,7 +355,7 @@ RouteController::RouteDecision RouteController::evaluate(
 void RouteController::applyDecision(const RouteDecision& decision) {
     for (auto& [id, info] : devices_) {
         // Apply FPS change
-        int target_fps = info.is_main ? decision.main_fps : decision.sub_fps;
+        int target_fps = info.is_main ? MAIN_FPS_HIGH : SUB_FPS_HIGH; // fixed policy
         if (target_fps != info.current_fps && fps_callback_) {
             fps_callback_(id, target_fps);
             info.current_fps = target_fps;
@@ -405,7 +414,7 @@ void RouteController::setMainDevice(const std::string& device_id) {
 
         if (info.is_main != was_main) {
             // FPS target changed
-            int new_fps = info.is_main ? current_.main_fps : current_.sub_fps;
+            int new_fps = info.is_main ? MAIN_FPS_HIGH : SUB_FPS_HIGH; // fixed policy
             if (info.current_fps != new_fps) {
                 info.current_fps = new_fps;
                 if (fps_callback_) {
@@ -425,3 +434,4 @@ void RouteController::setMainDevice(const std::string& device_id) {
 }
 
 } // namespace gui
+

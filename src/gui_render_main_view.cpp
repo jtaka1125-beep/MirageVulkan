@@ -245,6 +245,10 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
     // Clip all drawing to the allocated container rect
     draw_list->PushClipRect(ImVec2(x, y), ImVec2(x + w, y + h), true);
 
+    // Fill container background so letterbox/padding is visible per-device
+    draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(10, 10, 12, 255));
+
+
     if (device.vk_texture_ds && device.texture_width > 0 && device.texture_height > 0) {
         float aspect = static_cast<float>(device.texture_width) / device.texture_height;
         float container_aspect = w / h;  // Safe: h > 0 guaranteed above
@@ -269,21 +273,53 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
         if (view_x + view_w > x + w) view_w = x + w - view_x;
         if (view_y + view_h > y + h) view_h = y + h - view_y;
 
+        // If the decoded frame is nav-bar-cropped (height shorter than native),
+        // render it inside a native-aspect view with bottom padding.
+        float img_x = view_x;
+        float img_y = view_y;
+        float img_w = view_w;
+        float img_h = view_h;
+        {
+            const int exp_w = device.expected_width;
+            const int exp_h = device.expected_height;
+            const int tex_w = device.texture_width;
+            const int tex_h = device.texture_height;
+            const int tol = 200;
+            float cropped_height_ratio = 1.0f;
+            bool cropped = false;
+            // Normal orientation: width matches, height is shorter within tolerance
+            if (exp_w > 0 && exp_h > 0 && tex_w == exp_w && tex_h > 0 && tex_h < exp_h && (exp_h - tex_h) <= tol) {
+                cropped = true;
+                cropped_height_ratio = static_cast<float>(tex_h) / static_cast<float>(exp_h);
+            }
+            // Rotated orientation: swapped width/height
+            else if (exp_w > 0 && exp_h > 0 && tex_w == exp_h && tex_h > 0 && tex_h < exp_w && (exp_w - tex_h) <= tol) {
+                cropped = true;
+                cropped_height_ratio = static_cast<float>(tex_h) / static_cast<float>(exp_w);
+            }
+            if (cropped) {
+                img_h = view_h * cropped_height_ratio;
+                // Align to top (missing area is typically bottom nav/task bar)
+                img_y = view_y;
+            }
+        }
+
         // Store main view rect for input processing (thread-safe)
+        // Use the exact image rect (img_*) so taps ignore letterbox/padding.
         if (is_main) {
             std::lock_guard<std::mutex> rect_lock(view_rect_mutex_);
-            main_view_rect_.x = view_x;
-            main_view_rect_.y = view_y;
-            main_view_rect_.w = view_w;
-            main_view_rect_.h = view_h;
+            main_view_rect_.x = img_x;
+            main_view_rect_.y = img_y;
+            main_view_rect_.w = img_w;
+            main_view_rect_.h = img_h;
             main_view_rect_.valid = true;
         }
 
         // Draw texture
         draw_list->AddImage(
             reinterpret_cast<ImTextureID>(device.vk_texture_ds),
-            ImVec2(view_x, view_y),
-            ImVec2(view_x + view_w, view_y + view_h)
+            ImVec2(img_x, img_y),
+            ImVec2(img_x + img_w, img_y + img_h)
         );
 
 

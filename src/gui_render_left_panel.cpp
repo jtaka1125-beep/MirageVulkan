@@ -382,7 +382,7 @@ void GuiApplication::renderLeftPanel() {
         }
     }
 
-    // Row 2: Long press + Pinch
+    // Row 2: Long press + Swipe
     if (ImGui::Button(u8"\u5168\u9577\u62bc\u3057", ImVec2(half_w, 0))) {
         if (g_hybrid_cmd) {
             auto ids = g_hybrid_cmd->get_device_ids();
@@ -399,14 +399,46 @@ void GuiApplication::renderLeftPanel() {
 
     ImGui::SameLine();
 
-    if (ImGui::Button(u8"\u5168\u30d4\u30f3\u30c1", ImVec2(half_w, 0))) {
+    if (ImGui::Button(u8"\u5168\u30b9\u30ef\u30a4\u30d7", ImVec2(half_w, 0))) {
+        if (g_hybrid_cmd) {
+            int count = g_hybrid_cmd->send_swipe_all(
+                layout_constants::DEFAULT_SCREEN_W / 2,
+                layout_constants::DEFAULT_SCREEN_H * 3 / 4,
+                layout_constants::DEFAULT_SCREEN_W / 2,
+                layout_constants::DEFAULT_SCREEN_H / 4,
+                300,
+                layout_constants::DEFAULT_SCREEN_W,
+                layout_constants::DEFAULT_SCREEN_H);
+            logInfo(u8"スワイプ送信: " + std::to_string(count) + u8"台");
+        }
+    }
+
+    // Row 3: Pinch Zoom In + Pinch Zoom Out
+    if (ImGui::Button(u8"\u5168\u30d4\u30f3\u30c1In", ImVec2(half_w, 0))) {
         if (g_hybrid_cmd) {
             auto ids = g_hybrid_cmd->get_device_ids();
             for (const auto& id : ids) {
                 g_hybrid_cmd->send_pinch(id,
                     layout_constants::DEFAULT_SCREEN_W / 2,
                     layout_constants::DEFAULT_SCREEN_H / 2,
-                    100, 400,
+                    400, 100,  // Zoom In: large to small
+                    layout_constants::DEFAULT_SCREEN_W,
+                    layout_constants::DEFAULT_SCREEN_H, 400);
+            }
+            logInfo(u8"ピンチイン送信: " + std::to_string(ids.size()) + u8"台");
+        }
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button(u8"\u5168\u30d4\u30f3\u30c1Out", ImVec2(half_w, 0))) {
+        if (g_hybrid_cmd) {
+            auto ids = g_hybrid_cmd->get_device_ids();
+            for (const auto& id : ids) {
+                g_hybrid_cmd->send_pinch(id,
+                    layout_constants::DEFAULT_SCREEN_W / 2,
+                    layout_constants::DEFAULT_SCREEN_H / 2,
+                    100, 400,  // Zoom Out: small to large
                     layout_constants::DEFAULT_SCREEN_W,
                     layout_constants::DEFAULT_SCREEN_H, 400);
             }

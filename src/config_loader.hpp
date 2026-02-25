@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // =============================================================================
 // MirageTestKit Config Loader
 // =============================================================================
@@ -229,6 +229,7 @@ struct ExpectedDeviceSpec {
     int screen_width = 0;
     int screen_height = 0;
     int screen_density = 0;
+    int tcp_port = 0;
 };
 
 class ExpectedSizeRegistry {
@@ -261,6 +262,7 @@ public:
                 spec.screen_width = dev.value("screen_width", 0);
                 spec.screen_height = dev.value("screen_height", 0);
                 spec.screen_density = dev.value("screen_density", 0);
+                spec.tcp_port = dev.value("tcp_port", 0);
 
                 if (!spec.hardware_id.empty() && spec.screen_width > 0 && spec.screen_height > 0) {
                     devices_[spec.hardware_id] = spec;
@@ -291,7 +293,17 @@ public:
         return false;
     }
 
+    bool getTcpPort(const std::string& hardware_id, int& out_port) const {
+        auto it = devices_.find(hardware_id);
+        if (it != devices_.end() && it->second.tcp_port > 0) {
+            out_port = it->second.tcp_port;
+            return true;
+        }
+        return false;
+    }
+
     const std::map<std::string, ExpectedDeviceSpec>& allDevices() const { return devices_; }
+
 
 private:
     ExpectedSizeRegistry() = default;
@@ -300,3 +312,5 @@ private:
 
 } // namespace config
 } // namespace mirage
+
+

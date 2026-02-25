@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem - GUI Initialization Helpers
 // =============================================================================
 // Split from gui_main.cpp for maintainability
@@ -18,8 +18,7 @@
 #include "vid0_parser.hpp"
 
 #include <thread>
-#include <map>
-
+#include <map>\r\n#include <unordered_map>\r\n#include <vector>\r\n#include <fstream>\r\n
 using namespace mirage::gui::state;
 using namespace mirage::gui::command;
 
@@ -48,27 +47,27 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
     std::string ui_check = g_adb_manager->adbCommand(adb_id, "shell dumpsys activity top");
     if (ui_check.find("MediaProjectionPermissionActivity") != std::string::npos ||
         ui_check.find("GrantPermissionsActivity") != std::string::npos) {
-        // uiautomator dumpで"Start now"/"今すぐ開始"ボタンを探す
+        // uiautomator dump縺ｧ"Start now"/"莉翫☆縺宣幕蟋・繝懊ち繝ｳ繧呈爾縺・
         bool tapped = false;
         std::string ui_xml = g_adb_manager->adbCommand(adb_id,
             "shell uiautomator dump /dev/stdout");
         if (!ui_xml.empty()) {
-            // "Start now" / "今すぐ開始" / "START NOW" のboundsを検索
+            // "Start now" / "莉翫☆縺宣幕蟋・ / "START NOW" 縺ｮbounds繧呈､懃ｴ｢
             for (const char* label : {"Start now", "START NOW",
                                       "\xe4\xbb\x8a\xe3\x81\x99\xe3\x81\x90\xe9\x96\x8b\xe5\xa7\x8b"}) {
                 size_t label_pos = ui_xml.find(label);
                 if (label_pos == std::string::npos) continue;
-                // 該当ノードのbounds属性を探す: bounds="[x1,y1][x2,y2]"
+                // 隧ｲ蠖薙ヮ繝ｼ繝峨・bounds螻樊ｧ繧呈爾縺・ bounds="[x1,y1][x2,y2]"
                 size_t bounds_pos = ui_xml.find("bounds=\"", label_pos);
-                // bounds属性が前方にある場合も考慮（ノード開始タグ内）
+                // bounds螻樊ｧ縺悟燕譁ｹ縺ｫ縺ゅｋ蝣ｴ蜷医ｂ閠・・・医ヮ繝ｼ繝蛾幕蟋九ち繧ｰ蜀・ｼ・
                 if (bounds_pos == std::string::npos || bounds_pos - label_pos > 500) {
-                    // label_posから逆方向にboundsを探す
+                    // label_pos縺九ｉ騾・婿蜷代↓bounds繧呈爾縺・
                     size_t node_start = ui_xml.rfind("<node", label_pos);
                     if (node_start != std::string::npos)
                         bounds_pos = ui_xml.find("bounds=\"", node_start);
                 }
                 if (bounds_pos != std::string::npos && bounds_pos < label_pos + 500) {
-                    // パース: bounds="[x1,y1][x2,y2]"
+                    // 繝代・繧ｹ: bounds="[x1,y1][x2,y2]"
                     size_t b_start = ui_xml.find('[', bounds_pos);
                     if (b_start != std::string::npos) {
                         int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
@@ -87,7 +86,7 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
                 }
             }
         }
-        // フォールバック: uiautomatorで見つからなかった場合は固定比率でtap
+        // 繝輔か繝ｼ繝ｫ繝舌ャ繧ｯ: uiautomator縺ｧ隕九▽縺九ｉ縺ｪ縺九▲縺溷ｴ蜷医・蝗ｺ螳壽ｯ皮紫縺ｧtap
         if (!tapped) {
             std::string wm_size = g_adb_manager->adbCommand(adb_id, "shell wm size");
             int screen_w = 1080, screen_h = 1920;
@@ -210,7 +209,7 @@ bool initializeMultiReceiver() {
 
     g_multi_receiver->setDeviceManager(g_adb_manager.get());
 
-    // VulkanコンテキストをMultiDeviceReceiverに設定（GPUデコード用）
+    // Vulkan繧ｳ繝ｳ繝・く繧ｹ繝医ｒMultiDeviceReceiver縺ｫ險ｭ螳夲ｼ・PU繝・さ繝ｼ繝臥畑・・
     auto gui = g_gui;
     if (gui && gui->vulkanContext()) {
         auto* vk_ctx = gui->vulkanContext();
@@ -220,12 +219,12 @@ bool initializeMultiReceiver() {
             vk_ctx->graphicsQueue(), vk_ctx->computeQueue());
     }
 
-    // MirrorReceiverスロット初期化 (エントリ作成 + デコーダ準備)
+    // MirrorReceiver繧ｹ繝ｭ繝・ヨ蛻晄悄蛹・(繧ｨ繝ｳ繝医Μ菴懈・ + 繝・さ繝ｼ繝貅門ｙ)
     g_multi_receiver->start(mirage::config::getConfig().network.video_base_port);
 
-    // MirageCapture APK直接受信モード
-    // 各デバイスに adb forward を設定し、VID0 TCP受信を開始
-    // MirageCapture APK がキャプチャ・送信を担う (scrcpy不使用)
+    // MirageCapture APK逶ｴ謗･蜿嶺ｿ｡繝｢繝ｼ繝・
+    // 蜷・ョ繝舌う繧ｹ縺ｫ adb forward 繧定ｨｭ螳壹＠縲〃ID0 TCP蜿嶺ｿ｡繧帝幕蟋・
+    // MirageCapture APK 縺後く繝｣繝励メ繝｣繝ｻ騾∽ｿ｡繧呈球縺・(scrcpy荳堺ｽｿ逕ｨ)
     // === Auto-start MirageCapture ScreenCaptureService on all devices ===
     for (const auto& dev : g_adb_manager->getUniqueDevices()) {
         autoStartCaptureService(dev.preferred_adb_id, dev.display_name);
@@ -233,7 +232,7 @@ bool initializeMultiReceiver() {
 
     auto devices = g_adb_manager->getUniqueDevices();
     if (devices.empty()) {
-        MLOG_WARN("gui", "Multi-receiver: デバイスが見つかりません");
+        MLOG_WARN("gui", "Multi-receiver: 繝・ヰ繧､繧ｹ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ");
         g_multi_receiver.reset();
         return false;
     }
@@ -241,37 +240,62 @@ bool initializeMultiReceiver() {
     constexpr int REMOTE_PORT = 50100;  // MirageCapture TcpVideoSender
     constexpr int BASE_LOCAL_PORT = 50100;
 
-    int success = 0;
+    
+
+    // Load fixed per-device local tcp ports from devices.json (generated from device_profiles)
+    std::unordered_map<std::string,int> fixed_port_map;
+    try {
+        std::vector<std::string> candidates = {"devices.json", "../devices.json", "../../devices.json", "../../../devices.json"};
+        for (const auto& c : candidates) {
+            std::ifstream f(c);
+            if (!f.is_open()) continue;
+            nlohmann::json j = nlohmann::json::parse(f);
+            if (j.contains("devices") && j["devices"].is_array()) {
+                for (const auto& dj : j["devices"]) {
+                    std::string hw = dj.value("hardware_id", "");
+                    int port = dj.value("tcp_port", 0);
+                    if (!hw.empty() && port > 0) fixed_port_map[hw] = port;
+                }
+                break;
+            }
+        }
+    } catch (...) {}
+int success = 0;
     for (size_t i = 0; i < devices.size(); ++i) {
         const auto& dev = devices[i];
 
-        // assigned_tcp_port (devices.json由来) があれば使う、なければ動的割当
-        int local_port = (dev.assigned_tcp_port > 0)
-            ? dev.assigned_tcp_port
-            : BASE_LOCAL_PORT + static_cast<int>(i) * 2;
+        // assigned_tcp_port (devices.json逕ｱ譚･) 縺後≠繧後・菴ｿ縺・√↑縺代ｌ縺ｰ蜍慕噪蜑ｲ蠖・
+        int local_port = 0;
+        if (dev.assigned_tcp_port > 0) {
+            local_port = dev.assigned_tcp_port;
+        } else {
+            auto itp = fixed_port_map.find(dev.hardware_id);
+            if (itp != fixed_port_map.end()) local_port = itp->second;
+            else local_port = BASE_LOCAL_PORT + static_cast<int>(i) * 2;
+        }
 
         const std::string& adb_id = dev.preferred_adb_id;
 
-        // adb forward設定
+        // adb forward險ｭ螳・
         std::string fwd_cmd = "forward tcp:" + std::to_string(local_port) +
                               " tcp:" + std::to_string(REMOTE_PORT);
         std::string fwd_result = g_adb_manager->adbCommand(adb_id, fwd_cmd);
         MLOG_INFO("gui", "adb forward: %s -> %s (result: %s)",
                   adb_id.c_str(), fwd_cmd.c_str(), fwd_result.c_str());
 
-        // VID0 TCP受信開始 (既存スロットをTCPモードに切替、なければ新規作成)
+        // VID0 TCP蜿嶺ｿ｡髢句ｧ・(譌｢蟄倥せ繝ｭ繝・ヨ繧探CP繝｢繝ｼ繝峨↓蛻・崛縲√↑縺代ｌ縺ｰ譁ｰ隕丈ｽ懈・)
         if (g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port)) {
-            MLOG_INFO("gui", "VID0 TCP受信開始: %s port=%d", dev.display_name.c_str(), local_port);
+            MLOG_INFO("gui", "VID0 TCP蜿嶺ｿ｡髢句ｧ・ %s port=%d", dev.display_name.c_str(), local_port);
             success++;
         } else {
-            MLOG_ERROR("gui", "VID0 TCP受信失敗: %s port=%d", dev.display_name.c_str(), local_port);
+            MLOG_ERROR("gui", "VID0 TCP蜿嶺ｿ｡螟ｱ謨・ %s port=%d", dev.display_name.c_str(), local_port);
         }
     }
 
     MLOG_INFO("gui", "Multi-receiver: %d/%zu devices VID0 TCP mode",
               success, devices.size());
 
-    // フレームコールバック設定: デコード済みフレームをEventBus経由でGUIに配信
+    // 繝輔Ξ繝ｼ繝繧ｳ繝ｼ繝ｫ繝舌ャ繧ｯ險ｭ螳・ 繝・さ繝ｼ繝画ｸ医∩繝輔Ξ繝ｼ繝繧脱ventBus邨檎罰縺ｧGUI縺ｫ驟堺ｿ｡
     g_multi_receiver->setFrameCallback([](const std::string& hardware_id, const ::gui::MirrorFrame& frame) {
         mirage::FrameReadyEvent evt;
         evt.device_id = hardware_id;
@@ -395,7 +419,7 @@ static void onFpsCommand(const std::string& device_id, int fps) {
                                    (dev.preferred_adb_id.find("93020523431940") != std::string::npos);
                 int send_fps = fps;
                 if (isX1 && send_fps < 60) send_fps = 60;
-                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei fps " + std::to_string(send_fps);
+                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps " + std::to_string(send_fps) + " --ei fps " + std::to_string(send_fps);
                 std::string cmd2 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000" : "";
                 std::string cmd3 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture" : "";
                 std::thread([adb_id, cmd, cmd2, cmd3, device_id, send_fps]() {
@@ -611,8 +635,8 @@ static void onDeviceSelected(const std::string& device_id) {
         std::thread([devices, sel_id]() {
             for (const auto& dev : devices) {
                 int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
-                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei fps "
-                                  + std::to_string(target_fps);
+                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps "
+                                  + std::to_string(target_fps) + " --ei fps " + std::to_string(target_fps);
                 if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
                 MLOG_INFO("gui", "FPS update (ADB): %s -> %d fps (%s)",
                           dev.hardware_id.c_str(), target_fps,
@@ -719,11 +743,11 @@ void initializeAI() {
             if (gui) gui->logInfo(u8"AI templates loaded: " + std::to_string(stats.templates_loaded));
         }
 
-        // NOTE: AIアクション実行はEventBus経由パイプライン
-        // (decideAction → TapCommandEvent/KeyCommandEvent → gui_command購読)
-        // action_callback_は後方互換・ログ用のみ
+        // NOTE: AI繧｢繧ｯ繧ｷ繝ｧ繝ｳ螳溯｡後・EventBus邨檎罰繝代う繝励Λ繧､繝ｳ
+        // (decideAction 竊・TapCommandEvent/KeyCommandEvent 竊・gui_command雉ｼ隱ｭ)
+        // action_callback_縺ｯ蠕梧婿莠呈鋤繝ｻ繝ｭ繧ｰ逕ｨ縺ｮ縺ｿ
         g_ai_engine->setActionCallback([](int slot, const mirage::ai::AIAction& action) {
-            MLOG_DEBUG("ai", "ActionCallback(後方互換): slot=%d type=%d",
+            MLOG_DEBUG("ai", "ActionCallback(蠕梧婿莠呈鋤): slot=%d type=%d",
                        slot, (int)action.type);
         });
 
@@ -763,3 +787,5 @@ void initializeOCR() {
 #endif
 
 } // namespace mirage::gui::init
+
+

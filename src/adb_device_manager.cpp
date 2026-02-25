@@ -1,5 +1,6 @@
 ﻿#include "adb_device_manager.hpp"
 #include "auto_setup.hpp"
+#include "config_loader.hpp"
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -562,7 +563,27 @@ void AdbDeviceManager::refresh() {
         }
     }
 
-    MLOG_INFO("adb", "Found %zu devices (%zu unique)", devices_.size(), unique_devices_.size());
+    
+
+    // Apply fixed per-device tcp ports from devices.json (generated from device_profiles)
+    try {
+        auto& reg = mirage::config::ExpectedSizeRegistry::instance();
+        reg.loadDevices("devices.json");
+        for (const auto& kv : reg.allDevices()) {
+            MLOG_INFO("adb", "Registry tcp_port entry: %s -> %d", kv.first.c_str(), kv.second.tcp_port);
+        }
+        for (auto& [hw_id, ud] : unique_devices_) {
+            int p = 0;
+            if (reg.getTcpPort(hw_id, p)) {
+                ud.assigned_tcp_port = p;
+                MLOG_INFO("adb", "Applied fixed tcp_port=%d to %s", p, hw_id.c_str());
+            }
+        }
+    } catch (...) {
+        // ignore
+    }
+
+MLOG_INFO("adb", "Found %zu devices (%zu unique)", devices_.size(), unique_devices_.size());
 }
 
 std::vector<AdbDeviceManager::UniqueDevice> AdbDeviceManager::getUniqueDevices() const {
