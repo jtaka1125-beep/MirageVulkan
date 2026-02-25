@@ -39,9 +39,10 @@
             </intent-filter>
         </receiver>
 
+        <!-- Exported=true to allow ADB setup commands (ai_start/ai_stop/fps/route). In production, can be set false. -->
         <service
             android:name=".capture.ScreenCaptureService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="mediaProjection" />
 
         <service

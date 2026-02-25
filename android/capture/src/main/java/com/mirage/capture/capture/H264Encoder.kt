@@ -1,4 +1,4 @@
-package com.mirage.capture.capture
+﻿package com.mirage.capture.capture
 
 import android.content.Context
 import android.hardware.display.DisplayManager
@@ -37,10 +37,31 @@ import java.util.concurrent.atomic.AtomicReference
 class H264Encoder(
     private val ctx: Context,
     private val projection: MediaProjection,
-    initialSender: VideoSender
+    initialSender: VideoSender,
+    initialFps: Int = 60
 ) {
     companion object {
         private const val TAG = "MirageH264"
+
+        private fun preferSoftwareEncoder(w: Int, h: Int): Boolean {
+            val model = android.os.Build.MODEL?.lowercase() ?: ""
+            // For X1 native 1200x2000, hardware AVC often clamps to 1080x1920;
+            // use Google software encoder to preserve size for AI/macro.
+            if (model.contains("npad") && w == 1200 && h == 2000) return true
+            return false
+        }
+
+        private fun isRepeaterSafe(): Boolean {
+            val hw = android.os.Build.HARDWARE?.lowercase() ?: ""
+            val model = android.os.Build.MODEL?.lowercase() ?: ""
+            val soc = try { android.os.Build.SOC_MODEL?.lowercase() ?: "" } catch (_: Throwable) { "" }
+            // Conservative blacklist
+            if (model.contains("t606")) return false
+            if (soc.contains("mt6789")) return false
+            // Allow MT8781 (X1) even though hardware starts with mt
+            return true
+        }
+
         private const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
         private const val MIN_FPS = 10
         private const val MAX_FPS = 60
@@ -54,6 +75,7 @@ class H264Encoder(
     private var codec: MediaCodec? = null
     private var encoderInputSurface: Surface? = null
     private var virtualDisplay: VirtualDisplay? = null
+    private var repeater: SurfaceRepeater? = null
     @Volatile private var running = false
     private var encoderThread: Thread? = null
     private var sendThread: Thread? = null
@@ -61,7 +83,7 @@ class H264Encoder(
     private val senderRef = AtomicReference<VideoSender>(initialSender)
     private val secondarySenders = CopyOnWriteArrayList<VideoSender>()
 
-    private val targetFps = AtomicInteger(60)
+    private val targetFps = AtomicInteger(initialFps.coerceIn(MIN_FPS, MAX_FPS))
     @Volatile private var lastSpsPpsSendTimeMs = 0L
 
     private val packetizer = RtpH264Packetizer(
@@ -84,7 +106,7 @@ class H264Encoder(
         val width: Int
         val height: Int
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = wm.currentWindowMetrics.bounds
+            val bounds = wm.maximumWindowMetrics.bounds
             width = bounds.width()
             height = bounds.height()
         } else {
@@ -116,27 +138,45 @@ class H264Encoder(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 setInteger(MediaFormat.KEY_PRIORITY, 0)
             }
-            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
+            // Only use encoder-side repeat in DIRECT mode. In REPEATER mode we duplicate frames by swapping surface.\n            if (!(fps >= 50 && isRepeaterSafe())) {\n                val repeatUs = (1_000_000L / fps.toLong()).coerceAtLeast(10_000L)\n                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, repeatUs)\n            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
         }
 
-        codec = MediaCodec.createEncoderByType(MIME_TYPE).apply {
+        codec = try {
+            if (preferSoftwareEncoder(width, height)) MediaCodec.createByCodecName("OMX.google.h264.encoder")
+            else MediaCodec.createEncoderByType(MIME_TYPE)
+        } catch (_: Exception) {
+            MediaCodec.createEncoderByType(MIME_TYPE)
+        }.apply {
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         }
 
         encoderInputSurface = codec!!.createInputSurface()
         codec!!.start()
 
-        // DIRECT MODE: VirtualDisplay -> MediaCodec input surface
-        // DO NOT use SurfaceRepeater - it causes frame freeze on MT6789/T606
-        virtualDisplay = projection.createVirtualDisplay(
-            "mirage_capture", width, height, dpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
-            encoderInputSurface, null, null
-        )
-        Log.i(TAG, "DIRECT mode active: VirtualDisplay -> MediaCodec (NO SurfaceRepeater)")
+        // MODE SELECT:
+        // Many devices cap VirtualDisplay supply to ~30fps. When targeting 50-60fps,
+        // use SurfaceRepeater to swap encoder surface at target fps using the latest frame.
+        if (fps >= 50 && isRepeaterSafe()) {
+            repeater = SurfaceRepeater(width, height, fps, encoderInputSurface!!) { srcSurface ->
+                virtualDisplay = projection.createVirtualDisplay(
+                    "mirage_capture", width, height, dpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                    srcSurface, null, null
+                )
+            }
+            repeater?.start()
+            Log.i(TAG, "REPEATER mode active: VirtualDisplay -> SurfaceTexture -> MediaCodec @$fps")
+        } else {
+            virtualDisplay = projection.createVirtualDisplay(
+                "mirage_capture", width, height, dpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                encoderInputSurface, null, null
+            )
+            Log.i(TAG, "DIRECT mode active: VirtualDisplay -> MediaCodec")
+        }
 
         running = true
         sendThread = Thread({ sendLoop() }, "H264Send").also { it.start() }
@@ -150,6 +190,8 @@ class H264Encoder(
         running = false
         encoderThread?.join(1000)
         sendThread?.join(1000)
+        try { repeater?.stop() } catch (_: Exception) {}
+        repeater = null
         virtualDisplay?.release()
         encoderInputSurface?.release()
         encoderInputSurface = null
@@ -227,6 +269,7 @@ class H264Encoder(
     private fun encoderLoop() {
         val bufferInfo = MediaCodec.BufferInfo()
         var frameCount = 0L
+        var lastSentPtsUs = 0L
         var lastLogTime = System.currentTimeMillis()
         var lastLogFrameCount = 0L
 
@@ -240,6 +283,19 @@ class H264Encoder(
                     outputBuffer.position(bufferInfo.offset)
                     outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
                     outputBuffer.get(data)
+
+                    // Throttle actual send rate to target FPS (important on devices where VDS runs > target).
+                    val tfps = targetFps.get()
+                    if (tfps <= 35) {
+                        val minIntervalUs = 1_000_000L / tfps.toLong()
+                        val pts = bufferInfo.presentationTimeUs
+                        val isKey = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+                        if (!isKey && lastSentPtsUs != 0L && (pts - lastSentPtsUs) < minIntervalUs) {
+                            codec!!.releaseOutputBuffer(outputIndex, false)
+                            continue
+                        }
+                        lastSentPtsUs = pts
+                    }
 
                     packetizer.setTimestamp90k(bufferInfo.presentationTimeUs * 90 / 1000)
                     val nals = AnnexBSplitter.splitToNals(data)
@@ -278,3 +334,7 @@ class H264Encoder(
         Log.i(TAG, "Encoder loop ended, total frames: $frameCount")
     }
 }
+
+
+
+

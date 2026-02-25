@@ -17,6 +17,19 @@ import java.net.Socket
  */
 class AccessoryCommandReceiver : BroadcastReceiver() {
 
+    private fun sendCmd(ctx: Context, cmd: String, extras: (Intent) -> Unit = {}) {
+        val i = Intent(ctx, com.mirage.capture.capture.ScreenCaptureService::class.java)
+        i.action = "com.mirage.capture.CMD"
+        i.putExtra("cmd", cmd)
+        extras(i)
+        try {
+            ctx.startForegroundService(i)
+        } catch (_: Exception) {
+            ctx.startService(i)
+        }
+    }
+
+
     // ✅ FIX-2: companion から instance 変数へ移動
     // ScreenCaptureService と同じライフサイクルで GC される
     @Volatile

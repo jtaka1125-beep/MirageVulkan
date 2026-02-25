@@ -1,4 +1,4 @@
-package com.mirage.capture.capture
+﻿package com.mirage.capture.capture
 
 import android.app.Activity
 import android.app.Notification
@@ -22,6 +22,22 @@ class ScreenCaptureService : Service() {
 
     companion object {
         private const val TAG = "MirageCapture"
+
+        private const val ACTION_CMD = "com.mirage.capture.CMD"
+        private const val EXTRA_CMD = "cmd"
+        private const val CMD_SET_FPS = "set_fps"
+        private const val CMD_REQUEST_IDR = "request_idr"
+        private const val CMD_SET_ROUTE = "set_route"
+        private const val CMD_AI_START = "ai_start"
+        private const val CMD_AI_STOP = "ai_stop"
+        private const val EXTRA_TARGET_FPS = "target_fps"
+        private const val EXTRA_FPS_LEGACY = "fps"
+        private const val EXTRA_ROUTE_MODE = "route_mode"
+        private const val EXTRA_AI_PORT = "ai_port"
+        private const val EXTRA_AI_WIDTH = "ai_width"
+        private const val EXTRA_AI_HEIGHT = "ai_height"
+        private const val EXTRA_AI_FPS = "ai_fps"
+        private const val EXTRA_AI_QUALITY = "ai_quality"
         private const val CHANNEL_ID = "mirage_capture_channel"
         private const val NOTIFICATION_ID = 2001
         private const val TCP_SECONDARY_PORT = 50100
@@ -56,6 +72,11 @@ class ScreenCaptureService : Service() {
 
     private var lastHost: String = "192.168.0.2"
     private var lastPort: Int = 50000
+
+    @Volatile private var desiredFps: Int = 30
+    @Volatile private var fpsRestartPending: Boolean = false
+
+    private var aiStream: AiStream? = null
 
     private var ipcReceiver: AccessoryCommandReceiver? = null
 
@@ -101,6 +122,52 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Direct command intents (reliable even when manifest receivers are background-limited)
+        if (intent?.action == ACTION_CMD) {
+            val cmd = intent.getStringExtra(EXTRA_CMD) ?: ""
+            when (cmd) {
+                CMD_SET_FPS -> {
+                    val fps = intent.getIntExtra(EXTRA_TARGET_FPS, intent.getIntExtra(EXTRA_FPS_LEGACY, 30))
+                    Log.i(TAG, "CMD: SET_FPS=$fps")
+                    updateFps(fps)
+                }
+                CMD_REQUEST_IDR -> {
+                    Log.i(TAG, "CMD: REQUEST_IDR")
+                    encoder?.requestIdr()
+                }
+                CMD_SET_ROUTE -> {
+                    val mode = intent.getIntExtra(EXTRA_ROUTE_MODE, 1)
+                    val host = intent.getStringExtra(ScreenCaptureService.EXTRA_HOST) ?: ""
+                    val port = intent.getIntExtra(ScreenCaptureService.EXTRA_PORT, 0)
+                    Log.i(TAG, "CMD: SET_ROUTE mode=$mode host=$host port=$port")
+                    updateRoute(mode, host, port)
+                }
+                CMD_AI_START -> {
+                    val host = intent.getStringExtra(ScreenCaptureService.EXTRA_HOST) ?: ""
+                    val aiPort = intent.getIntExtra(EXTRA_AI_PORT, 0)
+                    val w = intent.getIntExtra(EXTRA_AI_WIDTH, 0)
+                    val h = intent.getIntExtra(EXTRA_AI_HEIGHT, 0)
+                    val fps = intent.getIntExtra(EXTRA_AI_FPS, 10)
+                    val q = intent.getIntExtra(EXTRA_AI_QUALITY, 80)
+                    Log.i(TAG, "CMD: AI_START host=$host port=$aiPort size=${w}x${h} fps=$fps q=$q")
+                    val proj = projection
+                    if (proj != null) {
+                        if (aiStream == null) aiStream = AiStream(proj)
+                        val dpi = resources.displayMetrics.densityDpi
+                        aiStream?.start(host, aiPort, w, h, dpi, fps, q)
+                    }
+                }
+                CMD_AI_STOP -> {
+                    Log.i(TAG, "CMD: AI_STOP")
+                    aiStream?.stop()
+                    aiStream = null
+                }
+
+            }
+            return START_STICKY
+        }
+
+
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
             ?: Activity.RESULT_CANCELED
         val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -162,7 +229,7 @@ class ScreenCaptureService : Service() {
             }
         }
 
-        encoder = H264Encoder(this, projection!!, videoSender!!)
+        encoder = H264Encoder(this, projection!!, videoSender!!, desiredFps)
         encoder?.start()
 
         try {
@@ -222,7 +289,7 @@ class ScreenCaptureService : Service() {
             videoSender?.close()
             videoSender = UsbVideoSender(outputStream)
             mirrorMode = MIRROR_MODE_USB
-            encoder = H264Encoder(this, projection!!, videoSender!!)
+            encoder = H264Encoder(this, projection!!, videoSender!!, desiredFps)
             encoder?.start()
             startTcpSecondary()
         }
@@ -249,16 +316,52 @@ class ScreenCaptureService : Service() {
         val udpSender = UdpVideoSender(lastHost, lastPort)
         videoSender = udpSender
         mirrorMode = MIRROR_MODE_UDP
-        encoder = H264Encoder(this, proj, udpSender)
+        encoder = H264Encoder(this, proj, udpSender, desiredFps)
         encoder?.start()
         startTcpSecondary()
         Log.i(TAG, "UDP restored: $lastHost:$lastPort")
     }
 
     fun updateFps(targetFps: Int) {
-        Log.i(TAG, "Updating FPS to $targetFps")
-        encoder?.updateTargetFps(targetFps)
+        val fps = targetFps.coerceIn(10, 60)
+        desiredFps = fps
+        Log.i(TAG, "Updating FPS to $fps")
+        val proj = projection
+        val sender = videoSender
+        // If not capturing yet, just store desired FPS and best-effort apply.
+        if (proj == null || sender == null || encoder == null) {
+            encoder?.updateTargetFps(fps)
+            return
+        }
+        // MediaCodec surface input encoders typically require reconfigure to change frame-rate.
+        // We restart the encoder/virtual display with the new fps.
+        restartEncoderForFps(fps)
     }
+
+    private fun restartEncoderForFps(fps: Int) {
+        if (fpsRestartPending) return
+        fpsRestartPending = true
+        // debounce small bursts
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                val proj = projection ?: return@postDelayed
+                val sender = videoSender ?: return@postDelayed
+                Log.i(TAG, "Restarting encoder for FPS=$fps (mode=$mirrorMode)")
+                stopTcpSecondary()
+                encoder?.stop()
+                // Recreate encoder with initialFps
+                encoder = H264Encoder(this, proj, sender, fps)
+                encoder?.start()
+                startTcpSecondary()
+                Log.i(TAG, "Encoder restarted for FPS=$fps")
+            } catch (e: Exception) {
+                Log.w(TAG, "Encoder restart failed: ${e.message}")
+            } finally {
+                fpsRestartPending = false
+            }
+        }, 350)
+    }
+
 
     fun requestIdr() {
         Log.i(TAG, "Requesting IDR frame")
@@ -267,7 +370,18 @@ class ScreenCaptureService : Service() {
 
     fun getCurrentFps(): Int = encoder?.getTargetFps() ?: 30
 
-    fun switchSender(mode: String, host: String? = null, port: Int = 0) {
+    
+
+    private fun updateRoute(routeMode: Int, host: String, port: Int) {
+        // 0=USB, 1=UDP, 2=TCP (legacy GUI)
+        when (routeMode) {
+            0 -> switchSender(MIRROR_MODE_USB)
+            2 -> switchSender(MIRROR_MODE_TCP, null, port)
+            else -> switchSender(MIRROR_MODE_UDP, host, port)
+        }
+    }
+
+fun switchSender(mode: String, host: String? = null, port: Int = 0) {
         if (mode == mirrorMode) return
         val newSender: VideoSender? = when (mode) {
             MIRROR_MODE_USB -> { Log.w(TAG, "USB switch requires external stream"); null }
@@ -305,3 +419,4 @@ class ScreenCaptureService : Service() {
             .build()
     }
 }
+
