@@ -86,16 +86,16 @@
 3. deploy_apk.py live test on all 3 devices (WiFi ADB)
 
 ## GUI File Line Counts (Updated 2026-02-28)
-- gui_ai_panel.cpp:       663 (renderLearningCapture extracted, all functions <100 lines)
-- gui_init.cpp:           801 (post-session updates)
-- gui_threads.cpp:        606 (post-session updates)
-- gui_device_control.cpp: 539 (reviewed - already clean)
-- gui_command.cpp:        356 (clean)
-- gui_window.cpp:         237 (clean)
+- gui_ai_panel.cpp:       663
+- gui_init.cpp:           801
+- gui_threads.cpp:        606
+- gui_device_control.cpp: 539
+- gui_command.cpp:        356
+- gui_window.cpp:         237
 - gui_main.cpp:           279
 - gui_state.cpp:           11
-- mirage_context.cpp:     120
-- TOTAL:                 3612 lines
+- mirage_context.cpp:       0
+- TOTAL:                 3492 lines
 
 ## Key Decisions Log
 - 2026-02-24 Sess8: Migration Phase 3 COMPLETE. tools/ archive finalized, .gitignore patterns added, untracked patch scripts excluded.
