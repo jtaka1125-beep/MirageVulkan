@@ -55,3 +55,92 @@ This is the main repository (successor to MirageComplete, full upper-compatible)
 - SSE + Streamable HTTP hybrid (Claude.ai connector uses SSE)
 - MirageComplete -> MirageVulkan migration (Phase 1-3 planned)
 - Multi-agent: Director(Opus) + Worker(Sonnet) + Reviewer(Sonnet read-only)
+
+## データフロー図
+
+### 映像パイプライン (Android → PC)
+```
+[Android]
+ScreenCaptureService.kt → H264Encoder.kt → RtpH264Packetizer.kt
+    ↓ USB (VID0)              ↓ WiFi (TCP:50100)
+[PC]
+usb_video_receiver.cpp    mirror_receiver.cpp
+         ↓                       ↓
+      VID0 parse → RTP parse → unified_decoder.cpp
+                                    ↓
+                        vulkan_video_decoder.cpp (GPU)
+                        h264_decoder.cpp (FFmpeg fallback)
+                                    ↓
+                        vulkan_texture.cpp → ImGui表示
+```
+
+### コマンドパイプライン (PC → Android)
+```
+[PC]
+gui_input.cpp (マウス/キー) → hybrid_command_sender.cpp
+                                    ↓
+                        mirage_protocol.hpp (MIRA packet)
+    ↓ USB (AOA)                     ↓ WiFi (ADB)
+[Android]
+AccessoryIoService.kt           adb shell input
+         ↓
+    Protocol.kt (parse)
+         ↓
+MirageAccessibilityService.kt (実行)
+```
+
+### AIパイプライン
+```
+gui_ai_panel.cpp → ai_engine.cpp → vulkan_template_matcher.cpp (GPU NCC)
+                        ↓
+              vision_decision_engine.cpp → action_mapper.hpp
+                        ↓
+              hybrid_command_sender.cpp (自動操作)
+```
+
+## キーファイルマップ
+
+### タスク別ファイル早見表
+| やりたいこと | 触るファイル |
+|-------------|-------------|
+| タップ/スワイプ修正 | `hybrid_command_sender.cpp`, `Protocol.kt` (両方) |
+| 映像が映らない | `mirror_receiver.cpp`, `unified_decoder.cpp` |
+| USB接続問題 | `usb_device_discovery.cpp`, `aoa_protocol.cpp` |
+| GUI表示修正 | `src/gui/gui_*.cpp`, `gui_render_*.cpp` |
+| AI認識精度 | `vulkan_template_matcher.cpp`, `template_store.cpp` |
+| FPS/ビットレート | `H264Encoder.kt`, `route_controller.cpp` |
+| 新コマンド追加 | `mirage_protocol.hpp` + `Protocol.kt` (3箇所同期必須) |
+
+### Protocol.kt 同期必須ファイル (新コマンド追加時)
+1. `src/mirage_protocol.hpp` — PC側定義
+2. `android/accessory/.../Protocol.kt` — accessoryモジュール
+3. `android/capture/.../Protocol.kt` — captureモジュール
+
+### 触ってはいけないファイル
+| ファイル | 理由 |
+|---------|------|
+| `src/stb_image.h`, `stb_image_write.h` | サードパーティ (283KB) |
+| `android/app/*` | レガシー、settings.gradle.ktsで除外済み |
+| `third_party/*` | 外部ライブラリ |
+| `*.spv` | コンパイル済みシェーダー (自動生成) |
+
+### ディレクトリ構成
+```
+src/
+├── ai/          # AIエンジン (template_*, vision_*, ui_finder)
+├── video/       # デコーダ (vulkan_video_*, h264_*, unified_*)
+├── vulkan/      # Vulkanインフラ (context, swapchain, texture)
+├── gui/         # GUI (init, threads, command, device_control, ai_panel)
+└── *.cpp/hpp    # 通信・コア (mirror_receiver, hybrid_*, adb_*)
+
+android/
+├── capture/     # com.mirage.capture (映像送信, ML)
+├── accessory/   # com.mirage.accessory (AOA, コマンド受信)
+└── app/         # [除外] レガシーモノリス
+
+scripts/         # Python ユーティリティ
+tools/           # デバッグ用パッチ (本番コードではない)
+shaders/         # GLSL compute (*.comp → *.spv)
+tests/           # GoogleTest (33テスト)
+docs/            # 設計ドキュメント
+```
