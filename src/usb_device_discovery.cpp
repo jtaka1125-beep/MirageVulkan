@@ -25,10 +25,15 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
         AOA_PID_ACCESSORY_AUDIO,
         AOA_PID_ACCESSORY_AUDIO_ADB
     };
+    // MediaTek composite AOA PIDs (VID_0E8D) - e.g. Npad X1
+    static constexpr uint16_t MTK_VID = 0x0E8D;
+    uint16_t mtk_aoa_pids[] = {
+        0x201C, // AOA composite (AOA+ADB)
+        0x2005, // AOA only
+    };
 
     bool found_any = false;
     std::vector<libusb_device*> android_devices;
-    // AOA devices collected for retry-open (IO error may be WinUSB not fully ready)
     std::vector<std::pair<libusb_device*, uint16_t>> aoa_devices_to_open;
 
     for (ssize_t i = 0; i < cnt; i++) {
@@ -36,9 +41,19 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
         struct libusb_device_descriptor desc;
         if (libusb_get_device_descriptor(dev, &desc) != 0) continue;
 
-        // Check if already-enumerated AOA device
+        // Check if already-enumerated AOA device (Google VID_18D1)
         if (desc.idVendor == AOA_VID) {
             for (uint16_t pid : aoa_pids) {
+                if (desc.idProduct == pid) {
+                    aoa_devices_to_open.push_back({dev, pid});
+                    break;
+                }
+            }
+            continue;
+        }
+        // Check MediaTek AOA composite (VID_0E8D) - Npad X1 uses PID_201C
+        if (desc.idVendor == MTK_VID) {
+            for (uint16_t pid : mtk_aoa_pids) {
                 if (desc.idProduct == pid) {
                     aoa_devices_to_open.push_back({dev, pid});
                     break;
@@ -73,10 +88,6 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
         }
     }
 
-    // Open already-AOA devices.
-    // allow_wait=false (initial call on main thread): try once, no blocking wait.
-    //   WinUSB may not be bound yet — auto-rescan will succeed after ~30s.
-    // allow_wait=true (rescan thread): wait up to 19s for WinUSB to bind.
     constexpr int AOA_DIRECT_OPEN_RETRIES_WAIT = 8;
     constexpr int AOA_DIRECT_OPEN_RETRIES_NOWAIT = 0;
     constexpr int AOA_DIRECT_OPEN_DELAY_MS = 2000;
@@ -131,13 +142,10 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
             devs = nullptr;
 
             if (!allow_wait) {
-                // Main thread: don't block, let rescan thread pick up after re-enumeration
                 MLOG_INFO("multicmd", "AOA switch sent, deferred open to rescan thread");
                 return false;
             }
 
-            // WinUSBバインド完了待ち + リトライ（最大8回、各2秒間隔）
-            // 初期3秒 + 最大8×2秒 = 最大19秒でバインド完了を待つ
             constexpr int AOA_OPEN_MAX_RETRIES = 8;
             constexpr int AOA_OPEN_RETRY_INTERVAL_MS = 2000;
 
@@ -147,8 +155,6 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
             for (int retry = 0; retry < AOA_OPEN_MAX_RETRIES; retry++) {
                 cnt = libusb_get_device_list(ctx_, &devs);
                 if (cnt < 0) {
-                    MLOG_WARN("multicmd", "libusb_get_device_list failed on retry %d/%d",
-                              retry + 1, AOA_OPEN_MAX_RETRIES);
                     devs = nullptr;
                     std::this_thread::sleep_for(std::chrono::milliseconds(AOA_OPEN_RETRY_INTERVAL_MS));
                     continue;
@@ -169,7 +175,20 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
                                 if (open_aoa_device(dev, pid)) {
                                     found_any = true;
                                 } else {
-                                    // openに失敗 — まだWinUSBバインド未完了の可能性
+                                    all_opened = false;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    // Also check MediaTek AOA after re-enumeration
+                    if (desc.idVendor == MTK_VID) {
+                        for (uint16_t pid : mtk_aoa_pids) {
+                            if (desc.idProduct == pid) {
+                                found_aoa = true;
+                                if (open_aoa_device(dev, pid)) {
+                                    found_any = true;
+                                } else {
                                     all_opened = false;
                                 }
                                 break;
@@ -181,17 +200,14 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
                 libusb_free_device_list(devs, 1);
                 devs = nullptr;
 
-                if (found_aoa && all_opened) {
-                    // 全AOAデバイスのopen成功
-                    break;
-                }
+                if (found_aoa && all_opened) break;
 
                 if (retry < AOA_OPEN_MAX_RETRIES - 1) {
                     MLOG_INFO("multicmd", "AOA device open failed, retrying (%d/%d)...",
                               retry + 1, AOA_OPEN_MAX_RETRIES);
                     std::this_thread::sleep_for(std::chrono::milliseconds(AOA_OPEN_RETRY_INTERVAL_MS));
                 } else {
-                    MLOG_WARN("multicmd", "AOA device open failed after %d retries (WinUSBバインド未完了の可能性)",
+                    MLOG_WARN("multicmd", "AOA device open failed after %d retries",
                               AOA_OPEN_MAX_RETRIES);
                 }
             }
