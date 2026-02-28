@@ -320,7 +320,10 @@ std::string MacroApiServer::dispatch(const std::string& json_line) {
         if (method == "text") {
             return make_result(id, handle_text(device_id, params.value("text", "")));
         }
-        if (method == "click_id") {
+        if (method == "ui_tree") {
+            return make_result(id, handle_ui_tree(device_id));
+        }
+                if (method == "click_id") {
             return make_result(id, handle_click_id(device_id, params.value("resource_id", "")));
         }
         if (method == "click_text") {
@@ -643,6 +646,15 @@ std::string MacroApiServer::handle_text(const std::string& device_id, const std:
     }
     run_adb_cmd(adb_id, "shell input text \"" + escaped + "\"");
     return "{\"status\":\"ok\",\"via\":\"adb\"}";
+}
+
+std::string MacroApiServer::handle_ui_tree(const std::string& device_id) {
+    auto* hybrid = app_->hybrid_sender();
+    if (!hybrid) return R"({"status":"error","message":"no sender"})";
+    uint32_t seq = hybrid->send_ui_tree_req(device_id);
+    if (seq == 0) return R"({"status":"error","message":"ui_tree_req requires AOA connection"})";
+    // 応答はCMD_UI_TREE_DATAで非同期受信 (seq返却で追跡可能)
+    return "{"status":"ok","seq":" + std::to_string(seq) + "}";
 }
 
 std::string MacroApiServer::handle_click_id(const std::string& device_id,

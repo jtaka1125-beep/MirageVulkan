@@ -58,7 +58,8 @@ private:
     std::string handle_pinch(const std::string& device_id, const std::string& direction, int cx, int cy, int d_start, int d_end);
     std::string handle_key(const std::string& device_id, int keycode);
     std::string handle_text(const std::string& device_id, const std::string& text);
-    std::string handle_click_id(const std::string& device_id, const std::string& resource_id);
+    std::string handle_ui_tree(const std::string& device_id);
+        std::string handle_click_id(const std::string& device_id, const std::string& resource_id);
     std::string handle_click_text(const std::string& device_id, const std::string& text);
     std::string handle_launch_app(const std::string& device_id, const std::string& package);
     std::string handle_force_stop(const std::string& device_id, const std::string& package);

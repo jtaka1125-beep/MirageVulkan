@@ -357,4 +357,43 @@ class MirageAccessibilityService : AccessibilityService() {
             }
         }, null)
     }
+
+    /**
+     * UIツリーをJSON形式でダンプして返す (CMD_UI_TREE_REQ ハンドラ用)
+     */
+    fun dumpUiTree(): String? {
+        val root = rootInActiveWindow ?: return null
+        return buildJsonNode(root, 0)
+    }
+
+    private fun buildJsonNode(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int): String {
+        if (depth > 12) return "{"truncated":true}"
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        val esc = { s: String -> s.replace("\", "\\").replace(""", "\"") }
+        val text = esc(node.text?.toString() ?: "")
+        val cd   = esc(node.contentDescription?.toString() ?: "")
+        val rid  = node.viewIdResourceName ?: ""
+        val sb = StringBuilder("{")
+        sb.append(""pkg":"${node.packageName ?: ""}"")
+        sb.append(","cls":"${node.className ?: ""}"")
+        sb.append(","rid":"$rid"")
+        sb.append(","text":"$text"")
+        sb.append(","cd":"$cd"")
+        sb.append(","click":${node.isClickable}")
+        sb.append(","bounds":[${rect.left},${rect.top},${rect.right},${rect.bottom}]")
+        if (node.childCount > 0) {
+            sb.append(","children":[")
+            for (i in 0 until node.childCount) {
+                if (i > 0) sb.append(",")
+                val child = node.getChild(i)
+                if (child != null) sb.append(buildJsonNode(child, depth + 1))
+                else sb.append("null")
+            }
+            sb.append("]")
+        }
+        sb.append("}")
+        return sb.toString()
+    }
+
 }

@@ -107,6 +107,14 @@ uint32_t MultiUsbCommandSender::send_key(const std::string& usb_id, int keycode)
     return seq;
 }
 
+uint32_t MultiUsbCommandSender::send_ui_tree_req(const std::string& usb_id) {
+    uint32_t seq = queue_command(usb_id, CMD_UI_TREE_REQ, nullptr, 0);
+    if (seq) {
+        MLOG_INFO("multicmd", "Queued UI_TREE_REQ to %s seq=%u", usb_id.c_str(), seq);
+    }
+    return seq;
+}
+
 uint32_t MultiUsbCommandSender::send_click_id(const std::string& usb_id, const std::string& resource_id) {
     // FIX-C: payload_len in MIRA header already encodes length. No len prefix needed.
     // Android parser reads payloadLen bytes directly as UTF-8 (trimEnd null).

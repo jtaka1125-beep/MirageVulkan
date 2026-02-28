@@ -736,6 +736,7 @@ class AccessoryIoService : Service() {
             is Protocol.Command.ClickId -> { handleClickId(cmd); Protocol.STATUS_OK }
 
             is Protocol.Command.ClickText -> { handleClickText(cmd); Protocol.STATUS_OK }
+            is Protocol.Command.UiTreeReq -> { handleUiTreeReq(cmd); Protocol.STATUS_OK }
 
             is Protocol.Command.VideoFps -> { handleVideoFps(cmd.targetFps); Protocol.STATUS_OK }
 
@@ -847,6 +848,32 @@ class AccessoryIoService : Service() {
 
             ?.longPress(cmd.x.toFloat(), cmd.y.toFloat(), cmd.durationMs, cmd.seq)
 
+    }
+
+    private fun handleUiTreeReq(cmd: Protocol.Command.UiTreeReq) {
+        val svc = com.mirage.accessory.access.MirageAccessibilityService.instance
+        if (svc == null) {
+            Log.w(TAG, "UiTreeReq: AccessibilityService not available")
+            sendAck(cmd.seq, Protocol.STATUS_ERR_BUSY)
+            return
+        }
+        val json = svc.dumpUiTree()
+        if (json == null) {
+            Log.w(TAG, "UiTreeReq: rootInActiveWindow null")
+            sendAck(cmd.seq, Protocol.STATUS_ERR_NOT_FOUND)
+            return
+        }
+        val payload = json.toByteArray(Charsets.UTF_8)
+        val pkt = Protocol.buildPacket(Protocol.CMD_UI_TREE_DATA, cmd.seq, payload)
+        synchronized(outputLock) {
+            try {
+                outputStream?.write(pkt)
+                outputStream?.flush()
+                Log.i(TAG, "UiTreeReq: sent ${payload.size} bytes seq=${cmd.seq}")
+            } catch (e: Exception) {
+                Log.e(TAG, "UiTreeReq: send error $e")
+            }
+        }
     }
 
     private fun handleClickId(cmd: Protocol.Command.ClickId) {

@@ -178,7 +178,8 @@ public:
     uint32_t send_swipe(const std::string& usb_id, int x1, int y1, int x2, int y2, int duration_ms = 300, int screen_w = 0, int screen_h = 0);  // ISSUE-18: +screen_w/h
     uint32_t send_back(const std::string& usb_id);
     uint32_t send_key(const std::string& usb_id, int keycode);
-    uint32_t send_click_id(const std::string& usb_id, const std::string& resource_id);
+    uint32_t send_ui_tree_req(const std::string& usb_id);
+        uint32_t send_click_id(const std::string& usb_id, const std::string& resource_id);
     uint32_t send_click_text(const std::string& usb_id, const std::string& text);
     // FIX-B: Pinch and LongPress commands
     uint32_t send_pinch(const std::string& usb_id,

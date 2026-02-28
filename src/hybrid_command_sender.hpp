@@ -57,7 +57,8 @@ public:
     uint32_t send_swipe(const std::string& device_id, int x1, int y1, int x2, int y2, int duration_ms = 300, int screen_w = 0, int screen_h = 0);
     uint32_t send_back(const std::string& device_id);
     uint32_t send_key(const std::string& device_id, int keycode);
-    uint32_t send_click_id(const std::string& device_id, const std::string& resource_id);
+    uint32_t send_ui_tree_req(const std::string& device_id);
+        uint32_t send_click_id(const std::string& device_id, const std::string& resource_id);
     uint32_t send_click_text(const std::string& device_id, const std::string& text);
 
     // Long press and pinch (only available via HID or ADB)

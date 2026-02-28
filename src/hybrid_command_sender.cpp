@@ -287,6 +287,11 @@ uint32_t HybridCommandSender::send_key(const std::string& device_id, int keycode
     return 0;
 }
 
+uint32_t HybridCommandSender::send_ui_tree_req(const std::string& device_id) {
+    if (usb_sender_) return usb_sender_->send_ui_tree_req(device_id);
+    return 0;
+}
+
 uint32_t HybridCommandSender::send_click_id(const std::string& device_id, const std::string& resource_id) {
     return usb_sender_ ? usb_sender_->send_click_id(device_id, resource_id) : 0;
 }

@@ -35,6 +35,8 @@ static constexpr uint8_t CMD_CLICK_TEXT = 0x06;
 static constexpr uint8_t CMD_SWIPE      = 0x07;
 static constexpr uint8_t CMD_PINCH      = 0x08;  // FIX-B: pinch operation PC->Android
 static constexpr uint8_t CMD_LONGPRESS  = 0x09;  // FIX-B: long press PC->Android
+static constexpr uint8_t CMD_UI_TREE_REQ  = 0x0A; // UIツリー要求: PC -> Android
+static constexpr uint8_t CMD_UI_TREE_DATA = 0x0B; // UIツリー応答: Android -> PC (JSON)
 
 // Video control commands (PC -> Android)
 static constexpr uint8_t CMD_VIDEO_FPS   = 0x24;
@@ -182,6 +184,8 @@ inline const char* cmd_name(uint8_t cmd) {
         case CMD_SWIPE:       return "SWIPE";
         case CMD_PINCH:        return "PINCH";
         case CMD_LONGPRESS:    return "LONGPRESS";
+        case CMD_UI_TREE_REQ:  return "UI_TREE_REQ";
+        case CMD_UI_TREE_DATA: return "UI_TREE_DATA";
         case CMD_VIDEO_FPS:   return "VIDEO_FPS";
         case CMD_VIDEO_ROUTE: return "VIDEO_ROUTE";
         case CMD_VIDEO_IDR:   return "VIDEO_IDR";
