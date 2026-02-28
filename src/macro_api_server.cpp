@@ -452,12 +452,21 @@ std::string MacroApiServer::handle_list_devices() {
         d["connection"]  = (ud.preferred_type == ::gui::AdbDeviceManager::ConnectionType::USB) ? "usb" : "wifi";
 
         // Check if device is available via AOA (HybridCommandSender)
+        // hybrid_ids contains USB serial numbers (e.g. "A9250700956")
+        // Match against usb_connections (USB serials) or hardware_id
         bool has_aoa = false;
         for (auto& hid : hybrid_ids) {
-            if (hid == ud.preferred_adb_id || hid == ud.hardware_id) {
+            if (hid == ud.hardware_id || hid == ud.preferred_adb_id) {
                 has_aoa = true;
                 break;
             }
+            for (auto& usb_ser : ud.usb_connections) {
+                if (hid == usb_ser) {
+                    has_aoa = true;
+                    break;
+                }
+            }
+            if (has_aoa) break;
         }
         d["aoa"] = has_aoa;
         arr.push_back(d);
@@ -649,12 +658,12 @@ std::string MacroApiServer::handle_text(const std::string& device_id, const std:
 }
 
 std::string MacroApiServer::handle_ui_tree(const std::string& device_id) {
-    auto* hybrid = app_->hybrid_sender();
+    auto* hybrid = ctx().hybrid_cmd.get();
     if (!hybrid) return R"({"status":"error","message":"no sender"})";
     uint32_t seq = hybrid->send_ui_tree_req(device_id);
     if (seq == 0) return R"({"status":"error","message":"ui_tree_req requires AOA connection"})";
     // 応答はCMD_UI_TREE_DATAで非同期受信 (seq返却で追跡可能)
-    return "{"status":"ok","seq":" + std::to_string(seq) + "}";
+    return "{\"status\":\"ok\",\"seq\":" + std::to_string(seq) + "}";
 }
 
 std::string MacroApiServer::handle_click_id(const std::string& device_id,
