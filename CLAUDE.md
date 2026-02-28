@@ -144,3 +144,30 @@ shaders/         # GLSL compute (*.comp → *.spv)
 tests/           # GoogleTest (33テスト)
 docs/            # 設計ドキュメント
 ```
+
+## 既知の地雷
+
+### USB/ADB競合
+- **MirageVulkan起動中はUSB ADBにX1が出ない** — AOAがUSBを横取りするため
+- **WinUSBドライバ(PID_201C)とADBドライバ(PID_200C)は排他的** — 切り替えにはデバイスマネージャーでドライバ変更が必要
+- **AOA接続中のデバイスはadb devicesに表示されない** — これは仕様
+
+### WiFi ADB
+- **tcpip 5555は再起動で消える** — `wifi_adb_devices.conf`で管理、`wifi_adb_guard.py`が自動再接続
+- **IPアドレス変わるとWiFi ADB切れる** — DHCPリース更新時に注意
+
+### Android 15特有
+- **MediaProjection毎回許可必要** — Android 15の仕様変更、自動化できない
+- **A9デバイスはスクショ取得に8秒以上かかることがある** — WiFi ADB経由の制約
+
+### ビルド/署名
+- **testsigningモード必須** — WinUSBドライバ署名のため、`bcdedit /set testsigning on`
+- **APKはrelease署名必須** — debug署名だとAccessoryが動かない（AOA認証に影響）
+
+### プロトコル
+- **Protocol.kt 3箇所同期必須** — PC側、accessory、captureの3つ。1つでも漏れると通信失敗
+- **MIRA packetはリトルエンディアン** — Javaのデフォルト(BE)と逆なので注意
+
+### Hub/電源
+- **ReTRY HUBのポートサイクルは1秒以上待つ** — 短すぎると認識失敗
+- **X1はUSBハブ経由だと電力不足になることがある** — 直結推奨
