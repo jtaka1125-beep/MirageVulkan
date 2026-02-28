@@ -85,14 +85,17 @@
 2. Multi-device video pipeline stress test [BLOCKED: physical USB]
 3. deploy_apk.py live test on all 3 devices (WiFi ADB)
 
-## GUI File Line Counts (FINAL - Refactoring Complete)
+## GUI File Line Counts (Updated 2026-02-28)
 - gui_ai_panel.cpp:       663 (renderLearningCapture extracted, all functions <100 lines)
-- gui_init.cpp:           724 (all callbacks single-line, registerDevicesForRouteController added)
-- gui_threads.cpp:        563 (frame helpers extracted, dead code removed)
+- gui_init.cpp:           801 (post-session updates)
+- gui_threads.cpp:        606 (post-session updates)
 - gui_device_control.cpp: 539 (reviewed - already clean)
 - gui_command.cpp:        356 (clean)
 - gui_window.cpp:         237 (clean)
-- TOTAL:                 3492 lines
+- gui_main.cpp:           279
+- gui_state.cpp:           11
+- mirage_context.cpp:     120
+- TOTAL:                 3612 lines
 
 ## Key Decisions Log
 - 2026-02-24 Sess8: Migration Phase 3 COMPLETE. tools/ archive finalized, .gitignore patterns added, untracked patch scripts excluded.
@@ -108,7 +111,7 @@
 - 2026-02-23: Video engine fully custom, no scrcpy
 - 2026-02-16: MirageVulkan designated as main repo (MirageComplete = legacy)
 
-## Test Coverage (31/31 pass)
+## Test Coverage (33 tests registered in CMakeLists.txt)
 - TemplateStoreTest 12, ActionMapperTest 14, WinUsbCheckerTest 14
 - TemplateManifestTest, BandwidthMonitorTest, HybridSenderTest, MirrorReceiverTest
 - VID0ParserTest, ConfigLoaderTest, VisionDecisionEngineTest (40 cases), etc.

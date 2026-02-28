@@ -31,6 +31,8 @@ object Protocol {
     const val CMD_SWIPE: Byte = 0x07       // スワイプ: PC -> Android
     const val CMD_PINCH: Byte = 0x08       // ピンチ: PC -> Android  // FIX-B
     const val CMD_LONGPRESS: Byte = 0x09   // ロングプレス: PC -> Android  // FIX-B
+    const val CMD_UI_TREE_REQ: Byte = 0x0A  // UIツリー要求: PC -> Android
+    const val CMD_UI_TREE_DATA: Byte = 0x0B // UIツリー応答: Android -> PC (JSON)
     const val CMD_AUDIO_FRAME: Byte = 0x10  // Audio frame: Android -> PC
     const val CMD_VIDEO_FPS: Byte = 0x24    // FPS change command: PC -> Android
     const val CMD_VIDEO_ROUTE: Byte = 0x25  // Video route switch: PC -> Android
@@ -42,6 +44,7 @@ object Protocol {
     const val STATUS_ERR_UNKNOWN_CMD: Byte = 1
     const val STATUS_ERR_INVALID_PAYLOAD: Byte = 2
     const val STATUS_ERR_BUSY: Byte = 3
+    const val STATUS_ERR_NOT_FOUND: Byte = 4
 
     data class Header(
         val magic: Int,
@@ -95,6 +98,7 @@ object Protocol {
                          val startDistance: Int, val endDistance: Int,
                          val durationMs: Int, val angleDeg100: Int) : Command()
         data class LongPress(override val seq: Int, val x: Int, val y: Int, val durationMs: Int) : Command()
+        data class UiTreeReq(override val seq: Int) : Command()           // UIツリー要求
         data class VideoFps(override val seq: Int, val targetFps: Int) : Command()
         data class VideoRoute(override val seq: Int, val mode: Int, val host: String, val port: Int) : Command()
         data class VideoIdr(override val seq: Int) : Command()
@@ -251,6 +255,10 @@ object Protocol {
                 Command.VideoIdr(seq = header.seq)
             }
 
+            CMD_UI_TREE_REQ -> {
+                Command.UiTreeReq(seq = header.seq)
+            }
+
             else -> Command.Unknown(header.seq, header.cmd)
         }
     }
@@ -292,6 +300,25 @@ object Protocol {
         buf.put(idBytes)
         return buf.array()
     }
+    /**
+     * Build UI_TREE_DATA packet to send UI tree JSON to PC.
+     *
+     * @param seq Sequence number from the request
+     * @param jsonData UI tree as JSON string (UTF-8)
+     * @return MIRA packet with UI_TREE_DATA command
+     */
+    fun buildUiTreeData(seq: Int, jsonData: String): ByteArray {
+        val jsonBytes = jsonData.toByteArray(Charsets.UTF_8)
+        val buf = ByteBuffer.allocate(HEADER_SIZE + jsonBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+        buf.putInt(MAGIC)
+        buf.put(VERSION)
+        buf.put(CMD_UI_TREE_DATA)
+        buf.putInt(seq)
+        buf.putInt(jsonBytes.size)
+        buf.put(jsonBytes)
+        return buf.array()
+    }
+
     /**
      * Build audio frame packet for USB transmission
      * Payload: timestamp (4 bytes) + opus data (N bytes)
