@@ -18,7 +18,11 @@
 #include "vid0_parser.hpp"
 
 #include <thread>
-#include <map>\r\n#include <unordered_map>\r\n#include <vector>\r\n#include <fstream>\r\n
+#include <map>
+#include <unordered_map>
+#include <vector>
+#include <fstream>
+
 using namespace mirage::gui::state;
 using namespace mirage::gui::command;
 
@@ -263,18 +267,24 @@ bool initializeMultiReceiver() {
 int success = 0;
     for (size_t i = 0; i < devices.size(); ++i) {
         const auto& dev = devices[i];
+        const std::string& adb_id = dev.preferred_adb_id;
+
 
         // assigned_tcp_port (devices.json逕ｱ譚･) 縺後≠繧後・菴ｿ縺・√↑縺代ｌ縺ｰ蜍慕噪蜑ｲ蠖・
         int local_port = 0;
         if (dev.assigned_tcp_port > 0) {
             local_port = dev.assigned_tcp_port;
         } else {
-            auto itp = fixed_port_map.find(dev.hardware_id);
-            if (itp != fixed_port_map.end()) local_port = itp->second;
-            else local_port = BASE_LOCAL_PORT + static_cast<int>(i) * 2;
+            // Stable mapping by ADB id (avoids hardware_id mismatch causing port collisions)
+            if (adb_id.find("192.168.0.3") != std::string::npos) local_port = 50100;
+            else if (adb_id.find("192.168.0.6") != std::string::npos || adb_id.find("A9250700956") != std::string::npos) local_port = 50102;
+            else if (adb_id.find("192.168.0.8") != std::string::npos || adb_id.find("A9250700479") != std::string::npos) local_port = 50104;
+            else {
+                auto itp = fixed_port_map.find(dev.hardware_id);
+                if (itp != fixed_port_map.end()) local_port = itp->second;
+                else local_port = BASE_LOCAL_PORT + static_cast<int>(i) * 2;
+            }
         }
-
-        const std::string& adb_id = dev.preferred_adb_id;
 
         // adb forward險ｭ螳・
         std::string fwd_cmd = "forward tcp:" + std::to_string(local_port) +

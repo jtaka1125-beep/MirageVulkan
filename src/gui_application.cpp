@@ -387,12 +387,9 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
                         MLOG_WARN("VkTex", "Aspect ratio change, recreating: device=%s %dx%d(%.3f) -> %dx%d(%.3f)",
                                   id.c_str(), old_w, old_h, old_aspect, width, height, new_aspect);
                     } else {
-                        // True dual-stream mismatch: skip
-                        if (!device.size_mismatch_logged) {
-                            MLOG_WARN("VkTex", "Size mismatch skip device=%s tex=%dx%d frame=%dx%d (suppressing further)", id.c_str(), old_w, old_h, width, height);
-                            device.size_mismatch_logged = true;
-                        }
-                        return;
+                        // Size mismatch: recreate texture instead of skipping
+                        MLOG_WARN("VkTex", "Size mismatch, recreating tex %dx%d -> %dx%d device=%s",
+                                  old_w, old_h, width, height, id.c_str());
                     }
                 }
                 MLOG_WARN("VkTex", "Size upgrade recreate device=%s %dx%d -> %dx%d", id.c_str(), old_w, old_h, width, height);
@@ -718,8 +715,19 @@ bool GuiApplication::createVulkanResources(HWND hwnd) {
 
     MLOG_INFO("app", "Creating Vulkan swapchain (%dx%d)...", window_width_, window_height_);
     vk_swapchain_ = std::make_unique<mirage::vk::VulkanSwapchain>();
-    if (!vk_swapchain_->create(*vk_context_, surface, window_width_, window_height_)) {
-        MLOG_ERROR("app", "Vulkan swapchain creation failed");
+    bool swap_ok = false;
+    // Some drivers return transient errors if swapchain is created too early (window not fully ready).
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        if (vk_swapchain_->create(*vk_context_, surface, window_width_, window_height_)) {
+            swap_ok = true;
+            break;
+        }
+        // Pump messages and wait a bit before retry
+        MSG msg; while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+        Sleep(200);
+    }
+    if (!swap_ok) {
+        MLOG_ERROR("app", "Vulkan swapchain creation failed (after retries)");
         return false;
     }
     MLOG_INFO("app", "Vulkan swapchain created (%u images)", vk_swapchain_->imageCount());

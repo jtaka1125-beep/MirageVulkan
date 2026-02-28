@@ -275,6 +275,11 @@ std::vector<std::string> AdbDeviceManager::parseAdbDevices() {
         std::string id = line.substr(0, tab_pos);
         std::string status = line.substr(tab_pos + 1);
 
+        // Ignore mDNS ADB records (e.g. adb-XXXX._adb-tls-connect._tcp)
+        if (id.rfind("adb-", 0) == 0 && id.find("._adb") != std::string::npos) {
+            continue;
+        }
+
         // Trim status
         while (!status.empty() && (status.back() == '\n' || status.back() == '\r' || status.back() == ' ')) {
             status.pop_back();
