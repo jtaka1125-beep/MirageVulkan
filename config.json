@@ -10,7 +10,7 @@
     "pc_subnet": "192.168.42.0/24"
   },
   "adb": {
-    "path": "adb",
+    "path": "C:/Users/jun/.local/bin/platform-tools/adb.exe",
     "device_port": 5555,
     "process_timeout_ms": 30000,
     "command_timeout_ms": 15000
@@ -47,7 +47,7 @@
   "ai": {
     "enabled": true,
     "templates_dir": "templates",
-    "default_threshold": 0.80
+    "default_threshold": 0.8
   },
   "ocr": {
     "enabled": false,
