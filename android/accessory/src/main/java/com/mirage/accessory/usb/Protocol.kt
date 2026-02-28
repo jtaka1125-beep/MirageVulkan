@@ -106,6 +106,7 @@ object Protocol {
         data class ClickId(override val seq: Int, val resourceId: String) : Command()
         data class ClickText(override val seq: Int, val text: String) : Command()
         data class UiTreeReq(override val seq: Int) : Command()           // UIツリー要求
+        data class Unknown(override val seq: Int, val cmd: Byte) : Command()
         data class VideoFps(override val seq: Int, val targetFps: Int) : Command()
         data class VideoRoute(override val seq: Int, val mode: Int, val host: String, val port: Int) : Command()
         data class VideoIdr(override val seq: Int) : Command()
@@ -152,5 +153,235 @@ object Protocol {
         buf.putInt(payloadLen)
         if (payload != null) buf.put(payload)
         return buf.array()
+    }
+
+    fun parseCommand(data: ByteArray): Command? {
+        val header = parseHeader(data) ?: return null
+        if (!header.isValid()) return null
+
+        val payloadOffset = HEADER_SIZE
+        val payloadData = if (header.payloadLen > 0 && data.size >= payloadOffset + header.payloadLen) {
+            ByteBuffer.wrap(data, payloadOffset, header.payloadLen).order(ByteOrder.LITTLE_ENDIAN)
+        } else null
+
+        return when (header.cmd) {
+            CMD_PING -> Command.Ping(header.seq)
+
+            CMD_TAP -> {
+                if (payloadData == null || header.payloadLen < 20) return null
+                Command.Tap(
+                    seq = header.seq,
+                    x = payloadData.int,
+                    y = payloadData.int,
+                    w = payloadData.int,
+                    h = payloadData.int
+                )
+            }
+
+            CMD_BACK -> Command.Back(header.seq)
+
+            CMD_KEY -> {
+                if (payloadData == null || header.payloadLen < 8) return null
+                Command.Key(
+                    seq = header.seq,
+                    keycode = payloadData.int
+                )
+            }
+
+            CMD_SWIPE -> {
+                if (payloadData == null || header.payloadLen < 20) return null
+                // ISSUE-18: 28-byte payload adds screenW, screenH (20-byte legacy is still accepted)
+                val startX    = payloadData.int
+                val startY    = payloadData.int
+                val endX      = payloadData.int
+                val endY      = payloadData.int
+                val durationMs = payloadData.int
+                val screenW   = if (header.payloadLen >= 28) payloadData.int else 0
+                val screenH   = if (header.payloadLen >= 28) payloadData.int else 0
+                Command.Swipe(seq = header.seq, startX = startX, startY = startY,
+                    endX = endX, endY = endY, durationMs = durationMs,
+                    screenW = screenW, screenH = screenH)
+            }
+
+            CMD_PINCH -> {
+                if (payloadData == null || header.payloadLen < 24) return null
+                val centerX = payloadData.int
+                val centerY = payloadData.int
+                val startDist = payloadData.int
+                val endDist = payloadData.int
+                val durMs = payloadData.int
+                // (reserved field removed FIX-B: payload now 24 bytes, 6 ints)
+                val angleDeg100 = payloadData.int
+                Command.Pinch(header.seq, centerX, centerY, startDist, endDist, durMs, angleDeg100)
+            }
+
+            CMD_LONGPRESS -> {
+                if (payloadData == null || header.payloadLen < 12) return null
+                Command.LongPress(
+                    seq = header.seq,
+                    x = payloadData.int,
+                    y = payloadData.int,
+                    durationMs = payloadData.int
+                )
+            }
+
+            CMD_CONFIG -> {
+                // 設定変更: ペイロード全体をバイト配列として渡す
+                val raw = if (payloadData != null) {
+                    val b = ByteArray(header.payloadLen)
+                    payloadData.get(b)
+                    b
+                } else ByteArray(0)
+                Command.Config(seq = header.seq, payload = raw)
+            }
+
+            CMD_CLICK_ID -> {
+                // リソースID指定タップ: ペイロードはUTF-8文字列
+                if (payloadData == null || header.payloadLen < 1) return null
+                val idBytes = ByteArray(header.payloadLen)
+                payloadData.get(idBytes)
+                Command.ClickId(
+                    seq = header.seq,
+                    resourceId = String(idBytes, Charsets.UTF_8).trimEnd('\u0000')
+                )
+            }
+
+            CMD_CLICK_TEXT -> {
+                // テキスト指定タップ: ペイロードはUTF-8文字列
+                if (payloadData == null || header.payloadLen < 1) return null
+                val textBytes = ByteArray(header.payloadLen)
+                payloadData.get(textBytes)
+                Command.ClickText(
+                    seq = header.seq,
+                    text = String(textBytes, Charsets.UTF_8).trimEnd('\u0000')
+                )
+            }
+
+            CMD_VIDEO_FPS -> {
+                if (payloadData == null || header.payloadLen < 4) return null
+                Command.VideoFps(
+                    seq = header.seq,
+                    targetFps = payloadData.int
+                )
+            }
+
+            CMD_VIDEO_ROUTE -> {
+                if (payloadData == null || header.payloadLen < 8) return null
+                val mode = payloadData.int
+                val port = payloadData.int
+                // Host IP is remaining bytes as string (null-terminated or full length)
+                val hostBytes = ByteArray(header.payloadLen - 8)
+                if (hostBytes.isNotEmpty()) {
+                    payloadData.get(hostBytes)
+                }
+                val host = String(hostBytes).trimEnd('\u0000')
+                Command.VideoRoute(
+                    seq = header.seq,
+                    mode = mode,
+                    host = host,
+                    port = port
+                )
+            }
+
+            CMD_VIDEO_IDR -> {
+                Command.VideoIdr(seq = header.seq)
+            }
+
+            else -> Command.Unknown(header.seq, header.cmd)
+        }
+    }
+
+    fun buildAck(seq: Int, status: Byte): ByteArray {
+        val buf = ByteBuffer.allocate(HEADER_SIZE + 8).order(ByteOrder.LITTLE_ENDIAN)
+        // Header
+        buf.putInt(MAGIC)
+        buf.put(VERSION)
+        buf.put(CMD_ACK)
+        buf.putInt(seq)
+        buf.putInt(8) // payload len
+        // AckPayload
+        buf.putInt(seq)
+        buf.put(status)
+        buf.put(0) // reserved
+        buf.put(0)
+        buf.put(0)
+        return buf.array()
+    }
+
+    /**
+     * Build DEVICE_INFO packet to send hardware_id to PC.
+     * This allows PC to map USB serial -> ADB hardware_id.
+     *
+     * @param hardwareId The device's unique hardware ID (android_id_serialno)
+     * @return MIRA packet with DEVICE_INFO command
+     */
+    fun buildDeviceInfo(hardwareId: String): ByteArray {
+        val idBytes = hardwareId.toByteArray(Charsets.UTF_8)
+        val buf = ByteBuffer.allocate(HEADER_SIZE + idBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+        // Header
+        buf.putInt(MAGIC)
+        buf.put(VERSION)
+        buf.put(CMD_DEVICE_INFO)
+        buf.putInt(0) // seq (not used for device info)
+        buf.putInt(idBytes.size)
+        // Payload: hardware_id string
+        buf.put(idBytes)
+        return buf.array()
+    }
+    /**
+     * Build audio frame packet for USB transmission
+     * Payload: timestamp (4 bytes) + opus data (N bytes)
+     */
+    fun buildAudioFrame(seq: Int, timestamp: Int, opusData: ByteArray): ByteArray {
+        val payloadLen = 4 + opusData.size
+        val buf = ByteBuffer.allocate(HEADER_SIZE + payloadLen).order(ByteOrder.LITTLE_ENDIAN)
+        // Header
+        buf.putInt(MAGIC)
+        buf.put(VERSION)
+        buf.put(CMD_AUDIO_FRAME)
+        buf.putInt(seq)
+        buf.putInt(payloadLen)
+        // Payload
+        buf.putInt(timestamp)
+        buf.put(opusData)
+        return buf.array()
+    }
+
+    // =============================================================================
+    // VID0 Video Protocol (for USB video streaming)
+    // =============================================================================
+
+    /** VID0 magic bytes: "VID0" in big-endian */
+    const val VIDEO_MAGIC = 0x56494430  // 'V' 'I' 'D' '0'
+    const val VIDEO_HEADER_SIZE = 8     // magic(4) + length(4)
+
+    /**
+     * Build video frame packet with VID0 framing for USB transmission.
+     * Format: [VID0(4 bytes, BE)][length(4 bytes, BE)][RTP data]
+     *
+     * This framing is compatible with PC-side usb_video_receiver parsing.
+     *
+     * @param rtpData Complete RTP packet (header + payload)
+     * @return VID0-framed packet ready for USB transmission
+     */
+    fun buildVideoFrame(rtpData: ByteArray): ByteArray {
+        val packet = ByteArray(VIDEO_HEADER_SIZE + rtpData.size)
+
+        // Magic "VID0" (big-endian)
+        packet[0] = 0x56  // 'V'
+        packet[1] = 0x49  // 'I'
+        packet[2] = 0x44  // 'D'
+        packet[3] = 0x30  // '0'
+
+        // Length (big-endian)
+        val len = rtpData.size
+        packet[4] = ((len shr 24) and 0xFF).toByte()
+        packet[5] = ((len shr 16) and 0xFF).toByte()
+        packet[6] = ((len shr 8) and 0xFF).toByte()
+        packet[7] = (len and 0xFF).toByte()
+
+        // RTP data
+        System.arraycopy(rtpData, 0, packet, VIDEO_HEADER_SIZE, rtpData.size)
+        return packet
     }
 }

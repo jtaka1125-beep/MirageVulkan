@@ -257,17 +257,8 @@ class MirageAccessibilityService : AccessibilityService() {
             udpSender.trySendLine(Config.TAG_BACK_EXEC,
                 """{"slot":${Config.DEFAULT_SLOT},"seq":$seq,"type":"key","keycode":$keycode,"ok":$result}""")
         } else {
-            // Inject raw KeyEvent for keys without global action mappings
-            try {
-                val im = getSystemService(android.hardware.input.InputManager::class.java)
-                val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keycode)
-                val up   = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,   keycode)
-                im.injectInputEvent(down, android.hardware.input.InputManager.INJECT_INPUT_EVENT_MODE_ASYNC)
-                im.injectInputEvent(up,   android.hardware.input.InputManager.INJECT_INPUT_EVENT_MODE_ASYNC)
-                Log.i(TAG, "KEY inject keycode=$keycode seq=$seq")
-            } catch (e: Exception) {
-                Log.w(TAG, "KEY keycode=$keycode not supported: ${e.message} seq=$seq")
-            }
+            // injectInputEvent is @hide - use dispatchKeyEvent instead
+            Log.w(TAG, "KEY keycode=$keycode not supported via AccessibilityService seq=$seq")
         }
     }
 
@@ -361,29 +352,34 @@ class MirageAccessibilityService : AccessibilityService() {
     /**
      * UIツリーをJSON形式でダンプして返す (CMD_UI_TREE_REQ ハンドラ用)
      */
+
+    /**
+     * UIツリーをJSON形式でダンプして返す (CMD_UI_TREE_REQ ハンドラ用)
+     */
     fun dumpUiTree(): String? {
         val root = rootInActiveWindow ?: return null
         return buildJsonNode(root, 0)
     }
 
     private fun buildJsonNode(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int): String {
-        if (depth > 12) return "{"truncated":true}"
+        if (depth > 12) return "{\"truncated\":true}"
         val rect = Rect()
         node.getBoundsInScreen(rect)
-        val esc = { s: String -> s.replace("\", "\\").replace(""", "\"") }
-        val text = esc(node.text?.toString() ?: "")
-        val cd   = esc(node.contentDescription?.toString() ?: "")
-        val rid  = node.viewIdResourceName ?: ""
-        val sb = StringBuilder("{")
-        sb.append(""pkg":"${node.packageName ?: ""}"")
-        sb.append(","cls":"${node.className ?: ""}"")
-        sb.append(","rid":"$rid"")
-        sb.append(","text":"$text"")
-        sb.append(","cd":"$cd"")
-        sb.append(","click":${node.isClickable}")
-        sb.append(","bounds":[${rect.left},${rect.top},${rect.right},${rect.bottom}]")
+        val text = (node.text?.toString() ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+        val cd   = (node.contentDescription?.toString() ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+        val rid  = (node.viewIdResourceName ?: "").replace("\"", "\\\"")
+        val pkg  = (node.packageName?.toString() ?: "").replace("\"", "\\\"")
+        val cls  = (node.className?.toString() ?: "").replace("\"", "\\\"")
+        val sb = StringBuilder()
+        sb.append("{\"pkg\":\"$pkg\"")
+        sb.append(",\"cls\":\"$cls\"")
+        sb.append(",\"rid\":\"$rid\"")
+        sb.append(",\"text\":\"$text\"")
+        sb.append(",\"cd\":\"$cd\"")
+        sb.append(",\"click\":${node.isClickable}")
+        sb.append(",\"bounds\":[${rect.left},${rect.top},${rect.right},${rect.bottom}]")
         if (node.childCount > 0) {
-            sb.append(","children":[")
+            sb.append(",\"children\":[")
             for (i in 0 until node.childCount) {
                 if (i > 0) sb.append(",")
                 val child = node.getChild(i)

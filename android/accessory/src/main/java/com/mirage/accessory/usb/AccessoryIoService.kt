@@ -276,7 +276,7 @@ class AccessoryIoService : Service() {
 
                 synchronized(outputLock) {
 
-                    outputStream?.write(packet)
+                    outputStream?.write(packet as ByteArray)
 
                     outputStream?.flush()
 
@@ -738,7 +738,8 @@ class AccessoryIoService : Service() {
             is Protocol.Command.ClickText -> { handleClickText(cmd); Protocol.STATUS_OK }
             is Protocol.Command.UiTreeReq -> { handleUiTreeReq(cmd); Protocol.STATUS_OK }
 
-            is Protocol.Command.VideoFps -> { handleVideoFps(cmd.targetFps); Protocol.STATUS_OK }
+            is Protocol.Command.UiTreeReq -> { handleUiTreeReq(cmd); Protocol.STATUS_OK }
+                        is Protocol.Command.VideoFps -> { handleVideoFps(cmd.targetFps); Protocol.STATUS_OK }
 
             is Protocol.Command.VideoRoute -> { handleVideoRoute(cmd.mode, cmd.host, cmd.port); Protocol.STATUS_OK }
 
