@@ -42,6 +42,15 @@ class ScreenCaptureService : Service() {
         private const val NOTIFICATION_ID = 2001
         private const val TCP_SECONDARY_PORT = 50100
 
+        private const val PREFS = "mirage_capture"
+        private const val PREF_AI_ENABLED = "ai_enabled"
+        private const val PREF_AI_HOST = "ai_host"
+        private const val PREF_AI_PORT = "ai_port"
+        private const val PREF_AI_W = "ai_w"
+        private const val PREF_AI_H = "ai_h"
+        private const val PREF_AI_FPS = "ai_fps"
+        private const val PREF_AI_Q = "ai_q"
+
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "data"
         const val EXTRA_HOST = "host"
@@ -93,6 +102,51 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+
+    private fun loadAiPrefs(): Map<String, Any> {
+        val sp = getSharedPreferences(PREFS, MODE_PRIVATE)
+        return mapOf(
+            PREF_AI_ENABLED to sp.getBoolean(PREF_AI_ENABLED, false),
+            PREF_AI_HOST to sp.getString(PREF_AI_HOST, "")!!,
+            PREF_AI_PORT to sp.getInt(PREF_AI_PORT, 0),
+            PREF_AI_W to sp.getInt(PREF_AI_W, 0),
+            PREF_AI_H to sp.getInt(PREF_AI_H, 0),
+            PREF_AI_FPS to sp.getInt(PREF_AI_FPS, 10),
+            PREF_AI_Q to sp.getInt(PREF_AI_Q, 80),
+        )
+    }
+
+    private fun saveAiPrefs(enabled: Boolean, host: String, port: Int, w: Int, h: Int, fps: Int, q: Int) {
+        val sp = getSharedPreferences(PREFS, MODE_PRIVATE)
+        sp.edit()
+            .putBoolean(PREF_AI_ENABLED, enabled)
+            .putString(PREF_AI_HOST, host)
+            .putInt(PREF_AI_PORT, port)
+            .putInt(PREF_AI_W, w)
+            .putInt(PREF_AI_H, h)
+            .putInt(PREF_AI_FPS, fps)
+            .putInt(PREF_AI_Q, q)
+            .apply()
+    }
+
+    private fun maybeStartAiFromPrefs() {
+        val proj = projection ?: return
+        val p = loadAiPrefs()
+        val enabled = p[PREF_AI_ENABLED] as Boolean
+        if (!enabled) return
+        val host = p[PREF_AI_HOST] as String
+        val port = p[PREF_AI_PORT] as Int
+        val w = p[PREF_AI_W] as Int
+        val h = p[PREF_AI_H] as Int
+        val fps = p[PREF_AI_FPS] as Int
+        val q = p[PREF_AI_Q] as Int
+        if (host.isBlank() || port <= 0 || w <= 0 || h <= 0) return
+        if (aiStream == null) aiStream = AiStream(proj)
+        val dpi = resources.displayMetrics.densityDpi
+        Log.i(TAG, "AI auto-start from prefs host=$host port=$port size=${w}x${h} fps=$fps q=$q")
+        aiStream?.start(host, port, w, h, dpi, fps, q)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -155,12 +209,14 @@ class ScreenCaptureService : Service() {
                         if (aiStream == null) aiStream = AiStream(proj)
                         val dpi = resources.displayMetrics.densityDpi
                         aiStream?.start(host, aiPort, w, h, dpi, fps, q)
+                        saveAiPrefs(true, host, aiPort, w, h, fps, q)
                     }
                 }
                 CMD_AI_STOP -> {
                     Log.i(TAG, "CMD: AI_STOP")
                     aiStream?.stop()
                     aiStream = null
+                    saveAiPrefs(false, "", 0, 0, 0, 10, 80)
                 }
 
             }

@@ -65,11 +65,12 @@ class H264Encoder(
         private const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
         private const val MIN_FPS = 10
         private const val MAX_FPS = 60
-        private const val BASE_BITRATE = 4_000_000
+        private const val BASE_BITRATE = 8_000_000
         private const val BASE_FPS = 30
+        private const val BITRATE_CAP = 24_000_000
         private const val LOG_INTERVAL_MS = 5000L
         private const val SPS_PPS_RESEND_INTERVAL_MS = 30000L
-        private const val I_FRAME_INTERVAL = 1
+        private const val I_FRAME_INTERVAL = 4
     }
 
     private var codec: MediaCodec? = null
@@ -119,7 +120,7 @@ class H264Encoder(
         val metrics: DisplayMetrics = ctx.resources.displayMetrics
         val dpi = metrics.densityDpi
         val fps = targetFps.get()
-        val bitrate = BASE_BITRATE * fps / BASE_FPS
+        val bitrate = (BASE_BITRATE * fps / BASE_FPS).coerceAtMost(BITRATE_CAP)
 
         Log.i(TAG, "Starting encoder v5d-direct: ${width}x${height} @ ${fps}fps, ${bitrate/1000}kbps VBR")
 
@@ -137,12 +138,15 @@ class H264Encoder(
                 MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 setInteger(MediaFormat.KEY_PRIORITY, 0)
-            }
-            // Only use encoder-side repeat in DIRECT mode. In REPEATER mode we duplicate frames by swapping surface.\n            if (!(fps >= 50 && isRepeaterSafe())) {\n                val repeatUs = (1_000_000L / fps.toLong()).coerceAtLeast(10_000L)\n                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, repeatUs)\n            }
+            }            // Use encoder-side repeat to sustain target fps even when VirtualDisplay supply is capped (often ~30fps).
+            val repeatUs = (1_000_000L / fps.toLong()).coerceAtLeast(10_000L)
+            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, repeatUs)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
         }
+
+        Log.i(TAG, "RepeatPrevFrameAfter set for fps=$fps")
 
         codec = try {
             if (preferSoftwareEncoder(width, height)) MediaCodec.createByCodecName("OMX.google.h264.encoder")
@@ -211,7 +215,7 @@ class H264Encoder(
         val fps = newFps.coerceIn(MIN_FPS, MAX_FPS)
         val oldFps = targetFps.getAndSet(fps)
         if (fps == oldFps) return
-        val newBitrate = BASE_BITRATE * fps / BASE_FPS
+        val newBitrate = (BASE_BITRATE * fps / BASE_FPS).coerceAtMost(BITRATE_CAP)
         try {
             codec?.setParameters(Bundle().apply {
                 putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, newBitrate)
