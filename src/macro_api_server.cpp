@@ -5,6 +5,7 @@
 // =============================================================================
 
 #include <winsock2.h>
+#include <set>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 
@@ -441,6 +442,14 @@ std::string MacroApiServer::handle_list_devices() {
     auto& hybrid = ctx().hybrid_cmd;
     auto hybrid_ids = hybrid->get_device_ids();
 
+    // Resolve USB serials to hardware_ids for AOA matching
+    std::set<std::string> aoa_hw_ids;
+    for (const auto& usb_serial : hybrid_ids) {
+        std::string hw = mgr->resolveUsbSerial(usb_serial);
+        if (!hw.empty()) aoa_hw_ids.insert(hw);
+        aoa_hw_ids.insert(usb_serial); // keep raw in case it matches hardware_id
+    }
+
     json arr = json::array();
     for (auto& ud : devices) {
         json d;
@@ -451,24 +460,11 @@ std::string MacroApiServer::handle_list_devices() {
         d["ip"]         = ud.ip_address;
         d["connection"]  = (ud.preferred_type == ::gui::AdbDeviceManager::ConnectionType::USB) ? "usb" : "wifi";
 
-        // Check if device is available via AOA (HybridCommandSender)
-        // hybrid_ids contains USB serial numbers (e.g. "A9250700956")
-        // Match against usb_connections (USB serials) or hardware_id
-        bool has_aoa = false;
-        for (auto& hid : hybrid_ids) {
-            if (hid == ud.hardware_id || hid == ud.preferred_adb_id) {
-                has_aoa = true;
-                break;
-            }
-            for (auto& usb_ser : ud.usb_connections) {
-                if (hid == usb_ser) {
-                    has_aoa = true;
-                    break;
-                }
-            }
-            if (has_aoa) break;
-        }
+        // Check if device is available via AOA using resolved hardware_ids
+        bool has_aoa = (aoa_hw_ids.count(ud.hardware_id) > 0);
         d["aoa"] = has_aoa;
+        d["usb_serial"] = ud.usb_serial;
+        d["usb_serial"] = ud.usb_serial;
         arr.push_back(d);
     }
 
@@ -501,14 +497,30 @@ std::string MacroApiServer::handle_device_info(const std::string& device_id) {
     return "{\"error\":\"device not found\"}";
 }
 
+
+// Resolve hardware_id to USB serial for AOA HybridCommandSender lookup
+static std::string resolve_to_usb_serial(const std::string& device_id) {
+    auto& mgr = mirage::ctx().adb_manager;
+    auto devs = mgr->getUniqueDevices();
+    for (auto& ud : devs) {
+        if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
+            return ud.usb_serial.empty() ? device_id : ud.usb_serial;
+        }
+    }
+    return device_id;
+}
+
 std::string MacroApiServer::handle_tap(const std::string& device_id, int x, int y) {
     auto& hybrid = ctx().hybrid_cmd;
 
     // Try AOA/HybridCommandSender first
-    if (hybrid->is_device_connected(device_id)) {
-        uint32_t seq = hybrid->send_tap(device_id, x, y);
-        if (seq > 0) {
-            return "{\"status\":\"ok\",\"via\":\"hybrid\",\"seq\":" + std::to_string(seq) + "}";
+    {
+        std::string usb_key = resolve_to_usb_serial(device_id);
+        if (hybrid->is_device_connected(usb_key)) {
+            uint32_t seq = hybrid->send_tap(usb_key, x, y);
+            if (seq > 0) {
+                return "{\"status\":\"ok\",\"via\":\"aoa_hid\",\"seq\":" + std::to_string(seq) + "}";
+            }
         }
     }
 
@@ -523,10 +535,13 @@ std::string MacroApiServer::handle_swipe(const std::string& device_id,
     int x1, int y1, int x2, int y2, int duration_ms) {
     auto& hybrid = ctx().hybrid_cmd;
 
-    if (hybrid->is_device_connected(device_id)) {
-        uint32_t seq = hybrid->send_swipe(device_id, x1, y1, x2, y2, duration_ms);
-        if (seq > 0) {
-            return "{\"status\":\"ok\",\"via\":\"hybrid\",\"seq\":" + std::to_string(seq) + "}";
+    {
+        std::string usb_key = resolve_to_usb_serial(device_id);
+        if (hybrid->is_device_connected(usb_key)) {
+            uint32_t seq = hybrid->send_swipe(usb_key, x1, y1, x2, y2, duration_ms);
+            if (seq > 0) {
+                return "{\"status\":\"ok\",\"via\":\"aoa_hid\",\"seq\":" + std::to_string(seq) + "}";
+            }
         }
     }
 
@@ -543,9 +558,12 @@ std::string MacroApiServer::handle_long_press(const std::string& device_id,
     int x, int y, int duration_ms) {
     auto& hybrid = ctx().hybrid_cmd;
 
-    if (hybrid->is_device_connected(device_id)) {
-        bool ok = hybrid->send_long_press(device_id, x, y, 0, 0, duration_ms);
-        if (ok) return "{\"status\":\"ok\",\"via\":\"hybrid\"}";
+    {
+        std::string usb_key = resolve_to_usb_serial(device_id);
+        if (hybrid->is_device_connected(usb_key)) {
+            bool ok = hybrid->send_long_press(usb_key, x, y, 0, 0, duration_ms);
+            if (ok) return "{\"status\":\"ok\",\"via\":\"aoa_hid\"}";
+        }
     }
 
     // ADB fallback: swipe to same point with duration = long press
@@ -627,10 +645,13 @@ std::string MacroApiServer::handle_pinch(const std::string& device_id,
 std::string MacroApiServer::handle_key(const std::string& device_id, int keycode) {
     auto& hybrid = ctx().hybrid_cmd;
 
-    if (hybrid->is_device_connected(device_id)) {
-        uint32_t seq = hybrid->send_key(device_id, keycode);
-        if (seq > 0) {
-            return "{\"status\":\"ok\",\"via\":\"hybrid\",\"seq\":" + std::to_string(seq) + "}";
+    {
+        std::string usb_key = resolve_to_usb_serial(device_id);
+        if (hybrid->is_device_connected(usb_key)) {
+            uint32_t seq = hybrid->send_key(usb_key, keycode);
+            if (seq > 0) {
+                return "{\"status\":\"ok\",\"via\":\"aoa_hid\",\"seq\":" + std::to_string(seq) + "}";
+            }
         }
     }
 
