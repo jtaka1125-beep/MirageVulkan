@@ -6,6 +6,7 @@
 #include <memory>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <atomic>
 #include <string>
 
@@ -126,6 +127,7 @@ private:
 
     // AOA HID touch per device (primary path)
     std::map<std::string, std::unique_ptr<mirage::AoaHidTouch>> hid_touches_;
+    mutable std::mutex hid_mutex_;  // Protects hid_touches_ from concurrent access
 
     // ADB fallback (last resort)
     std::unique_ptr<mirage::AdbTouchFallback> adb_fallback_;

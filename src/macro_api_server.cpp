@@ -881,8 +881,21 @@ std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
         return r_empty.dump();
     }
 
-    // screencapフォールバック: adb_h264が未初期化の場合のみ到達
-    // (X1等でscreencapがハングするのでタイムアウト付きで実行)
+    // screencapフォールバック廃止: X1等でハングするため
+    // adb_h264キャッシュが溜まるまでno_frame_yetを返す
+    {
+        std::string _adb_id_chk = resolve_device_id(device_id);
+        json r_wait;
+        if (_adb_id_chk.empty()) {
+            r_wait["status"] = "error";
+            r_wait["error"]  = "device not found";
+        } else {
+            r_wait["status"] = "no_frame_yet";
+            r_wait["via"]    = "init_pending";
+            r_wait["fps"]    = 0;
+        }
+        return r_wait.dump();
+    }
     std::string adb_id = resolve_device_id(device_id);
     if (adb_id.empty()) {
         json r_err; r_err["status"]="error"; r_err["error"]="device not found";

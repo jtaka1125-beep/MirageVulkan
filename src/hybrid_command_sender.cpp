@@ -36,12 +36,13 @@ bool HybridCommandSender::start() {
         // ISSUE-3: unique key per handle to avoid collision when multiple devices connect simultaneously
         char tmp_key[32];
         snprintf(tmp_key, sizeof(tmp_key), "_pending_%p", static_cast<void*>(handle));
-        hid_touches_[tmp_key] = std::move(touch);
+        { std::lock_guard<std::mutex> lock(hid_mutex_); hid_touches_[tmp_key] = std::move(touch); }
         return true;
     });
 
     // Move pending HID registration to the real device ID after re-enumeration
     usb_sender_->set_device_opened_callback([this](const std::string& usb_id, libusb_device_handle* handle) {
+        std::lock_guard<std::mutex> lock(hid_mutex_);
         // ISSUE-3: find any pending entry by "_pending_" prefix
         auto it = hid_touches_.end();
         for (auto jt = hid_touches_.begin(); jt != hid_touches_.end(); ++jt) {
@@ -61,6 +62,7 @@ bool HybridCommandSender::start() {
 
     // Unregister HID on device disconnect
     usb_sender_->set_device_closed_callback([this](const std::string& usb_id) {
+        std::lock_guard<std::mutex> lock(hid_mutex_);
         auto it = hid_touches_.find(usb_id);
         if (it != hid_touches_.end() && it->second) {
             MLOG_INFO("hybridcmd", "Device %s disconnected, cleaning up HID touch state", usb_id.c_str());
@@ -95,7 +97,7 @@ bool HybridCommandSender::start() {
 void HybridCommandSender::stop() {
     running_ = false;
 
-    hid_touches_.clear();
+    { std::lock_guard<std::mutex> lock(hid_mutex_); hid_touches_.clear(); }
     adb_fallback_.reset();
 
     if (usb_sender_) {
@@ -143,6 +145,7 @@ void HybridCommandSender::set_video_callback(VideoDataCallback cb) {
 // ── Internal HID helpers ──
 
 mirage::AoaHidTouch* HybridCommandSender::get_hid_for_device(const std::string& device_id) {
+    std::lock_guard<std::mutex> lock(hid_mutex_);
     auto it = hid_touches_.find(device_id);
     if (it != hid_touches_.end() && it->second && it->second->is_registered()) {
         return it->second.get();
