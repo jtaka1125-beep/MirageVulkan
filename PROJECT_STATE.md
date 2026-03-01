@@ -1,5 +1,5 @@
 # MirageSystem Project State
-# Updated: 2026-03-01 (Session 2)
+# Updated: 2026-03-01 (Session 2) (Session 2)
 # Read at session start, updated at session end.
 # THIS IS THE MAIN REPOSITORY (MirageComplete is legacy/migrated)
 
@@ -134,3 +134,20 @@
 
 ## MCP Server Health
 - Version: v5.0.0 | Status: Stable | Transports: SSE + Streamable HTTP
+
+
+## Completed 2026-03-01 Session (Screenshot & Deploy)
+- screenshot: FrameReadyEvent購読方式 (GUI H264フレームをJPEGキャッシュ, ~数ms)
+  - AdbH264Receiver廃止 (screenrecordの競合問題回避)
+  - MacroApiServer: bus().subscribe<FrameReadyEvent>() でフレーム受信
+  - GUI起動時は即時返し、ヘッドレス時はno_frame_yet
+- deploy_apk.py: mDNSデバイス除外・adbフルパス・タイムアウト延長
+- A9×2 (192.168.0.6, 192.168.0.8): accessory+capture APKデプロイ成功
+- X1 (192.168.0.3): WiFiADB不安定のため保留 (手動再接続後に再試行)
+- parallel_shot.py: 3台並列screenshotクライアント実装 (キャッシュ方式で自動対応)
+- mcp-server: 222個のデバッグスクリプト削除、22ファイルに整理
+
+## Next Priorities (Ordered)
+1. X1 (192.168.0.3) APKデプロイ: WiFiADB安定後に再実行
+2. AOA full-path test: connect USB, run deploy_apk.py, verify tap commands arrive [BLOCKED: physical USB]
+3. Multi-device video pipeline stress test [BLOCKED: physical USB]
