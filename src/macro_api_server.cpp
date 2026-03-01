@@ -70,16 +70,41 @@ static std::string run_adb_cmd(const std::string& adb_id, const std::string& cmd
     PROCESS_INFORMATION pi{};
     std::string cmd_line = "cmd /c " + full_cmd;
 
+    // タイムアウト: 8秒でプロセスをkillしてReadFileを解放
+    static constexpr DWORD ADB_CMD_TIMEOUT_MS = 8000;
     if (CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
         CloseHandle(hWrite); hWrite = nullptr;
+        auto t_start = GetTickCount64();
         char buf[4096];
         DWORD n;
-        while (ReadFile(hRead, buf, sizeof(buf) - 1, &n, nullptr) && n > 0) {
-            buf[n] = '\0';
-            result += buf;
+        // プロセス終了またはタイムアウトまでReadFile
+        while (true) {
+            // タイムアウトチェック
+            if (GetTickCount64() - t_start > ADB_CMD_TIMEOUT_MS) {
+                MLOG_WARN("macro_api", "run_adb_cmd timeout (8s): %s", cmd.c_str());
+                TerminateProcess(pi.hProcess, 1);
+                break;
+            }
+            // パイプにデータがあるか確認（ノンブロッキング peek）
+            DWORD avail = 0;
+            if (!PeekNamedPipe(hRead, nullptr, 0, nullptr, &avail, nullptr)) break;
+            if (avail == 0) {
+                // プロセスが終了してるか確認
+                DWORD ec = STILL_ACTIVE;
+                GetExitCodeProcess(pi.hProcess, &ec);
+                if (ec != STILL_ACTIVE) {
+                    // 残りデータを読み切る
+                    while (ReadFile(hRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0)
+                        { buf[n]='\0'; result+=buf; }
+                    break;
+                }
+                Sleep(10); continue;
+            }
+            if (!ReadFile(hRead, buf, (std::min)(avail, (DWORD)(sizeof(buf)-1)), &n, nullptr) || n == 0) break;
+            buf[n] = '\0'; result += buf;
         }
-        WaitForSingleObject(pi.hProcess, 15000);
+        WaitForSingleObject(pi.hProcess, 1000);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
     }
@@ -427,6 +452,7 @@ std::string MacroApiServer::make_error(int id, int code, const std::string& mess
 // ---------------------------------------------------------------------------
 std::string MacroApiServer::resolve_device_id(const std::string& device_id) {
     auto& mgr = ctx().adb_manager;
+    if (!mgr) return device_id;
 
     // First try: exact match as preferred_adb_id in unique devices
     auto devices = mgr->getUniqueDevices();
@@ -445,6 +471,22 @@ std::string MacroApiServer::resolve_device_id(const std::string& device_id) {
 
 // ---------------------------------------------------------------------------
 // Command handlers
+// resolve_hw_id: device_id -> hardware_id (for FrameAnalyzer / FrameDispatcher lookup)
+std::string MacroApiServer::resolve_hw_id(const std::string& device_id) {
+    auto& mgr = ctx().adb_manager;
+    if (!mgr) return device_id;
+    auto devices = mgr->getUniqueDevices();
+    for (auto& ud : devices) {
+        if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
+            return ud.hardware_id;
+        }
+        for (auto& c : ud.usb_connections)  if (c == device_id) return ud.hardware_id;
+        for (auto& c : ud.wifi_connections) if (c == device_id) return ud.hardware_id;
+    }
+    return device_id;
+}
+
+
 // ---------------------------------------------------------------------------
 
 std::string MacroApiServer::handle_ping() {
@@ -476,17 +518,27 @@ std::string MacroApiServer::handle_ping() {
 
 std::string MacroApiServer::handle_list_devices() {
     auto& mgr = ctx().adb_manager;
+    if (!mgr) { json r; r["devices"] = json::array(); return r.dump(); }
     auto devices = mgr->getUniqueDevices();
 
     auto& hybrid = ctx().hybrid_cmd;
-    auto hybrid_ids = hybrid->get_device_ids();
+    std::vector<std::string> hybrid_ids;
+    if (hybrid) hybrid_ids = hybrid->get_device_ids();
 
-    // Resolve USB serials to hardware_ids for AOA matching
+    // AOA matching: キャッシュのみ使用 (adbコマンド呼び出しなし→タイムアウト防止)
     std::set<std::string> aoa_hw_ids;
     for (const auto& usb_serial : hybrid_ids) {
-        std::string hw = mgr->resolveUsbSerial(usb_serial);
-        if (!hw.empty()) aoa_hw_ids.insert(hw);
-        aoa_hw_ids.insert(usb_serial); // keep raw in case it matches hardware_id
+        // getUniqueDevices結果からusb_serialを照合
+        bool matched = false;
+        for (const auto& ud : devices) {
+            if (ud.hardware_id == usb_serial ||
+                ud.usb_serial == usb_serial) {
+                aoa_hw_ids.insert(ud.hardware_id);
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) aoa_hw_ids.insert(usb_serial); // raw fallback
     }
 
     json arr = json::array();
@@ -515,6 +567,7 @@ std::string MacroApiServer::handle_list_devices() {
 std::string MacroApiServer::handle_device_info(const std::string& device_id) {
     std::string adb_id = resolve_device_id(device_id);
     auto& mgr = ctx().adb_manager;
+    if (!mgr) return {};
     auto devices = mgr->getUniqueDevices();
 
     for (auto& ud : devices) {
@@ -621,6 +674,7 @@ std::string MacroApiServer::handle_multi_touch(const std::string& device_id,
 
     // AOA HID 2-finger simultaneous touch via AoaHidTouch::touch_down/move/up
     // ADB cannot do true multi-touch.
+    if (!hybrid) return R"({"status":"error","message":"hybrid_cmd not ready"})";
     auto* hid = hybrid->get_hid_for_device(device_id);
     if (!hid) {
         return R"({"status":"error","message":"multi_touch requires AOA HID - device not connected"})";
@@ -630,6 +684,7 @@ std::string MacroApiServer::handle_multi_touch(const std::string& device_id,
     int sw = 1080, sh = 1920;
     {
         auto& mgr = ctx().adb_manager;
+        if (!mgr) return {};
         auto devices = mgr->getUniqueDevices();
         for (auto& ud : devices) {
             if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
@@ -663,6 +718,7 @@ std::string MacroApiServer::handle_pinch(const std::string& device_id,
     int sw = 1080, sh = 1920;
     {
         auto& mgr = ctx().adb_manager;
+        if (!mgr) return {};
         auto devices = mgr->getUniqueDevices();
         for (auto& ud : devices) {
             if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
@@ -816,9 +872,22 @@ std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
             r["fps"]=adb_h264_receiver_->get_fps(hw_id);
             return r.dump();
         }
+        // h264キャッシュがまだ空 → screencapにフォールバックせず即時返す
+        // (screencapは一部デバイスでハングするのでスキップ)
+        json r_empty;
+        r_empty["status"] = "no_frame_yet";
+        r_empty["via"]    = "adb_h264_pending";
+        r_empty["fps"]    = 0;
+        return r_empty.dump();
     }
 
+    // screencapフォールバック: adb_h264が未初期化の場合のみ到達
+    // (X1等でscreencapがハングするのでタイムアウト付きで実行)
     std::string adb_id = resolve_device_id(device_id);
+    if (adb_id.empty()) {
+        json r_err; r_err["status"]="error"; r_err["error"]="device not found";
+        return r_err.dump();
+    }
 
     // Capture to device, pull to temp, read and base64-encode
     run_adb_cmd(adb_id, "shell screencap -p /sdcard/mirage_macro_cap.png");
@@ -906,7 +975,7 @@ void MacroApiServer::ensure_ocr_initialized() {
 
 std::string MacroApiServer::handle_ocr_analyze(const std::string& device_id) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_device_id(device_id);
+    std::string adb_id = resolve_hw_id(device_id);
 
     auto result = analyzer().analyzeText(adb_id);
 
@@ -933,7 +1002,7 @@ std::string MacroApiServer::handle_ocr_analyze(const std::string& device_id) {
 std::string MacroApiServer::handle_ocr_find_text(const std::string& device_id,
     const std::string& query) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_device_id(device_id);
+    std::string adb_id = resolve_hw_id(device_id);
 
     auto matches = analyzer().findText(adb_id, query);
 
@@ -960,7 +1029,7 @@ std::string MacroApiServer::handle_ocr_find_text(const std::string& device_id,
 std::string MacroApiServer::handle_ocr_has_text(const std::string& device_id,
     const std::string& query) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_device_id(device_id);
+    std::string adb_id = resolve_hw_id(device_id);
 
     bool found = analyzer().hasText(adb_id, query);
 
@@ -972,7 +1041,7 @@ std::string MacroApiServer::handle_ocr_has_text(const std::string& device_id,
 std::string MacroApiServer::handle_ocr_tap_text(const std::string& device_id,
     const std::string& query) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_device_id(device_id);
+    std::string adb_id = resolve_hw_id(device_id);
 
     int cx = 0, cy = 0;
     bool found = analyzer().getTextCenter(adb_id, query, cx, cy);
