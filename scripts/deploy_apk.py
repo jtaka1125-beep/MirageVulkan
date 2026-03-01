@@ -49,12 +49,16 @@ def run(cmd, cwd=None, timeout=300):
 
 def get_devices():
     """接続中デバイスシリアル一覧 (USB + WiFi ADB)"""
-    r = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=10)
+    r = subprocess.run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "devices"], capture_output=True, text=True, timeout=10)
     devices = []
     for line in r.stdout.strip().split("\n")[1:]:
         parts = line.strip().split("\t")
         if len(parts) >= 2 and parts[1] == "device":
-            devices.append(parts[0])
+            serial = parts[0]
+            # mDNS形式(adb-xxx._adb-tls...)は除外
+            if serial.startswith("adb-") and "._adb-tls" in serial:
+                continue
+            devices.append(serial)
     return devices
 
 
@@ -99,14 +103,14 @@ def deploy_module(module_name, module_info, devices, debug=False):
     success = 0
     for serial in devices:
         model = subprocess.run(
-            ["adb", "-s", serial, "shell", "getprop", "ro.product.model"],
-            capture_output=True, text=True, timeout=5
+            [r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "getprop", "ro.product.model"],
+            capture_output=True, text=True, timeout=15
         ).stdout.strip()
 
         print(f"  [{model} / {serial}]")
 
         # インストール (-r で上書き, -g で全権限付与)
-        r = run(["adb", "-s", serial, "install", "-r", "-g", apk_path], timeout=120)
+        r = run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "install", "-r", "-g", apk_path], timeout=120)
         if r.returncode != 0:
             print(f"    [FAIL] インストール失敗")
             continue
@@ -115,7 +119,7 @@ def deploy_module(module_name, module_info, devices, debug=False):
         # アプリ起動
         if module_info["activity"]:
             time.sleep(1)
-            run(["adb", "-s", serial, "shell", "am", "start", "-n",
+            run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "am", "start", "-n",
                  f"{module_info['package']}/{module_info['activity']}"], timeout=10)
             print(f"    [OK] 起動")
 
@@ -129,19 +133,19 @@ def grant_permissions(devices):
     print(f"\n[PERMISSIONS] 権限設定")
     for serial in devices:
         model = subprocess.run(
-            ["adb", "-s", serial, "shell", "getprop", "ro.product.model"],
-            capture_output=True, text=True, timeout=5
+            [r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "getprop", "ro.product.model"],
+            capture_output=True, text=True, timeout=15
         ).stdout.strip()
 
         # MirageAccessory の AccessibilityService 有効化
         acc_svc = "com.mirage.accessory/com.mirage.accessory.access.MirageAccessibilityService"
-        run(["adb", "-s", serial, "shell", "settings", "put", "secure",
-             "enabled_accessibility_services", acc_svc], timeout=5)
+        run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "settings", "put", "secure",
+             "enabled_accessibility_services", acc_svc], timeout=15)
 
         # バッテリー最適化除外 (capture + accessory)
         for pkg in ["com.mirage.capture", "com.mirage.accessory"]:
-            run(["adb", "-s", serial, "shell", "dumpsys", "deviceidle", "whitelist",
-                 f"+{pkg}"], timeout=5)
+            run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "dumpsys", "deviceidle", "whitelist",
+                 f"+{pkg}"], timeout=15)
 
         print(f"  [{model}] AccessibilityService + バッテリー最適化除外 設定済み")
 
