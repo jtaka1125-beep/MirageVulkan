@@ -167,13 +167,15 @@ bool MacroApiServer::start(int port) {
     port_ = port;
     running_ = true;
 
-    // AdbH264Receiver: 一時無効化 (クラッシュ調査中)
-    // if (!adb_h264_receiver_) {
-    //     adb_h264_receiver_ = std::make_unique<AdbH264Receiver>();
-    //     adb_h264_receiver_->setAdbPath("C:/Users/jun/.local/bin/platform-tools/adb.exe");
-    //     adb_h264_receiver_->start();
-    //     MLOG_INFO("macro_api", "AdbH264Receiver started");
-    // }
+    // AdbH264Receiver: ffmpegパイプ方式 (MirrorReceiver/Vulkan不要)
+    if (!adb_h264_receiver_) {
+        adb_h264_receiver_ = std::make_unique<AdbH264Receiver>();
+        adb_h264_receiver_->setAdbPath("C:/Users/jun/.local/bin/platform-tools/adb.exe");
+        adb_h264_receiver_->setFfmpegPath("C:/msys64/mingw64/bin/ffmpeg.exe");
+        // adb_managerはGUI初期化後に遅延バインド (setDeviceManager後に即座sync)
+        adb_h264_receiver_->start();
+        MLOG_INFO("macro_api", "AdbH264Receiver started (ffmpeg-pipe mode)");
+    }
 
     server_thread_ = std::thread(&MacroApiServer::server_loop, this);
 
