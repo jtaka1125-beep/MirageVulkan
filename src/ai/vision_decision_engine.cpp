@@ -131,6 +131,10 @@ VisionDecision VisionDecisionEngine::update(
             ds.ewma_score = (1.0f - config_.ewma_alpha) * ds.ewma_score;
         }
 
+        // Layer 3トリガー: マッチなし継続カウント更新
+        ds.consecutive_no_match++;
+        ds.consecutive_same_match = 0;
+
         if (ds.state == VisionState::DETECTED) {
             VisionState old_state = ds.state;
             transitionTo(ds, VisionState::IDLE);
@@ -149,6 +153,16 @@ VisionDecision VisionDecisionEngine::update(
         }
         decision.state = ds.state;
         return decision;
+    }
+
+    // Layer 3トリガー: マッチあり時のカウンタ更新
+    ds.consecutive_no_match = 0;
+    ds.last_any_match_time = now;
+    if (best->template_id == ds.last_matched_template) {
+        ds.consecutive_same_match++;
+    } else {
+        ds.consecutive_same_match = 1;
+        ds.last_matched_template = best->template_id;
     }
 
     // === デバウンスチェック ===
@@ -396,7 +410,7 @@ const VisionMatch* VisionDecisionEngine::findErrorMatch(
 }
 
 // =============================================================================
-// Layer 3: OllamaVision 統合
+// Layer 3: OllamaVision 非同期統合
 // =============================================================================
 
 void VisionDecisionEngine::setOllamaVision(std::shared_ptr<OllamaVision> ollama) {
@@ -416,14 +430,27 @@ bool VisionDecisionEngine::isLayer3OnCooldown(
     return elapsed < config_.layer3_cooldown_ms;
 }
 
-bool VisionDecisionEngine::tryLayer3Fallback(
+bool VisionDecisionEngine::isLayer3Running(const std::string& device_id) const {
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return false;
+
+    const auto& ds = it->second;
+    return ds.layer3_task && ds.layer3_task->valid;
+}
+
+bool VisionDecisionEngine::launchLayer3Async(
     const std::string& device_id,
     const uint8_t* rgba, int width, int height,
-    Layer3Callback on_detected,
     std::chrono::steady_clock::time_point now)
 {
     // Layer 3無効 or OllamaVision未設定
     if (!config_.enable_layer3 || !ollama_vision_) {
+        return false;
+    }
+
+    // 既に実行中
+    if (isLayer3Running(device_id)) {
+        MLOG_DEBUG("ai.vision", "Layer 3既に実行中: device=%s", device_id.c_str());
         return false;
     }
 
@@ -436,38 +463,150 @@ bool VisionDecisionEngine::tryLayer3Fallback(
     auto& ds = getOrCreateState(device_id);
     ds.layer3_last_call = now;
 
-    MLOG_INFO("ai.vision", "Layer 3 (OllamaVision) 呼び出し開始: device=%s %dx%d",
+    // RGBAデータをコピー（非同期タスク用）
+    size_t data_size = static_cast<size_t>(width) * height * 4;
+    auto rgba_copy = std::make_shared<std::vector<uint8_t>>(rgba, rgba + data_size);
+
+    // 非同期タスク作成
+    auto task = std::make_shared<Layer3Task>();
+    task->start_time = now;
+    task->frame_width = width;
+    task->frame_height = height;
+    task->valid = true;
+
+    // OllamaVisionのshared_ptrをキャプチャ
+    auto ollama = ollama_vision_;
+
+    task->future = std::async(std::launch::async,
+        [ollama, rgba_copy, width, height]() -> OllamaVisionResult {
+            return ollama->detectPopup(rgba_copy->data(), width, height);
+        });
+
+    ds.layer3_task = task;
+
+    MLOG_INFO("ai.vision", "Layer 3非同期起動: device=%s %dx%d",
               device_id.c_str(), width, height);
 
-    // Ollama API呼び出し（同期、60秒程度かかる可能性）
-    OllamaVisionResult result = ollama_vision_->detectPopup(rgba, width, height);
-
-    if (!result.error.empty()) {
-        MLOG_WARN("ai.vision", "Layer 3エラー: device=%s error=%s",
-                  device_id.c_str(), result.error.c_str());
-        return false;
-    }
-
-    if (!result.found) {
-        MLOG_DEBUG("ai.vision", "Layer 3: ポップアップ検出なし (%dms)",
-                   result.elapsed_ms);
-        return false;
-    }
-
-    // ポップアップ検出成功
-    int x = (result.x_percent * width) / 100;
-    int y = (result.y_percent * height) / 100;
-
-    MLOG_INFO("ai.vision", "Layer 3検出成功: device=%s type=%s button='%s' pos=(%d,%d) (%dms)",
-              device_id.c_str(), result.type.c_str(), result.button_text.c_str(),
-              x, y, result.elapsed_ms);
-
-    // コールバック呼び出し（テンプレート自動登録等に使用）
-    if (on_detected) {
-        on_detected(x, y, result.button_text);
-    }
-
     return true;
+}
+
+VisionDecisionEngine::Layer3Result VisionDecisionEngine::pollLayer3Result(
+    const std::string& device_id)
+{
+    Layer3Result result;
+    result.has_result = false;
+
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return result;
+
+    auto& ds = it->second;
+    if (!ds.layer3_task || !ds.layer3_task->valid) return result;
+
+    // 完了チェック（ノンブロッキング）
+    auto status = ds.layer3_task->future.wait_for(std::chrono::seconds(0));
+    if (status != std::future_status::ready) {
+        return result;  // まだ実行中
+    }
+
+    // 完了 — 結果を取得
+    result.has_result = true;
+
+    try {
+        OllamaVisionResult ollama_result = ds.layer3_task->future.get();
+
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - ds.layer3_task->start_time).count();
+        result.elapsed_ms = static_cast<int>(elapsed);
+
+        if (!ollama_result.error.empty()) {
+            result.error = ollama_result.error;
+            MLOG_WARN("ai.vision", "Layer 3エラー: device=%s error=%s",
+                      device_id.c_str(), result.error.c_str());
+        } else if (ollama_result.found) {
+            result.found = true;
+            result.type = ollama_result.type;
+            result.button_text = ollama_result.button_text;
+            // パーセント座標をピクセルに変換
+            result.x = (ollama_result.x_percent * ds.layer3_task->frame_width) / 100;
+            result.y = (ollama_result.y_percent * ds.layer3_task->frame_height) / 100;
+
+            MLOG_INFO("ai.vision", "Layer 3検出成功: device=%s type=%s button='%s' pos=(%d,%d) (%dms)",
+                      device_id.c_str(), result.type.c_str(), result.button_text.c_str(),
+                      result.x, result.y, result.elapsed_ms);
+        } else {
+            MLOG_DEBUG("ai.vision", "Layer 3: ポップアップ検出なし (%dms)",
+                       result.elapsed_ms);
+        }
+    } catch (const std::exception& e) {
+        result.error = e.what();
+        MLOG_ERROR("ai.vision", "Layer 3例外: device=%s error=%s",
+                   device_id.c_str(), e.what());
+    }
+
+    // タスク完了 — 無効化
+    ds.layer3_task->valid = false;
+    ds.layer3_task.reset();
+
+    return result;
+}
+
+void VisionDecisionEngine::cancelLayer3(const std::string& device_id) {
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return;
+
+    auto& ds = it->second;
+    if (ds.layer3_task && ds.layer3_task->valid) {
+        MLOG_DEBUG("ai.vision", "Layer 3キャンセル: device=%s", device_id.c_str());
+        ds.layer3_task->valid = false;
+        // futureは破棄されるがスレッドは走り続ける（結果を無視するだけ）
+        ds.layer3_task.reset();
+    }
+}
+
+
+bool VisionDecisionEngine::shouldTriggerLayer3(
+    const std::string& device_id,
+    std::chrono::steady_clock::time_point now) const
+{
+    if (!config_.enable_layer3) return false;
+
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return false;
+    const auto& ds = it->second;
+
+    // 既に Layer 3 実行中または冷却中はスキップ
+    if (ds.layer3_task && ds.layer3_task->valid) return false;
+    if (isLayer3OnCooldown(device_id, now)) return false;
+
+    // ① 連続マッチなしフレーム数トリガー
+    if (config_.layer3_no_match_frames > 0 &&
+        ds.consecutive_no_match >= config_.layer3_no_match_frames) {
+        MLOG_DEBUG("ai.vision", "Layer3トリガー(no_match_frames): device=%s count=%d",
+                   device_id.c_str(), ds.consecutive_no_match);
+        return true;
+    }
+
+    // ② 時間ベーストリガー (フレームレート非依存)
+    if (config_.layer3_no_match_ms > 0 && ds.consecutive_no_match > 0) {
+        auto since_last_match = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - ds.last_any_match_time).count();
+        if (since_last_match >= config_.layer3_no_match_ms) {
+            MLOG_DEBUG("ai.vision", "Layer3トリガー(no_match_ms): device=%s elapsed=%lldms",
+                       device_id.c_str(), (long long)since_last_match);
+            return true;
+        }
+    }
+
+    // ③ 同一テンプレート貼り付きトリガー（タップが効いていない疑い）
+    if (config_.layer3_stuck_frames > 0 &&
+        ds.consecutive_same_match >= config_.layer3_stuck_frames) {
+        MLOG_DEBUG("ai.vision", "Layer3トリガー(stuck): device=%s tpl=%s count=%d",
+                   device_id.c_str(), ds.last_matched_template.c_str(),
+                   ds.consecutive_same_match);
+        return true;
+    }
+
+    return false;
 }
 
 } // namespace mirage::ai

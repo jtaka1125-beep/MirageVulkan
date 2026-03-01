@@ -63,6 +63,7 @@
 
 
 #include "ai/vision_decision_engine.hpp"
+#include "ai/ollama_vision.hpp"
 
 
 
@@ -623,6 +624,9 @@ public:
 
 
         vision_engine_ = std::make_unique<VisionDecisionEngine>(vde_config);
+        // Layer 3: OllamaVision 生成 & VDE に注入
+        ollama_vision_ = std::make_shared<mirage::ai::OllamaVision>();
+        vision_engine_->setOllamaVision(ollama_vision_);
 
 
 
@@ -1553,13 +1557,12 @@ public:
 
             auto decision = vision_engine_->update(device_id, vision_matches);
 
+            // Layer 1 が解決したら Layer 3 を破棄
+            if (decision.should_act) {
+                vision_engine_->cancelLayer3(device_id);
+            }
 
-
-
-
-
-
-            if (decision.should_act && can_send) {
+if (decision.should_act && can_send) {
 
 
 
@@ -1697,6 +1700,26 @@ public:
                         }
                     }
 #endif
+                    // Layer 3 トリガー判定
+                    if (action.type == AIAction::Type::NONE && vision_engine_) {
+                        if (vision_engine_->shouldTriggerLayer3(device_id)) {
+                            // fire & forget: rgba コピーして非同期起動
+                            vision_engine_->launchLayer3Async(device_id, rgba, width, height);
+                            MLOG_INFO("ai", "Layer 3起動: slot=%d device=%s", slot, device_id.c_str());
+                        }
+                        // Layer 3 完了ポーリング
+                        auto l3 = vision_engine_->pollLayer3Result(device_id);
+                        if (l3.has_result && l3.found) {
+                            action.type = AIAction::Type::TAP;
+                            action.x    = l3.x;
+                            action.y    = l3.y;
+                            action.reason = "Layer3: " + l3.type + " button=" + l3.button_text;
+                            idle_frames_ = 0;
+                            stats_.idle_frames = 0;
+                            stats_.actions_executed++;
+                            MLOG_INFO("ai", "Layer 3 TAP: slot=%d (%d,%d) %s", slot, l3.x, l3.y, l3.button_text.c_str());
+                        }
+                    }
                     if (action.type == AIAction::Type::NONE) {
                         action.type = AIAction::Type::WAIT;
                         action.reason = "マッチなし";
@@ -4317,6 +4340,7 @@ private:
 
 
     std::unique_ptr<VisionDecisionEngine> vision_engine_;
+    std::shared_ptr<mirage::ai::OllamaVision> ollama_vision_;  // Layer 3
 
 
 

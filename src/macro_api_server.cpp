@@ -18,10 +18,14 @@
 #include <Windows.h>
 
 #include "macro_api_server.hpp"
-#include "adb_h264_receiver.hpp"
 #include "gui/mirage_context.hpp"
 #include "mirage_log.hpp"
+#include "event_bus.hpp"
 #include "nlohmann/json.hpp"
+
+// JPEG encoding for screenshot (IMPLEMENTATION is in gui_frame_capture_impl.cpp)
+extern "C" int stbi_write_jpg_to_func(void(*func)(void*,void*,int), void* context,
+    int x, int y, int comp, const void* data, int quality);
 
 #ifdef MIRAGE_OCR_ENABLED
 #include "frame_analyzer.hpp"
@@ -198,14 +202,31 @@ bool MacroApiServer::start(int port) {
     port_ = port;
     running_ = true;
 
-    // AdbH264Receiver: ffmpegパイプ方式 (MirrorReceiver/Vulkan不要)
-    if (!adb_h264_receiver_) {
-        adb_h264_receiver_ = std::make_unique<AdbH264Receiver>();
-        adb_h264_receiver_->setAdbPath("C:/Users/jun/.local/bin/platform-tools/adb.exe");
-        adb_h264_receiver_->setFfmpegPath("C:/msys64/mingw64/bin/ffmpeg.exe");
-        // adb_managerはGUI初期化後に遅延バインド (setDeviceManager後に即座sync)
-        adb_h264_receiver_->start();
-        MLOG_INFO("macro_api", "AdbH264Receiver started (ffmpeg-pipe mode)");
+    // Frame cache is populated via MultiDeviceReceiver callback
+
+    // EventBusのFrameReadyEventをsubscribeしてJPEGキャッシュを更新
+    // (setFrameCallbackは上書きになるのでbus()subscribeを使う)
+    if (!frame_cb_registered_.exchange(true)) {
+        frame_sub_ = mirage::bus().subscribe<FrameReadyEvent>(
+            [this](const FrameReadyEvent& e) {
+                if (!e.rgba_data || e.width <= 0 || e.height <= 0) return;
+                std::vector<uint8_t> jpeg;
+                jpeg.reserve(e.width * e.height / 4);
+                auto write_cb = [](void* ctx, void* data, int size) {
+                    auto* buf = reinterpret_cast<std::vector<uint8_t>*>(ctx);
+                    auto* p = reinterpret_cast<uint8_t*>(data);
+                    buf->insert(buf->end(), p, p + size);
+                };
+                stbi_write_jpg_to_func(write_cb, &jpeg, e.width, e.height, 4, e.rgba_data, 85);
+                if (jpeg.empty()) return;
+                std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+                auto& entry = jpeg_cache_[e.device_id];
+                entry.jpeg   = std::move(jpeg);
+                entry.width  = e.width;
+                entry.height = e.height;
+                entry.frame_id = e.frame_id;
+            });
+        MLOG_INFO("macro_api", "Frame cache: subscribed to FrameReadyEvent");
     }
 
     server_thread_ = std::thread(&MacroApiServer::server_loop, this);
@@ -218,10 +239,6 @@ void MacroApiServer::stop() {
     if (!running_.load()) return;
     running_ = false;
 
-    if (adb_h264_receiver_) {
-        adb_h264_receiver_->stop();
-        adb_h264_receiver_.reset();
-    }
 
     // Close server socket to unblock accept()
     if (server_socket_ != INVALID_SOCKET) {
@@ -501,12 +518,10 @@ std::string MacroApiServer::handle_ping() {
     r["adb_devices"]   = (int)unique_devs.size();
     r["aoa_devices"]   = hybrid_count;
     r["port"]          = port_;
-    if (adb_h264_receiver_) {
-        r["h264_running"] = adb_h264_receiver_->running();
-        r["h264_devices"] = adb_h264_receiver_->device_count();
-    } else {
-        r["h264_running"] = false;
-        r["h264_devices"] = 0;
+    {
+        std::lock_guard<std::mutex> jlk(jpeg_cache_mutex_);
+        r["h264_devices"] = (int)jpeg_cache_.size();
+        r["h264_running"] = frame_cb_registered_.load();
     }
 #ifdef MIRAGE_OCR_ENABLED
     r["ocr_available"] = true;
@@ -675,7 +690,7 @@ std::string MacroApiServer::handle_multi_touch(const std::string& device_id,
     // AOA HID 2-finger simultaneous touch via AoaHidTouch::touch_down/move/up
     // ADB cannot do true multi-touch.
     if (!hybrid) return R"({"status":"error","message":"hybrid_cmd not ready"})";
-    auto* hid = hybrid->get_hid_for_device(device_id);
+    auto hid = hybrid->get_hid_for_device(device_id);
     if (!hid) {
         return R"({"status":"error","message":"multi_touch requires AOA HID - device not connected"})";
     }
@@ -832,17 +847,8 @@ std::string MacroApiServer::handle_force_stop(const std::string& device_id,
 }
 
 std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
-    // Lazy-bind device manager to AdbH264Receiver
-    if (adb_h264_receiver_ && !adb_h264_receiver_->has_manager()) {
-        auto* mgr = ctx().adb_manager.get();
-        if (mgr) {
-            adb_h264_receiver_->setDeviceManager(mgr);
-            MLOG_INFO("macro_api", "AdbH264Receiver: late-bound adb_manager");
-        }
-    }
-
-    // Fast path: AdbH264Receiver (25-40 FPS)
-    if (adb_h264_receiver_ && adb_h264_receiver_->running()) {
+    // Fast path: JPEGキャッシュから返す (MultiDeviceReceiverコールバックで常時更新)
+    {
         std::string hw_id = device_id;
         auto* mgr = ctx().adb_manager.get();
         if (mgr) {
@@ -850,50 +856,35 @@ std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
                 if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id)
                     { hw_id = ud.hardware_id; break; }
         }
-        std::vector<uint8_t> jpeg;
-        int fw = 0, fh = 0;
-        if (adb_h264_receiver_->get_latest_jpeg(hw_id, jpeg, fw, fh) && !jpeg.empty()) {
+
+        std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+        auto it = jpeg_cache_.find(hw_id);
+        if (it != jpeg_cache_.end() && !it->second.jpeg.empty()) {
             static const char b64c[] =
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            std::string enc; long fs=(long)jpeg.size();
+            auto& jpeg_buf = it->second.jpeg;
+            std::string enc; long fs=(long)jpeg_buf.size();
             enc.reserve(((fs+2)/3)*4);
             for (long i=0; i<fs; i+=3) {
-                unsigned int n=(unsigned int)jpeg[i]<<16;
-                if(i+1<fs) n|=(unsigned int)jpeg[i+1]<<8;
-                if(i+2<fs) n|=(unsigned int)jpeg[i+2];
+                unsigned int n=(unsigned int)jpeg_buf[i]<<16;
+                if(i+1<fs) n|=(unsigned int)jpeg_buf[i+1]<<8;
+                if(i+2<fs) n|=(unsigned int)jpeg_buf[i+2];
                 enc+=b64c[(n>>18)&0x3F]; enc+=b64c[(n>>12)&0x3F];
                 enc+=(i+1<fs)?b64c[(n>>6)&0x3F]:'=';
                 enc+=(i+2<fs)?b64c[n&0x3F]:'=';
             }
             json r;
             r["status"]="ok"; r["base64"]=enc;
-            r["width"]=fw; r["height"]=fh;
-            r["via"]="adb_h264";
-            r["fps"]=adb_h264_receiver_->get_fps(hw_id);
+            r["width"]=it->second.width; r["height"]=it->second.height;
+            r["via"]="mirror_receiver";
+            r["fps"]=0;
             return r.dump();
         }
-        // h264キャッシュがまだ空 → screencapにフォールバックせず即時返す
-        // (screencapは一部デバイスでハングするのでスキップ)
-        json r_empty;
-        r_empty["status"] = "no_frame_yet";
-        r_empty["via"]    = "adb_h264_pending";
-        r_empty["fps"]    = 0;
-        return r_empty.dump();
-    }
 
-    // screencapフォールバック廃止: X1等でハングするため
-    // adb_h264キャッシュが溜まるまでno_frame_yetを返す
-    {
-        std::string _adb_id_chk = resolve_device_id(device_id);
         json r_wait;
-        if (_adb_id_chk.empty()) {
-            r_wait["status"] = "error";
-            r_wait["error"]  = "device not found";
-        } else {
-            r_wait["status"] = "no_frame_yet";
-            r_wait["via"]    = "init_pending";
-            r_wait["fps"]    = 0;
-        }
+        r_wait["status"] = "no_frame_yet";
+        r_wait["via"]    = "mirror_receiver_pending";
+        r_wait["fps"]    = 0;
         return r_wait.dump();
     }
     std::string adb_id = resolve_device_id(device_id);

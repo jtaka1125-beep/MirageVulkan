@@ -90,13 +90,14 @@ public:
     uint64_t wifi_commands_sent() const { return 0; }
 
     // Get AOA HID touch controller (first device, backward compat)
-    mirage::AoaHidTouch* get_hid_touch() {
+    std::shared_ptr<mirage::AoaHidTouch> get_hid_touch() {
+        std::lock_guard<std::mutex> lock(hid_mutex_);
         if (hid_touches_.empty()) return nullptr;
-        return hid_touches_.begin()->second.get();
+        return hid_touches_.begin()->second;
     }
 
-    // Get HID touch for a specific device
-    mirage::AoaHidTouch* get_hid_for_device(const std::string& device_id);
+    // Get HID touch for a specific device (returns shared_ptr to prevent UAF)
+    std::shared_ptr<mirage::AoaHidTouch> get_hid_for_device(const std::string& device_id);
 
     // Get current touch mode
     TouchMode get_touch_mode() const { return current_touch_mode_.load(); }

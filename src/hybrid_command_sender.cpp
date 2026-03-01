@@ -144,17 +144,17 @@ void HybridCommandSender::set_video_callback(VideoDataCallback cb) {
 
 // ── Internal HID helpers ──
 
-mirage::AoaHidTouch* HybridCommandSender::get_hid_for_device(const std::string& device_id) {
+std::shared_ptr<mirage::AoaHidTouch> HybridCommandSender::get_hid_for_device(const std::string& device_id) {
     std::lock_guard<std::mutex> lock(hid_mutex_);
     auto it = hid_touches_.find(device_id);
     if (it != hid_touches_.end() && it->second && it->second->is_registered()) {
-        return it->second.get();
+        return it->second;  // shared_ptr コピーを返す → 参照カウント+1で安全
     }
     return nullptr;
 }
 
 bool HybridCommandSender::try_hid_tap(const std::string& device_id, int x, int y, int screen_w, int screen_h) {
-    auto* hid = get_hid_for_device(device_id);
+    auto hid = get_hid_for_device(device_id);
     if (!hid) return false;
     bool ok = hid->tap(x, y, screen_w, screen_h);
     if (ok) {
@@ -164,7 +164,7 @@ bool HybridCommandSender::try_hid_tap(const std::string& device_id, int x, int y
 }
 
 bool HybridCommandSender::try_hid_swipe(const std::string& device_id, int x1, int y1, int x2, int y2, int screen_w, int screen_h, int duration_ms) {
-    auto* hid = get_hid_for_device(device_id);
+    auto hid = get_hid_for_device(device_id);
     if (!hid) return false;
     bool ok = hid->swipe(x1, y1, x2, y2, screen_w, screen_h, duration_ms);
     if (ok) {
@@ -184,7 +184,7 @@ uint32_t HybridCommandSender::send_ping(const std::string& device_id) {
 
 uint32_t HybridCommandSender::send_tap(const std::string& device_id, int x, int y, int screen_w, int screen_h) {
     // Tier 1: AOA HID (fastest, per-device)
-    auto* hid = get_hid_for_device(device_id);
+    auto hid = get_hid_for_device(device_id);
     if (hid && screen_w > 0 && screen_h > 0) {
         if (try_hid_tap(device_id, x, y, screen_w, screen_h)) {
             current_touch_mode_.store(TouchMode::AOA_HID);
@@ -217,7 +217,7 @@ uint32_t HybridCommandSender::send_tap(const std::string& device_id, int x, int 
 
 uint32_t HybridCommandSender::send_swipe(const std::string& device_id, int x1, int y1, int x2, int y2, int duration_ms, int screen_w, int screen_h) {
     // Tier 1: AOA HID (fastest, per-device)
-    auto* hid = get_hid_for_device(device_id);
+    auto hid = get_hid_for_device(device_id);
     if (hid && screen_w > 0 && screen_h > 0) {
         if (try_hid_swipe(device_id, x1, y1, x2, y2, screen_w, screen_h, duration_ms)) {
             current_touch_mode_.store(TouchMode::AOA_HID);
@@ -307,7 +307,7 @@ uint32_t HybridCommandSender::send_click_text(const std::string& device_id, cons
 
 bool HybridCommandSender::send_long_press(const std::string& device_id, int x, int y, int screen_w, int screen_h, int hold_ms) {
     // Tier 1: AOA HID (per-device)
-    auto* hid = get_hid_for_device(device_id);
+    auto hid = get_hid_for_device(device_id);
     if (hid && screen_w > 0 && screen_h > 0) {
         if (hid->long_press(x, y, screen_w, screen_h, hold_ms)) {
             MLOG_INFO("hybridcmd", "HID long press (%d, %d) %dms [%s]", x, y, hold_ms, device_id.c_str());
@@ -343,7 +343,7 @@ bool HybridCommandSender::send_long_press(const std::string& device_id, int x, i
 
 bool HybridCommandSender::send_pinch(const std::string& device_id, int cx, int cy, int start_dist, int end_dist, int screen_w, int screen_h, int duration_ms) {
     // HID only - pinch requires multitouch (per-device)
-    auto* hid = get_hid_for_device(device_id);
+    auto hid = get_hid_for_device(device_id);
     if (hid && screen_w > 0 && screen_h > 0) {
         if (hid->pinch(cx, cy, start_dist, end_dist, screen_w, screen_h, duration_ms)) {
             MLOG_INFO("hybridcmd", "HID pinch (%d, %d) %d->%d %dms [%s]", cx, cy, start_dist, end_dist, duration_ms, device_id.c_str());
