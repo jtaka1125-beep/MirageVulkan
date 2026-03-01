@@ -240,6 +240,10 @@ private:
     // Layer 3: OllamaVision (外部注入)
     std::shared_ptr<OllamaVision> ollama_vision_;
 
+    // Layer 3 グローバル排他: 全デバイス合計で同時1つまで
+    mutable std::atomic<int> layer3_active_count_{0};
+    static constexpr int LAYER3_MAX_CONCURRENT = 1; // Ollama はシングルスレッド
+
     // 内部ヘルパー
     DeviceVisionState& getOrCreateState(const std::string& device_id);
     void transitionTo(DeviceVisionState& ds, VisionState new_state);

@@ -476,6 +476,13 @@ bool VisionDecisionEngine::launchLayer3Async(
         return false;
     }
 
+    // グローバル排他: 全デバイス合計で LAYER3_MAX_CONCURRENT まで
+    if (layer3_active_count_.load() >= LAYER3_MAX_CONCURRENT) {
+        MLOG_DEBUG("ai.vision", "Layer 3グローバル上限: device=%s active=%d",
+                   device_id.c_str(), layer3_active_count_.load());
+        return false;
+    }
+
     auto& ds = getOrCreateState(device_id);
     ds.layer3_last_call = now;
 
@@ -493,9 +500,13 @@ bool VisionDecisionEngine::launchLayer3Async(
     // OllamaVisionのshared_ptrをキャプチャ
     auto ollama = ollama_vision_;
 
+    layer3_active_count_++;
+    auto* active_count = &layer3_active_count_;
     task->future = std::async(std::launch::async,
-        [ollama, rgba_copy, width, height]() -> OllamaVisionResult {
-            return ollama->detectPopup(rgba_copy->data(), width, height);
+        [ollama, rgba_copy, width, height, active_count]() -> OllamaVisionResult {
+            OllamaVisionResult r = ollama->detectPopup(rgba_copy->data(), width, height);
+            (*active_count)--;
+            return r;
         });
 
     ds.layer3_task = task;
@@ -574,7 +585,7 @@ void VisionDecisionEngine::cancelLayer3(const std::string& device_id) {
     if (ds.layer3_task && ds.layer3_task->valid) {
         MLOG_DEBUG("ai.vision", "Layer 3キャンセル: device=%s", device_id.c_str());
         ds.layer3_task->valid = false;
-        // futureは破棄されるがスレッドは走り続ける（結果を無視するだけ）
+        // futureは破棄されるがスレッドは走り続ける（ラムダ内で -1 される）
         ds.layer3_task.reset();
     }
 }
@@ -593,6 +604,8 @@ bool VisionDecisionEngine::shouldTriggerLayer3(
     // 既に Layer 3 実行中または冷却中はスキップ
     if (ds.layer3_task && ds.layer3_task->valid) return false;
     if (isLayer3OnCooldown(device_id, now)) return false;
+    // グローバル上限チェック
+    if (layer3_active_count_.load() >= LAYER3_MAX_CONCURRENT) return false;
 
     // ① 連続マッチなしフレーム数トリガー
     if (config_.layer3_no_match_frames > 0 &&
