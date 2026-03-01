@@ -103,12 +103,12 @@ private:
     static constexpr int RECOVERY_THRESHOLD = 5;     // 5 seconds of recovery
 
     // FPS levels
-    static constexpr int MAIN_FPS_HIGH = 60;
-    static constexpr int MAIN_FPS_MED = 30;
-    static constexpr int MAIN_FPS_LOW = 30;  // was 15
-    static constexpr int SUB_FPS_HIGH = 30;
-    static constexpr int SUB_FPS_MED = 15;
-    static constexpr int SUB_FPS_LOW = 15;  // was 10
+    static constexpr int MAIN_FPS_HIGH = 120;
+    static constexpr int MAIN_FPS_MED  = 60;
+    static constexpr int MAIN_FPS_LOW  = 30;  // was 15
+    static constexpr int SUB_FPS_HIGH  = 60;
+    static constexpr int SUB_FPS_MED   = 30;
+    static constexpr int SUB_FPS_LOW   = 15;  // was 10
 
     // Throttled debug log
     std::chrono::steady_clock::time_point last_debug_log_{};

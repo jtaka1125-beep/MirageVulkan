@@ -645,7 +645,7 @@ static void onDeviceSelected(const std::string& device_id) {
         std::string sel_id = device_id;
         std::thread([devices, sel_id]() {
             for (const auto& dev : devices) {
-                int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
+                int target_fps = (dev.hardware_id == sel_id) ? 120 : 60;
                 std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps "
                                   + std::to_string(target_fps) + " --ei fps " + std::to_string(target_fps);
                 if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
@@ -669,7 +669,7 @@ static void onDeviceSelected(const std::string& device_id) {
             std::string hw_id = uid;
             auto it = usb_to_hw.find(uid);
             if (it != usb_to_hw.end()) hw_id = it->second;
-            int target_fps = (hw_id == device_id) ? 60 : 30;
+            int target_fps = (hw_id == device_id) ? 120 : 60;
             g_hybrid_cmd->send_video_fps(uid, target_fps);
             MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
                       uid.c_str(), target_fps,
@@ -685,7 +685,7 @@ void initializeGUI(HWND hwnd) {
     mirage::gui::GuiConfig config;
     config.window_width = 1920;
     config.window_height = 1080;
-    config.vsync = true;
+    config.vsync = false;
 
     if (!g_gui->initialize(hwnd, config)) {
         MLOG_ERROR("gui", "GUI initialization failed");

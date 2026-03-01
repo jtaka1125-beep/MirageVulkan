@@ -538,7 +538,7 @@ void deviceUpdateThread() {
         registerAndUpdateUsbDevices(gui);
         updateTcpReceiverFrames(gui);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
     }
   } catch (const std::exception& e) {
     MLOG_ERROR("threads", "deviceUpdateThread exception: %s", e.what());
