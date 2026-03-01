@@ -22,6 +22,8 @@
 typedef unsigned long long SOCKET;
 #endif
 
+namespace mirage { class AdbH264Receiver; }
+
 namespace mirage {
 
 class MacroApiServer {
@@ -80,6 +82,9 @@ private:
 
     // 繝・ヰ繧､繧ｹID隗｣豎ｺ: hardware_id 竊・preferred_adb_id
     std::string resolve_device_id(const std::string& device_id);
+
+    // AdbH264Receiver: screenrecord H.264 fast screenshot
+    std::unique_ptr<AdbH264Receiver> adb_h264_receiver_;
 
     std::atomic<bool> running_{false};
     int port_ = DEFAULT_PORT;

@@ -18,6 +18,7 @@
 #include <Windows.h>
 
 #include "macro_api_server.hpp"
+#include "adb_h264_receiver.hpp"
 #include "gui/mirage_context.hpp"
 #include "mirage_log.hpp"
 #include "nlohmann/json.hpp"
@@ -126,15 +127,22 @@ bool MacroApiServer::start(int port) {
         return false;
     }
 
-    server_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    // WSA_FLAG_NO_HANDLE_INHERIT: 子プロセス(adb/ffmpeg)へのハンドル継承を禁止
+    // これがゾンビソケットの根本解決 (プロセス終了後にソケットが残る問題を防ぐ)
+    server_socket_ = WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_TCP,
+                               nullptr, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (server_socket_ == INVALID_SOCKET) {
-        MLOG_ERROR("macro_api", "socket() failed: %d", WSAGetLastError());
+        MLOG_ERROR("macro_api", "WSASocket() failed: %d", WSAGetLastError());
         return false;
     }
 
-    // Allow port reuse
+    // Allow port reuse + instant release (no TIME_WAIT)
     int opt = 1;
     setsockopt(server_socket_, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+    LINGER ling{};
+    ling.l_onoff  = 1;
+    ling.l_linger = 0;
+    setsockopt(server_socket_, SOL_SOCKET, SO_LINGER, (const char*)&ling, sizeof(ling));
 
     // Bind to localhost only (security)
     sockaddr_in addr{};
@@ -158,6 +166,15 @@ bool MacroApiServer::start(int port) {
 
     port_ = port;
     running_ = true;
+
+    // AdbH264Receiver: 一時無効化 (クラッシュ調査中)
+    // if (!adb_h264_receiver_) {
+    //     adb_h264_receiver_ = std::make_unique<AdbH264Receiver>();
+    //     adb_h264_receiver_->setAdbPath("C:/Users/jun/.local/bin/platform-tools/adb.exe");
+    //     adb_h264_receiver_->start();
+    //     MLOG_INFO("macro_api", "AdbH264Receiver started");
+    // }
+
     server_thread_ = std::thread(&MacroApiServer::server_loop, this);
 
     MLOG_INFO("macro_api", "MacroApiServer started on 127.0.0.1:%d", port);
@@ -167,6 +184,11 @@ bool MacroApiServer::start(int port) {
 void MacroApiServer::stop() {
     if (!running_.load()) return;
     running_ = false;
+
+    if (adb_h264_receiver_) {
+        adb_h264_receiver_->stop();
+        adb_h264_receiver_.reset();
+    }
 
     // Close server socket to unblock accept()
     if (server_socket_ != INVALID_SOCKET) {
@@ -206,6 +228,8 @@ void MacroApiServer::server_loop() {
             break; // Server socket was closed for shutdown
         }
 
+        // クライアントソケットも非継承 (adb/ffmpegに継承させない)
+        SetHandleInformation((HANDLE)client, HANDLE_FLAG_INHERIT, 0);
         MLOG_INFO("macro_api", "Client connected (fd=%llu)", (unsigned long long)client);
 
         std::lock_guard<std::mutex> lk(clients_mutex_);
@@ -427,6 +451,13 @@ std::string MacroApiServer::handle_ping() {
     r["adb_devices"]   = (int)unique_devs.size();
     r["aoa_devices"]   = hybrid_count;
     r["port"]          = port_;
+    if (adb_h264_receiver_) {
+        r["h264_running"] = adb_h264_receiver_->running();
+        r["h264_devices"] = adb_h264_receiver_->device_count();
+    } else {
+        r["h264_running"] = false;
+        r["h264_devices"] = 0;
+    }
 #ifdef MIRAGE_OCR_ENABLED
     r["ocr_available"] = true;
 #else
@@ -737,6 +768,48 @@ std::string MacroApiServer::handle_force_stop(const std::string& device_id,
 }
 
 std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
+    // Lazy-bind device manager to AdbH264Receiver
+    if (adb_h264_receiver_ && !adb_h264_receiver_->has_manager()) {
+        auto* mgr = ctx().adb_manager.get();
+        if (mgr) {
+            adb_h264_receiver_->setDeviceManager(mgr);
+            MLOG_INFO("macro_api", "AdbH264Receiver: late-bound adb_manager");
+        }
+    }
+
+    // Fast path: AdbH264Receiver (25-40 FPS)
+    if (adb_h264_receiver_ && adb_h264_receiver_->running()) {
+        std::string hw_id = device_id;
+        auto* mgr = ctx().adb_manager.get();
+        if (mgr) {
+            for (auto& ud : mgr->getUniqueDevices())
+                if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id)
+                    { hw_id = ud.hardware_id; break; }
+        }
+        std::vector<uint8_t> jpeg;
+        int fw = 0, fh = 0;
+        if (adb_h264_receiver_->get_latest_jpeg(hw_id, jpeg, fw, fh) && !jpeg.empty()) {
+            static const char b64c[] =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::string enc; long fs=(long)jpeg.size();
+            enc.reserve(((fs+2)/3)*4);
+            for (long i=0; i<fs; i+=3) {
+                unsigned int n=(unsigned int)jpeg[i]<<16;
+                if(i+1<fs) n|=(unsigned int)jpeg[i+1]<<8;
+                if(i+2<fs) n|=(unsigned int)jpeg[i+2];
+                enc+=b64c[(n>>18)&0x3F]; enc+=b64c[(n>>12)&0x3F];
+                enc+=(i+1<fs)?b64c[(n>>6)&0x3F]:'=';
+                enc+=(i+2<fs)?b64c[n&0x3F]:'=';
+            }
+            json r;
+            r["status"]="ok"; r["base64"]=enc;
+            r["width"]=fw; r["height"]=fh;
+            r["via"]="adb_h264";
+            r["fps"]=adb_h264_receiver_->get_fps(hw_id);
+            return r.dump();
+        }
+    }
+
     std::string adb_id = resolve_device_id(device_id);
 
     // Capture to device, pull to temp, read and base64-encode

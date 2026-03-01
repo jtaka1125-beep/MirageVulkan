@@ -1,9 +1,8 @@
 // =============================================================================
-// AdbH264Receiver - adb exec-out screenrecord → MirrorReceiver decoder
+// AdbH264Receiver - adb exec-out screenrecord → ffmpeg pipe → JPEG cache
 // =============================================================================
-// screenrecordのraw H.264をMirrorReceiver(FFmpeg)でデコード → JPEG変換
-// MacroAPI screenshot fast path (25-40 FPS)
-// ffmpeg外部プロセス不要。MediaProjection許可不要。
+// screenrecord H264 を ffmpeg でデコードしてJPEGをキャッシュ
+// MirrorReceiver/Vulkan不要。外部ffmpegパイプ方式。
 // =============================================================================
 #pragma once
 
@@ -19,13 +18,8 @@
 #include <mutex>
 #include <memory>
 #include <chrono>
-#include "mirror_receiver.hpp"
 #include "adb_device_manager.hpp"
 #include "mirage_log.hpp"
-
-// stb_image_write forward declaration
-extern "C" int stbi_write_jpg_to_func(void (*func)(void*,void*,int), void* context,
-    int x, int y, int comp, const void* data, int quality);
 
 namespace mirage {
 
@@ -34,7 +28,8 @@ public:
     AdbH264Receiver() = default;
     ~AdbH264Receiver() { stop(); }
 
-    void setAdbPath(const std::string& path) { adb_path_ = path; }
+    void setAdbPath(const std::string& p)    { adb_path_    = p; }
+    void setFfmpegPath(const std::string& p) { ffmpeg_path_ = p; }
     void setDeviceManager(::gui::AdbDeviceManager* mgr) {
         std::lock_guard<std::mutex> lk(devices_mtx_);
         adb_mgr_ = mgr;
@@ -69,54 +64,39 @@ public:
         std::lock_guard<std::mutex> lk(devices_mtx_);
         int n = 0;
         for (auto it = devices_.begin(); it != devices_.end(); ++it)
-            if (it->second.active) n++;
+            if (it->second.proc_adb != INVALID_HANDLE_VALUE) n++;
         return n;
     }
 
     // 最新フレームをJPEGで取得
     bool get_latest_jpeg(const std::string& hw_id,
                          std::vector<uint8_t>& out_jpeg, int& out_w, int& out_h) {
-        ::gui::MirrorFrame frame;
-        {
-            std::lock_guard<std::mutex> lk(devices_mtx_);
-            auto it = devices_.find(hw_id);
-            if (it == devices_.end() || !it->second.decoder) return false;
-            if (!it->second.decoder->get_latest_frame(frame)) return false;
-        }
-        if (frame.rgba.empty() || frame.width <= 0) return false;
-
-        out_w = frame.width;
-        out_h = frame.height;
-
-        // RGBAをJPEGへ
-        out_jpeg.clear();
-        out_jpeg.reserve(frame.width * frame.height / 4);
-        stbi_write_jpg_to_func([](void* ctx, void* data, int sz) {
-            auto* v = static_cast<std::vector<uint8_t>*>(ctx);
-            const uint8_t* p = static_cast<const uint8_t*>(data);
-            v->insert(v->end(), p, p + sz);
-        }, &out_jpeg, frame.width, frame.height, 4, frame.rgba.data(), 80);
-
-        return !out_jpeg.empty();
+        std::lock_guard<std::mutex> lk(devices_mtx_);
+        auto it = devices_.find(hw_id);
+        if (it == devices_.end() || it->second.latest_jpeg.empty()) return false;
+        out_jpeg = it->second.latest_jpeg;
+        out_w = it->second.width;
+        out_h = it->second.height;
+        return true;
     }
 
     float get_fps(const std::string& hw_id) {
         std::lock_guard<std::mutex> lk(devices_mtx_);
         auto it = devices_.find(hw_id);
-        if (it == devices_.end()) return 0.f;
-        return it->second.fps;
+        return (it != devices_.end()) ? it->second.fps : 0.f;
     }
 
 private:
     struct DeviceEntry {
         std::string hardware_id;
         std::string adb_serial;
-        std::string size_str;
-        HANDLE proc_handle  = INVALID_HANDLE_VALUE;
-        HANDLE stdout_read  = INVALID_HANDLE_VALUE;
-        std::unique_ptr<::gui::MirrorReceiver> decoder;
+        HANDLE proc_adb    = INVALID_HANDLE_VALUE;
+        HANDLE proc_ffmpeg = INVALID_HANDLE_VALUE;
+        HANDLE pipe_adb2ff = INVALID_HANDLE_VALUE;  // adb stdout → ffmpeg stdin
+        HANDLE pipe_ff_out = INVALID_HANDLE_VALUE;  // ffmpeg stdout
         std::thread reader_thread;
-        bool active = false;
+        std::vector<uint8_t> latest_jpeg;
+        int width = 0, height = 0;
         float fps = 0.f;
         uint64_t frame_count = 0;
 
@@ -127,7 +107,8 @@ private:
         DeviceEntry& operator=(const DeviceEntry&) = delete;
     };
 
-    std::string adb_path_;                    // "adb" or full path
+    std::string adb_path_;
+    std::string ffmpeg_path_;
     ::gui::AdbDeviceManager* adb_mgr_ = nullptr;
     std::atomic<bool> running_{false};
     std::thread supervisor_thread_;
@@ -135,46 +116,51 @@ private:
     std::map<std::string, DeviceEntry> devices_;
 
     std::string getAdb() const {
-        if (!adb_path_.empty()) return adb_path_;
-        return "adb";
+        return adb_path_.empty() ? "adb" : adb_path_;
+    }
+    std::string getFfmpeg() const {
+        if (!ffmpeg_path_.empty()) return ffmpeg_path_;
+        return "C:/msys64/mingw64/bin/ffmpeg.exe";
     }
 
     void supervisorLoop() {
-        // 最初の数秒はadb_mgr_を待つ
         for (int i = 0; i < 30 && running_.load(); i++) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             if (adb_mgr_) break;
         }
         while (running_.load()) {
             syncDevices();
-            for (int i = 0; i < 30 && running_.load(); i++)
+            for (int i = 0; i < 150 && running_.load(); i++)
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
     }
 
     void syncDevices() {
-        // Phase1: mutex内でプロセス起動のみ（スレッドなし）
-        std::vector<std::string> new_hw_ids;  // 新規追加されたデバイスのhw_id
+        // Phase1: mutex保持でstartEntry
+        std::vector<std::string> to_start_threads;
         {
             std::lock_guard<std::mutex> lk(devices_mtx_);
             if (!adb_mgr_) return;
-
             auto devs = adb_mgr_->getUniqueDevices();
-            MLOG_INFO("adb_h264", "syncDevices: %d unique devices", (int)devs.size());
+            MLOG_INFO("adb_h264", "syncDevices: %d devices", (int)devs.size());
 
             for (size_t i = 0; i < devs.size(); i++) {
-                const ::gui::AdbDeviceManager::UniqueDevice& ud = devs[i];
+                const auto& ud = devs[i];
                 if (ud.preferred_adb_id.empty()) continue;
                 auto it = devices_.find(ud.hardware_id);
-                if (it != devices_.end()) {
-                    if (it->second.active) continue;
-                    stopEntry(it->second);
-                    devices_.erase(it);
+                bool need_start = (it == devices_.end() ||
+                    it->second.proc_adb == INVALID_HANDLE_VALUE);
+                if (need_start) {
+                    if (it != devices_.end()) {
+                        stopEntry(it->second);
+                        devices_.erase(it);
+                    }
+                    if (startEntry(ud))
+                        to_start_threads.push_back(ud.hardware_id);
                 }
-                startEntry(ud);
-                new_hw_ids.push_back(ud.hardware_id);
             }
 
+            // 削除
             for (auto it = devices_.begin(); it != devices_.end(); ) {
                 bool found = false;
                 for (size_t i = 0; i < devs.size(); i++)
@@ -184,90 +170,118 @@ private:
             }
         }
 
-        // Phase2: mutex外でreaderThreadを起動（デッドロック回避）
-        for (const auto& hw_id : new_hw_ids) {
+        // Phase2: mutex外でreaderThread起動
+        for (auto& hw_id : to_start_threads) {
             std::lock_guard<std::mutex> lk(devices_mtx_);
             auto it = devices_.find(hw_id);
-            if (it != devices_.end() && it->second.active &&
-                !it->second.reader_thread.joinable()) {
+            if (it != devices_.end() && !it->second.reader_thread.joinable()) {
                 std::string id = hw_id;
                 it->second.reader_thread = std::thread([this, id]() { readerLoop(id); });
             }
         }
     }
 
-    void startEntry(const ::gui::AdbDeviceManager::UniqueDevice& ud) {
+    // mutex内で呼ぶ。成功時trueを返す
+    bool startEntry(const ::gui::AdbDeviceManager::UniqueDevice& ud) {
         DeviceEntry entry;
         entry.hardware_id = ud.hardware_id;
         entry.adb_serial  = ud.preferred_adb_id;
 
         int w = ud.screen_width  > 0 ? ud.screen_width  : 800;
         int h = ud.screen_height > 0 ? ud.screen_height : 1344;
-        // 16の倍数に切り上げ (H.264制限)
         w = ((w + 15) / 16) * 16;
         h = ((h + 15) / 16) * 16;
-        entry.size_str = std::to_string(w) + "x" + std::to_string(h);
+        std::string size_str = std::to_string(w) + "x" + std::to_string(h);
 
-        // デコーダ初期化
-        entry.decoder = std::make_unique<::gui::MirrorReceiver>();
-        if (!entry.decoder->start_decoder_only()) {
-            MLOG_ERROR("adb_h264", "Decoder init failed for %s", ud.hardware_id.c_str());
-            return;
-        }
-
-        // パイプ作成
         SECURITY_ATTRIBUTES sa{};
         sa.nLength = sizeof(sa);
         sa.bInheritHandle = TRUE;
-        HANDLE stdout_write = INVALID_HANDLE_VALUE;
-        if (!CreatePipe(&entry.stdout_read, &stdout_write, &sa, 0)) {
-            MLOG_ERROR("adb_h264", "CreatePipe failed: %lu", GetLastError());
-            return;
-        }
-        SetHandleInformation(entry.stdout_read, HANDLE_FLAG_INHERIT, 0);
 
-        // コマンド: cmd /c adb -s <serial> exec-out screenrecord ...
-        std::string cmd = "cmd /c " + getAdb() +
-            " -s " + entry.adb_serial +
+        // パイプ: adb stdout → ffmpeg stdin
+        HANDLE pipe_w1, pipe_r1;
+        if (!CreatePipe(&pipe_r1, &pipe_w1, &sa, 1 * 1024 * 1024)) {
+            MLOG_ERROR("adb_h264", "CreatePipe(adb->ff) failed: %lu", GetLastError());
+            return false;
+        }
+        SetHandleInformation(pipe_r1, HANDLE_FLAG_INHERIT, 0);  // read end non-inherited
+
+        // パイプ: ffmpeg stdout → reader
+        HANDLE pipe_w2, pipe_r2;
+        if (!CreatePipe(&pipe_r2, &pipe_w2, &sa, 256 * 1024)) {
+            CloseHandle(pipe_r1); CloseHandle(pipe_w1);
+            MLOG_ERROR("adb_h264", "CreatePipe(ff->reader) failed: %lu", GetLastError());
+            return false;
+        }
+        SetHandleInformation(pipe_r2, HANDLE_FLAG_INHERIT, 0);
+
+        // adbプロセス起動
+        std::string adb_cmd = "\"" + getAdb() + "\""
+            " -s " + ud.preferred_adb_id +
             " exec-out screenrecord --output-format=h264"
-            " --bit-rate 4M"
-            " --size " + entry.size_str +
-            " --time-limit 0 -";
+            " --bit-rate 4M --size " + size_str + " --time-limit 0 -";
 
-        MLOG_INFO("adb_h264", "Launching: %s", cmd.c_str());
-
-        STARTUPINFOA si{};
-        si.cb = sizeof(si);
-        si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-        si.hStdOutput = stdout_write;
-        si.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
-        si.wShowWindow = SW_HIDE;
-
-        PROCESS_INFORMATION pi{};
-        if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr,
-                            TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-            MLOG_ERROR("adb_h264", "CreateProcess failed: %lu  cmd=[%s]",
-                       GetLastError(), cmd.c_str());
-            CloseHandle(entry.stdout_read);
-            CloseHandle(stdout_write);
-            return;
+        STARTUPINFOA si_adb{}; si_adb.cb = sizeof(si_adb);
+        si_adb.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+        si_adb.hStdOutput = pipe_w1;
+        si_adb.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+        si_adb.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi_adb{};
+        if (!CreateProcessA(nullptr, adb_cmd.data(), nullptr, nullptr,
+                            TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si_adb, &pi_adb)) {
+            MLOG_ERROR("adb_h264", "CreateProcess(adb) failed: %lu cmd=[%s]",
+                       GetLastError(), adb_cmd.c_str());
+            CloseHandle(pipe_r1); CloseHandle(pipe_w1);
+            CloseHandle(pipe_r2); CloseHandle(pipe_w2);
+            return false;
         }
-        CloseHandle(stdout_write);
-        CloseHandle(pi.hThread);
-        entry.proc_handle = pi.hProcess;
-        entry.active = true;
+        CloseHandle(pipe_w1);
+        CloseHandle(pi_adb.hThread);
+        entry.proc_adb = pi_adb.hProcess;
 
-        MLOG_INFO("adb_h264", "Stream started: %s (%s) %s",
-                  ud.display_name.c_str(), entry.adb_serial.c_str(),
-                  entry.size_str.c_str());
+        // ffmpegプロセス: H264 → MJPEG (rawjpeg stream)
+        // ffmpeg -f h264 -i pipe:0 -vf fps=15 -q:v 3 -f mjpeg pipe:1
+        std::string ff_cmd = "\"" + getFfmpeg() + "\""
+            " -f h264 -i pipe:0"
+            " -vf fps=15"
+            " -q:v 3"
+            " -f mjpeg pipe:1";
 
-        // Phase2でreaderLoopスレッドを起動する（mutex外で）
+        STARTUPINFOA si_ff{}; si_ff.cb = sizeof(si_ff);
+        si_ff.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+        si_ff.hStdInput  = pipe_r1;
+        si_ff.hStdOutput = pipe_w2;
+        si_ff.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+        si_ff.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi_ff{};
+        if (!CreateProcessA(nullptr, ff_cmd.data(), nullptr, nullptr,
+                            TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si_ff, &pi_ff)) {
+            MLOG_ERROR("adb_h264", "CreateProcess(ffmpeg) failed: %lu", GetLastError());
+            TerminateProcess(entry.proc_adb, 0);
+            CloseHandle(entry.proc_adb); entry.proc_adb = INVALID_HANDLE_VALUE;
+            CloseHandle(pipe_r1);
+            CloseHandle(pipe_r2); CloseHandle(pipe_w2);
+            return false;
+        }
+        CloseHandle(pipe_r1);
+        CloseHandle(pipe_w2);
+        CloseHandle(pi_ff.hThread);
+        entry.proc_ffmpeg = pi_ff.hProcess;
+        entry.pipe_ff_out = pipe_r2;
+        entry.width  = w;
+        entry.height = h;
+
+        MLOG_INFO("adb_h264", "Stream+ffmpeg started: %s (%s) %s",
+                  ud.display_name.c_str(), ud.preferred_adb_id.c_str(), size_str.c_str());
+
         devices_.insert(std::make_pair(ud.hardware_id, std::move(entry)));
+        return true;
     }
 
     void readerLoop(const std::string& hw_id) {
-        const size_t BUF = 65536;
-        std::vector<uint8_t> buf(BUF);
+        // MJPEG = 連続したJPEGバイナリ。各JPEGはFFD8...FFD9で区切られる
+        std::vector<uint8_t> buf;
+        buf.reserve(512 * 1024);
+        std::vector<uint8_t> chunk(65536);
         auto t0 = std::chrono::steady_clock::now();
         uint64_t frames = 0;
 
@@ -276,54 +290,76 @@ private:
             {
                 std::lock_guard<std::mutex> lk(devices_mtx_);
                 auto it = devices_.find(hw_id);
-                if (it == devices_.end() || !it->second.active) break;
-                hRead = it->second.stdout_read;
+                if (it == devices_.end()) break;
+                hRead = it->second.pipe_ff_out;
             }
 
             DWORD n = 0;
-            if (!ReadFile(hRead, buf.data(), (DWORD)BUF, &n, nullptr) || n == 0)
+            if (!ReadFile(hRead, chunk.data(), (DWORD)chunk.size(), &n, nullptr) || n == 0)
                 break;
 
-            // NALカウント
-            for (size_t i = 0; i + 4 < (size_t)n; i++)
-                if (buf[i]==0&&buf[i+1]==0&&buf[i+2]==0&&buf[i+3]==1) {
-                    uint8_t t = buf[i+4] & 0x1F;
-                    if (t==1||t==5) frames++;
-                }
+            buf.insert(buf.end(), chunk.begin(), chunk.begin() + n);
 
-            {
-                std::lock_guard<std::mutex> lk(devices_mtx_);
-                auto it = devices_.find(hw_id);
-                if (it == devices_.end()) break;
-                if (it->second.decoder)
-                    it->second.decoder->process_raw_h264(buf.data(), n);
-                it->second.frame_count = frames;
-                float elapsed = std::chrono::duration<float>(
-                    std::chrono::steady_clock::now() - t0).count();
-                if (elapsed > 0.5f) it->second.fps = frames / elapsed;
+            // JPEG SOI(FFD8) / EOI(FFD9)を探してフレームを切り出す
+            size_t start = 0;
+            while (start + 4 <= buf.size()) {
+                if (buf[start] != 0xFF || buf[start+1] != 0xD8) { start++; continue; }
+                // SOIを見つけた。EOIを探す
+                size_t end = start + 2;
+                while (end + 2 <= buf.size()) {
+                    if (buf[end] == 0xFF && buf[end+1] == 0xD9) {
+                        end += 2;
+                        // JPEGフレーム完成
+                        std::vector<uint8_t> jpeg(buf.begin() + start, buf.begin() + end);
+                        frames++;
+                        float elapsed = std::chrono::duration<float>(
+                            std::chrono::steady_clock::now() - t0).count();
+                        {
+                            std::lock_guard<std::mutex> lk(devices_mtx_);
+                            auto it = devices_.find(hw_id);
+                            if (it != devices_.end()) {
+                                it->second.latest_jpeg = std::move(jpeg);
+                                it->second.frame_count = frames;
+                                if (elapsed > 0.5f) it->second.fps = frames / elapsed;
+                            }
+                        }
+                        start = end;
+                        break;
+                    }
+                    end++;
+                }
+                if (end + 2 > buf.size()) break;  // EOI未到着
             }
+            if (start > 0) buf.erase(buf.begin(), buf.begin() + start);
+            if (buf.size() > 4 * 1024 * 1024) buf.clear();  // overflow防止
         }
 
         std::lock_guard<std::mutex> lk(devices_mtx_);
         auto it = devices_.find(hw_id);
-        if (it != devices_.end()) it->second.active = false;
+        if (it != devices_.end()) {
+            it->second.pipe_ff_out = INVALID_HANDLE_VALUE;
+        }
         MLOG_INFO("adb_h264", "Reader exited: %s", hw_id.c_str());
     }
 
     void stopEntry(DeviceEntry& e) {
-        e.active = false;
-        if (e.proc_handle != INVALID_HANDLE_VALUE) {
-            TerminateProcess(e.proc_handle, 0);
-            WaitForSingleObject(e.proc_handle, 2000);
-            CloseHandle(e.proc_handle);
-            e.proc_handle = INVALID_HANDLE_VALUE;
+        if (e.proc_adb != INVALID_HANDLE_VALUE) {
+            TerminateProcess(e.proc_adb, 0);
+            WaitForSingleObject(e.proc_adb, 2000);
+            CloseHandle(e.proc_adb);
+            e.proc_adb = INVALID_HANDLE_VALUE;
         }
-        if (e.stdout_read != INVALID_HANDLE_VALUE) {
-            CloseHandle(e.stdout_read);
-            e.stdout_read = INVALID_HANDLE_VALUE;
+        if (e.proc_ffmpeg != INVALID_HANDLE_VALUE) {
+            TerminateProcess(e.proc_ffmpeg, 0);
+            WaitForSingleObject(e.proc_ffmpeg, 2000);
+            CloseHandle(e.proc_ffmpeg);
+            e.proc_ffmpeg = INVALID_HANDLE_VALUE;
+        }
+        if (e.pipe_ff_out != INVALID_HANDLE_VALUE) {
+            CloseHandle(e.pipe_ff_out);
+            e.pipe_ff_out = INVALID_HANDLE_VALUE;
         }
         if (e.reader_thread.joinable()) e.reader_thread.join();
-        e.decoder.reset();
     }
 };
 

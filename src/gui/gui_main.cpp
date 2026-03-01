@@ -39,8 +39,18 @@ namespace cmd = mirage::gui::command;
 // Main Entry Point
 // =============================================================================
 
+static LONG WINAPI mirageUnhandledExceptionFilter(EXCEPTION_POINTERS* ep) {
+    try { if (mirage::ctx().macro_api_server) mirage::ctx().macro_api_server->stop(); } catch (...) {}
+    WSACleanup();
+    mirage::log::closeLogFile();
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                    LPSTR /*lpCmdLine*/, int nCmdShow) {
+
+    // SEH例外フィルタ登録 (クラッシュ時にソケットをクリーンアップ)
+    SetUnhandledExceptionFilter(mirageUnhandledExceptionFilter);
 
     // Initialize Winsock
     WSADATA wsaData;
