@@ -317,6 +317,7 @@ private:
         std::vector<uint8_t> chunk(65536);
         auto t0 = std::chrono::steady_clock::now();
         uint64_t frames = 0;
+        bool first_frame = true;  // 最初のフレームでt0をリセットしてFPS計測精度向上
 
         while (running_.load()) {
             HANDLE hRead;
@@ -359,6 +360,11 @@ private:
 
                 // JPEGフレーム完成
                 frames++;
+                if (first_frame) {
+                    first_frame = false;
+                    t0 = std::chrono::steady_clock::now();  // 最初フレームでtをリセット
+                    frames = 1;
+                }
                 float elapsed = std::chrono::duration<float>(
                     std::chrono::steady_clock::now() - t0).count();
                 {
