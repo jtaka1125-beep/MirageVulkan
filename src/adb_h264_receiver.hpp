@@ -153,33 +153,46 @@ private:
     }
 
     void syncDevices() {
-        std::lock_guard<std::mutex> lk(devices_mtx_);
-        if (!adb_mgr_) return;
+        // Phase1: mutex内でプロセス起動のみ（スレッドなし）
+        std::vector<std::string> new_hw_ids;  // 新規追加されたデバイスのhw_id
+        {
+            std::lock_guard<std::mutex> lk(devices_mtx_);
+            if (!adb_mgr_) return;
 
-        auto devs = adb_mgr_->getUniqueDevices();
-        MLOG_INFO("adb_h264", "syncDevices: %d unique devices", (int)devs.size());
+            auto devs = adb_mgr_->getUniqueDevices();
+            MLOG_INFO("adb_h264", "syncDevices: %d unique devices", (int)devs.size());
 
-        // 追加・再起動
-        for (size_t i = 0; i < devs.size(); i++) {
-            const ::gui::AdbDeviceManager::UniqueDevice& ud = devs[i];
-            if (ud.preferred_adb_id.empty()) continue;
-
-            auto it = devices_.find(ud.hardware_id);
-            if (it != devices_.end()) {
-                if (it->second.active) continue;
-                stopEntry(it->second);
-                devices_.erase(it);
+            for (size_t i = 0; i < devs.size(); i++) {
+                const ::gui::AdbDeviceManager::UniqueDevice& ud = devs[i];
+                if (ud.preferred_adb_id.empty()) continue;
+                auto it = devices_.find(ud.hardware_id);
+                if (it != devices_.end()) {
+                    if (it->second.active) continue;
+                    stopEntry(it->second);
+                    devices_.erase(it);
+                }
+                startEntry(ud);
+                new_hw_ids.push_back(ud.hardware_id);
             }
-            startEntry(ud);
+
+            for (auto it = devices_.begin(); it != devices_.end(); ) {
+                bool found = false;
+                for (size_t i = 0; i < devs.size(); i++)
+                    if (devs[i].hardware_id == it->first) { found = true; break; }
+                if (!found) { stopEntry(it->second); it = devices_.erase(it); }
+                else ++it;
+            }
         }
 
-        // 削除
-        for (auto it = devices_.begin(); it != devices_.end(); ) {
-            bool found = false;
-            for (size_t i = 0; i < devs.size(); i++)
-                if (devs[i].hardware_id == it->first) { found = true; break; }
-            if (!found) { stopEntry(it->second); it = devices_.erase(it); }
-            else ++it;
+        // Phase2: mutex外でreaderThreadを起動（デッドロック回避）
+        for (const auto& hw_id : new_hw_ids) {
+            std::lock_guard<std::mutex> lk(devices_mtx_);
+            auto it = devices_.find(hw_id);
+            if (it != devices_.end() && it->second.active &&
+                !it->second.reader_thread.joinable()) {
+                std::string id = hw_id;
+                it->second.reader_thread = std::thread([this, id]() { readerLoop(id); });
+            }
         }
     }
 
@@ -248,8 +261,7 @@ private:
                   ud.display_name.c_str(), entry.adb_serial.c_str(),
                   entry.size_str.c_str());
 
-        std::string hw_id = ud.hardware_id;
-        entry.reader_thread = std::thread([this, hw_id]() { readerLoop(hw_id); });
+        // Phase2でreaderLoopスレッドを起動する（mutex外で）
         devices_.insert(std::make_pair(ud.hardware_id, std::move(entry)));
     }
 

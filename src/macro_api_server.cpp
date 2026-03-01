@@ -21,10 +21,6 @@
 #include "gui/mirage_context.hpp"
 #include "mirage_log.hpp"
 #include "nlohmann/json.hpp"
-#include "tcp_video_receiver.hpp"
-#include "mirror_receiver.hpp"
-#include "stb_image_write.h"
-#include "adb_h264_receiver.hpp"
 
 #ifdef MIRAGE_OCR_ENABLED
 #include "frame_analyzer.hpp"
@@ -86,45 +82,6 @@ static std::string run_adb_cmd(const std::string& adb_id, const std::string& cmd
     // Trim trailing whitespace
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' '))
         result.pop_back();
-    return result;
-}
-
-// Binary-safe ADB command (stdout as raw bytes, no null-termination issue)
-static std::vector<uint8_t> run_adb_binary(const std::string& adb_id, const std::string& cmd) {
-    std::string full_cmd = "adb";
-    if (!adb_id.empty()) full_cmd += " -s " + adb_id;
-    full_cmd += " " + cmd;
-
-    std::vector<uint8_t> result;
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
-    HANDLE hRead = nullptr, hWrite = nullptr;
-    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return result;
-    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
-
-    STARTUPINFOA si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-    si.hStdOutput = hWrite;
-    si.hStdError  = GetStdHandle(STD_ERROR_HANDLE);  // discard stderr
-    si.wShowWindow = SW_HIDE;
-
-    PROCESS_INFORMATION pi{};
-    std::string cmd_line = full_cmd;  // run directly, not via cmd /c
-
-    if (CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, TRUE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        CloseHandle(hWrite); hWrite = nullptr;
-        uint8_t buf[65536];
-        DWORD n;
-        while (ReadFile(hRead, buf, sizeof(buf), &n, nullptr) && n > 0)
-            result.insert(result.end(), buf, buf + n);
-        WaitForSingleObject(pi.hProcess, 30000);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-    }
-    if (hWrite) CloseHandle(hWrite);
-    CloseHandle(hRead);
     return result;
 }
 
@@ -203,29 +160,6 @@ bool MacroApiServer::start(int port) {
     running_ = true;
     server_thread_ = std::thread(&MacroApiServer::server_loop, this);
 
-    // Start TcpVideoReceiver for fast screenshot
-    if (!ctx().tcp_video_receiver) {
-        ctx().tcp_video_receiver = std::make_unique<::gui::TcpVideoReceiver>();
-        ctx().tcp_video_receiver->setDeviceManager(ctx().adb_manager.get());
-        if (ctx().tcp_video_receiver->start(50100)) {
-            MLOG_INFO("macro_api", "TcpVideoReceiver started on port 50100");
-        } else {
-            MLOG_WARN("macro_api", "TcpVideoReceiver start failed");
-        }
-    }
-
-    // Start AdbH264Receiver for fast screenshot (25-40 FPS via adb exec-out screenrecord)
-    if (!adb_h264_receiver_) {
-        adb_h264_receiver_ = std::make_unique<mirage::AdbH264Receiver>();
-        adb_h264_receiver_->setDeviceManager(ctx().adb_manager.get());
-        // adbパスをconfig or 環境変数から設定
-        adb_h264_receiver_->setAdbPath("C:/Users/jun/.local/bin/platform-tools/adb.exe");
-        if (adb_h264_receiver_->start())
-            MLOG_INFO("macro_api", "AdbH264Receiver started (ffmpeg pipeline)");
-        else
-            MLOG_WARN("macro_api", "AdbH264Receiver start failed (ffmpeg not found?)");
-    }
-
     MLOG_INFO("macro_api", "MacroApiServer started on 127.0.0.1:%d", port);
     return true;
 }
@@ -233,7 +167,6 @@ bool MacroApiServer::start(int port) {
 void MacroApiServer::stop() {
     if (!running_.load()) return;
     running_ = false;
-    if (adb_h264_receiver_) { adb_h264_receiver_->stop(); adb_h264_receiver_.reset(); }
 
     // Close server socket to unblock accept()
     if (server_socket_ != INVALID_SOCKET) {
@@ -499,16 +432,6 @@ std::string MacroApiServer::handle_ping() {
 #else
     r["ocr_available"] = false;
 #endif
-    // AdbH264Receiver status
-    if (adb_h264_receiver_) {
-        r["h264_running"] = adb_h264_receiver_->running();
-        r["h264_devices"] = adb_h264_receiver_->device_count();
-        r["h264_active"]  = adb_h264_receiver_->active_count();
-    } else {
-        r["h264_running"] = false;
-        r["h264_devices"] = 0;
-        r["h264_active"]  = 0;
-    }
     return r.dump();
 }
 
@@ -816,108 +739,34 @@ std::string MacroApiServer::handle_force_stop(const std::string& device_id,
 std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
     std::string adb_id = resolve_device_id(device_id);
 
-    // Lazy-initialize AdbH264Receiver device manager (may not be ready at start())
-    if (adb_h264_receiver_ && !adb_h264_receiver_->has_manager()) {
-        auto* mgr = ctx().adb_manager.get();
-        if (mgr) {
-            adb_h264_receiver_->setDeviceManager(mgr);
-            MLOG_INFO("macro_api", "AdbH264Receiver: late-bound adb_manager");
-        }
+    // Capture to device, pull to temp, read and base64-encode
+    run_adb_cmd(adb_id, "shell screencap -p /sdcard/mirage_macro_cap.png");
+
+    // Pull to local temp
+    char tmp_path[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp_path);
+    std::string local_path = std::string(tmp_path) + "mirage_macro_cap.png";
+    run_adb_cmd(adb_id, "pull /sdcard/mirage_macro_cap.png \"" + local_path + "\"");
+    run_adb_cmd(adb_id, "shell rm /sdcard/mirage_macro_cap.png");
+
+    // Read file and base64 encode
+    FILE* f = fopen(local_path.c_str(), "rb");
+    if (!f) {
+        return "{\"status\":\"error\",\"message\":\"failed to read screenshot\"}";
     }
 
-    // Fast path 1: AdbH264Receiver (screenrecord -> ffmpeg MJPEG)
-    {
-        auto& h264 = adb_h264_receiver_;
-        if (h264 && h264->running()) {
-            std::string hw_id = device_id;
-            for (auto& ud : ctx().adb_manager->getUniqueDevices())
-                if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id)
-                    { hw_id = ud.hardware_id; break; }
-            std::vector<uint8_t> jpeg;
-            int fw = 0, fh = 0;
-            if (h264->get_latest_jpeg(hw_id, jpeg, fw, fh) && !jpeg.empty()) {
-                static const char b64c[] =
-                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                std::string enc; long fs=(long)jpeg.size();
-                enc.reserve(((fs+2)/3)*4);
-                for (long i=0; i<fs; i+=3) {
-                    unsigned int n=(unsigned int)jpeg[i]<<16;
-                    if(i+1<fs) n|=(unsigned int)jpeg[i+1]<<8;
-                    if(i+2<fs) n|=(unsigned int)jpeg[i+2];
-                    enc+=b64c[(n>>18)&0x3F]; enc+=b64c[(n>>12)&0x3F];
-                    enc+=(i+1<fs)?b64c[(n>>6)&0x3F]:'=';
-                    enc+=(i+2<fs)?b64c[n&0x3F]:'=';
-                }
-                json r;
-                r["status"]="ok"; r["base64"]=enc;
-                r["width"]=fw; r["height"]=fh;
-                r["via"]="adb_h264";
-                r["fps"]=h264->get_fps(hw_id);
-                return r.dump();
-            }
-        }
-    }
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
 
-    // Fast path 2: TcpVideoReceiver latest decoded frame -> JPEG
-    {
-        auto& tv = ctx().tcp_video_receiver;
-        if (tv && tv->running()) {
-            std::string hw_id = device_id;
-            for (auto& ud : ctx().adb_manager->getUniqueDevices())
-                if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id)
-                    { hw_id = ud.hardware_id; break; }
-            ::gui::MirrorFrame frame;
-            if (tv->get_latest_frame(hw_id, frame) &&
-                !frame.rgba.empty() && frame.width > 0) {
-                std::vector<uint8_t> jbuf;
-                stbi_write_jpg_to_func([](void* p, void* d, int s) {
-                    auto* v = static_cast<std::vector<uint8_t>*>(p);
-                    v->insert(v->end(), (uint8_t*)d, (uint8_t*)d + s);
-                }, &jbuf, frame.width, frame.height, 4, frame.rgba.data(), 80);
-                if (!jbuf.empty()) {
-                    static const char b64c[] =
-                        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                    std::string enc;
-                    long fs = (long)jbuf.size();
-                    enc.reserve(((fs+2)/3)*4);
-                    for (long i = 0; i < fs; i += 3) {
-                        unsigned int n = (unsigned int)jbuf[i] << 16;
-                        if (i+1<fs) n |= (unsigned int)jbuf[i+1] << 8;
-                        if (i+2<fs) n |= (unsigned int)jbuf[i+2];
-                        enc += b64c[(n>>18)&0x3F]; enc += b64c[(n>>12)&0x3F];
-                        enc += (i+1<fs) ? b64c[(n>>6)&0x3F] : '=';
-                        enc += (i+2<fs) ? b64c[n&0x3F] : '=';
-                    }
-                    json r;
-                    r["status"]="ok"; r["base64"]=enc;
-                    r["width"]=frame.width; r["height"]=frame.height;
-                    r["via"]="tcp_video";
-                    return r.dump();
-                }
-            }
-        }
-    }
-
-    // Slow path: exec-out screencap -p (binary-safe, no sdcard file I/O)
-    std::vector<uint8_t> data = run_adb_binary(adb_id, "exec-out screencap -p");
-    if (data.size() < 8 || data[0] != 0x89) {
-        // fallback: legacy screencap+pull
-        run_adb_cmd(adb_id, "shell screencap -p /sdcard/mirage_macro_cap.png");
-        char tmp_path[MAX_PATH]; GetTempPathA(MAX_PATH, tmp_path);
-        std::string local_path = std::string(tmp_path) + "mirage_macro_cap.png";
-        run_adb_cmd(adb_id, "pull /sdcard/mirage_macro_cap.png \"" + local_path + "\"");
-        run_adb_cmd(adb_id, "shell rm /sdcard/mirage_macro_cap.png");
-        FILE* f = fopen(local_path.c_str(), "rb");
-        if (!f) return "{\"status\":\"error\",\"message\":\"screenshot failed\"}";
-        fseek(f, 0, SEEK_END); long fs2 = ftell(f); fseek(f, 0, SEEK_SET);
-        data.resize(fs2); fread(data.data(), 1, fs2, f); fclose(f);
-        DeleteFileA(local_path.c_str());
-    }
+    std::vector<unsigned char> data(file_size);
+    fread(data.data(), 1, file_size, f);
+    fclose(f);
+    DeleteFileA(local_path.c_str());
 
     // Simple base64 encoding
     static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string encoded;
-    long file_size = (long)data.size();
     encoded.reserve(((file_size + 2) / 3) * 4);
     for (long i = 0; i < file_size; i += 3) {
         unsigned int n = (data[i] << 16);

@@ -1,10 +1,4 @@
 #pragma once
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <winsock2.h>
-#include <windows.h>
-#include "adb_h264_receiver.hpp"
 // =============================================================================
 // MirageSystem - Macro API Server
 // =============================================================================
@@ -22,7 +16,6 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
-#include <memory>
 
 // WinSock forward declaration 繧帝∩縺代ヾOCKET蝙九□縺大ｮ夂ｾｩ
 #ifndef _WINSOCK2API_
@@ -92,7 +85,6 @@ private:
     int port_ = DEFAULT_PORT;
     SOCKET server_socket_ = ~0ULL;  // INVALID_SOCKET
     std::thread server_thread_;
-    std::unique_ptr<mirage::AdbH264Receiver> adb_h264_receiver_;
 
     // 繧ｯ繝ｩ繧､繧｢繝ｳ繝郁ｿｽ霍｡
     mutable std::mutex clients_mutex_;
