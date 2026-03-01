@@ -40,7 +40,7 @@ class ScreenCaptureService : Service() {
         private const val EXTRA_AI_QUALITY = "ai_quality"
         private const val CHANNEL_ID = "mirage_capture_channel"
         private const val NOTIFICATION_ID = 2001
-        private const val TCP_SECONDARY_PORT = 50100
+        // TCP_SECONDARY_PORT 廃止: primaryPort + 1 を動的に使用 (devices.jsonが単一ソース)
 
         private const val PREFS = "mirage_capture"
         private const val PREF_AI_ENABLED = "ai_enabled"
@@ -303,12 +303,12 @@ class ScreenCaptureService : Service() {
             return
         }
         try {
-            val tcpSender = TcpVideoSender(TCP_SECONDARY_PORT) {
+            val tcpSender = TcpVideoSender(tcpPort + 1) {
                 encoder?.requestIdr()
             }
             tcpSecondarySender = tcpSender
             encoder?.addSecondarySender(tcpSender)
-            Log.i(TAG, "TCP secondary sender started on port $TCP_SECONDARY_PORT (for GUI)")
+            Log.i(TAG, "TCP secondary sender started on port ${tcpPort + 1} (for GUI)")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to start TCP secondary sender: ${e.message}")
         }

@@ -168,6 +168,17 @@ docs/            # 設計ドキュメント
 - **Protocol.kt 3箇所同期必須** — PC側、accessory、captureの3つ。1つでも漏れると通信失敗
 - **MIRA packetはリトルエンディアン** — Javaのデフォルト(BE)と逆なので注意
 
+### TCPポート割り当てルール
+- **単一ソース: `build/devices.json`** — ここだけ変更すれば全体に反映される
+- **割り当て式: `50100 + slot × 2`** (slot = devices.json内の登録順 0始まり)
+  - slot 0 → X1 (192.168.0.3): primary=**50100**, secondary=50101
+  - slot 1 → A9 (192.168.0.6): primary=**50102**, secondary=50103
+  - slot 2 → A9 (192.168.0.8): primary=**50104**, secondary=50105
+- **PC側**: `autoStartCaptureService()` が `EXTRA_TCP_PORT` としてintentに渡す
+- **Android側**: `ScreenCaptureService.onStartCommand()` で受け取り、`tcpPort+1` をセカンダリに使用
+- **新デバイス追加時**: devices.jsonに `"tcp_port": 50100 + slot×2` を設定するだけでOK
+
 ### Hub/電源
 - **ReTRY HUBのポートサイクルは1秒以上待つ** — 短すぎると認識失敗
 - **X1はUSBハブ経由だと電力不足になることがある** — 直結推奨
+- **デバイスoffline時の復旧**: 個別ポートではなくサブハブ全体(Port:2)をOFF→ONする
