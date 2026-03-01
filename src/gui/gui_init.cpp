@@ -345,7 +345,8 @@ void initializeHybridCommand() {
         }
     } else {
         MLOG_WARN("gui", "USB command sender failed to start (ADB fallback will be used)");
-        g_hybrid_cmd.reset();
+        // NOTE: Do NOT reset g_hybrid_cmd here - lambda callbacks may still reference it
+        // and cause use-after-free. Keep the object alive; device_count() returns 0.
     }
 }
 

@@ -85,9 +85,9 @@
 2. Multi-device video pipeline stress test [BLOCKED: physical USB]
 3. deploy_apk.py live test on all 3 devices (WiFi ADB)
 
-## GUI File Line Counts (Updated 2026-02-28)
+## GUI File Line Counts (Updated 2026-03-01)
 - gui_ai_panel.cpp:       663
-- gui_init.cpp:           801
+- gui_init.cpp:           802
 - gui_threads.cpp:        606
 - gui_device_control.cpp: 539
 - gui_command.cpp:        356
@@ -95,7 +95,7 @@
 - gui_main.cpp:           279
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 3492 lines
+- TOTAL:                 3493 lines
 
 ## Key Decisions Log
 - 2026-02-24 Sess8: Migration Phase 3 COMPLETE. tools/ archive finalized, .gitignore patterns added, untracked patch scripts excluded.

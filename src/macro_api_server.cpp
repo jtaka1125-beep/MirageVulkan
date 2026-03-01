@@ -418,8 +418,8 @@ std::string MacroApiServer::resolve_device_id(const std::string& device_id) {
 std::string MacroApiServer::handle_ping() {
     auto& hybrid = ctx().hybrid_cmd;
     auto& mgr    = ctx().adb_manager;
-    int hybrid_count = hybrid->device_count();
-    auto unique_devs = mgr->getUniqueDevices();
+    int hybrid_count = (hybrid && hybrid.get()) ? hybrid->device_count() : 0;
+    auto unique_devs = (mgr && mgr.get()) ? mgr->getUniqueDevices() : std::vector<::gui::AdbDeviceManager::UniqueDevice>();
 
     json r;
     r["status"]        = "ok";
