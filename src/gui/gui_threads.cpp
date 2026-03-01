@@ -7,6 +7,7 @@
 #include "gui_threads.hpp"
 #include "gui_state.hpp"
 #include "config_loader.hpp"
+#include "mirage_config.hpp"
 
 #include <chrono>
 #include <thread>
@@ -133,6 +134,41 @@ void adbDetectionThread() {
   try {
     MLOG_INFO("adb", "デバイス検出開始...");
     g_adb_manager = std::make_unique<::gui::AdbDeviceManager>();
+    // config.jsonのadb.pathを直接読んでsetAdbPath (PATH不依存)
+    {
+        std::string adb_path;
+        // まずMIRAGE_ADB_PATH環境変数を確認
+        if (const char* env = std::getenv("MIRAGE_ADB_PATH")) {
+            adb_path = env;
+        } else {
+            // config.jsonからadb.pathを読む
+            std::string exe_dir = mirage::config::getExeDirectory();
+            std::string cfg_path = exe_dir + "\\config.json";
+            std::ifstream cfg_file(cfg_path);
+            if (cfg_file.is_open()) {
+                std::string content((std::istreambuf_iterator<char>(cfg_file)),
+                                     std::istreambuf_iterator<char>());
+                // "path": "C:/..." を抽出 (adb セクション内)
+                auto adb_pos = content.find("\"adb\"");
+                if (adb_pos != std::string::npos) {
+                    auto path_pos = content.find("\"path\"", adb_pos);
+                    if (path_pos != std::string::npos) {
+                        auto colon = content.find(':', path_pos);
+                        auto quote1 = content.find('"', colon);
+                        auto quote2 = content.find('"', quote1 + 1);
+                        if (quote1 != std::string::npos && quote2 != std::string::npos)
+                            adb_path = content.substr(quote1 + 1, quote2 - quote1 - 1);
+                    }
+                }
+            }
+        }
+        if (!adb_path.empty()) {
+            g_adb_manager->setAdbPath(adb_path);
+            MLOG_INFO("adb", "ADB path set: %s", adb_path.c_str());
+        } else {
+            MLOG_WARN("adb", "ADB path not found in config, using 'adb' from PATH");
+        }
+    }
     g_adb_manager->refresh();
 
     // Signal main thread that ADB is ready (devices are listed, window can be created)

@@ -43,7 +43,8 @@ static LONG WINAPI mirageUnhandledExceptionFilter(EXCEPTION_POINTERS* ep) {
     try { if (mirage::ctx().macro_api_server) mirage::ctx().macro_api_server->stop(); } catch (...) {}
     WSACleanup();
     mirage::log::closeLogFile();
-    return EXCEPTION_EXECUTE_HANDLER;
+    // デバッグ用: EXCEPTION_CONTINUE_SEARCHでOSにレポート生成させる
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,

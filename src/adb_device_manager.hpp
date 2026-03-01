@@ -76,6 +76,10 @@ public:
     AdbDeviceManager() = default;
     ~AdbDeviceManager() = default;
 
+    // ADBのフルパスを設定 (デフォルト: "adb" = PATH依存)
+    void setAdbPath(const std::string& path) { adb_exe_ = path; }
+    const std::string& getAdbPath() const { return adb_exe_; }
+
     // Refresh device list (call periodically)
     void refresh();
 
@@ -167,6 +171,7 @@ private:
     // Parse screen resolution from wm size output  (e.g. "Physical size: 1080x2400")
     static bool parseScreenSize(const std::string& wm_output, int& w, int& h);
 
+    std::string adb_exe_ = "adb";  // adbコマンドのフルパス (setAdbPath()で設定)
     mutable std::mutex mutex_;
     std::map<std::string, DeviceInfo> devices_;           // adb_id -> DeviceInfo
     std::map<std::string, UniqueDevice> unique_devices_;  // hardware_id -> UniqueDevice

@@ -228,7 +228,7 @@ std::string AdbDeviceManager::adbCommand(const std::string& adb_id, const std::s
     }
 
     // Build command safely
-    std::string cmd = "adb -s " + adb_id + " " + sanitized_cmd + " 2>&1";
+    std::string cmd = adb_exe_ + " -s " + adb_id + " " + sanitized_cmd + " 2>&1";
 
     // Use hidden window execution to prevent console flash
     std::string result = execCommandHidden(cmd);
@@ -250,7 +250,7 @@ std::string AdbDeviceManager::adbCommand(const std::string& adb_id, const std::s
 std::vector<std::string> AdbDeviceManager::parseAdbDevices() {
     std::vector<std::string> devices;
 
-    std::string cmd = "adb devices 2>&1";
+    std::string cmd = adb_exe_ + " devices 2>&1";
 
     // Use hidden window execution to prevent console flash
     std::string result = execCommandHidden(cmd);
@@ -686,7 +686,7 @@ std::vector<uint8_t> AdbDeviceManager::takeScreenshot(const std::string& adb_id)
         return result;
     }
 
-    std::string pull_cmd = "adb -s " + adb_id + " exec-out cat " + remote_path;
+    std::string pull_cmd = adb_exe_ + " -s " + adb_id + " exec-out cat " + remote_path;
 
     // Use RAII for pipe management
     UniquePipe pipe(popen(pull_cmd.c_str(), "rb"));

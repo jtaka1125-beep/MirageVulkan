@@ -26,6 +26,9 @@ namespace mirage::config {
  * Values can be overridden via config file or environment variables.
  */
 struct MirageConfig {
+    // ADB executable path (empty = use 'adb' from PATH)
+    std::string adb_path;
+
     // Logging
     std::string log_directory;      // Default: exe directory or temp
     std::string log_filename = "mirage_vulkan.log";
@@ -193,6 +196,7 @@ inline bool loadConfigFile(const std::string& path, MirageConfig& config) {
         // Apply settings
         if (key == "log_directory") config.log_directory = value;
         else if (key == "log_filename") config.log_filename = value;
+        else if (key == "adb_path") config.adb_path = value;
         else if (key == "log_to_console") config.log_to_console = (value == "true" || value == "1");
         else if (key == "log_to_file") config.log_to_file = (value == "true" || value == "1");
         else if (key == "temp_directory") config.temp_directory = value;
@@ -216,6 +220,7 @@ inline void applyEnvironmentOverrides(MirageConfig& config) {
     const char* val;
 
     if ((val = std::getenv("MIRAGE_LOG_DIR"))) config.log_directory = val;
+    if ((val = std::getenv("MIRAGE_ADB_PATH"))) config.adb_path = val;
     if ((val = std::getenv("MIRAGE_TEMP_DIR"))) config.temp_directory = val;
     if ((val = std::getenv("MIRAGE_AOA_SWITCH"))) config.aoa_switch_path = val;
     if ((val = std::getenv("MIRAGE_VIDEO_FPS"))) config.default_video_fps = std::stoi(val);

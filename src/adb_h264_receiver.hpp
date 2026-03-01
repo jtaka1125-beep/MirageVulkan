@@ -236,6 +236,7 @@ private:
         SECURITY_ATTRIBUTES sa{};
         sa.nLength = sizeof(sa);
         sa.bInheritHandle = TRUE;
+        // GUIアプリはSTD_ERROR_HANDLEが無効。NULデバイスをstderrとして使う
 
         // パイプ: adb stdout → ffmpeg stdin (1MB buffer)
         HANDLE pipe_adb_r, pipe_adb_w;
@@ -254,73 +255,55 @@ private:
         }
         SetHandleInformation(pipe_ff_r, HANDLE_FLAG_INHERIT, 0);  // readは非継承
 
-        // --- adbプロセス起動 ---
-        std::string adb_cmd =
-            "\"" + getAdb() + "\""
-            " -s " + ud.preferred_adb_id +
-            " exec-out screenrecord --output-format=h264"
-            " --bit-rate 4M --size " + size_str + " --time-limit 0 -";
+        // --- cmd /c "adb ... | ffmpeg ..." 1プロセスパイプ方式 ---
+        // bInheritHandleの複雑さを回避: OSのパイプをcmd.exeに任せる
+        // pipe_adb_*は使わない
+        if (pipe_adb_r != INVALID_HANDLE_VALUE) CloseHandle(pipe_adb_r);
+        if (pipe_adb_w != INVALID_HANDLE_VALUE) CloseHandle(pipe_adb_w);
+        // cmd /c ""adb" -s ID exec-out screenrecord ... | "ffmpeg" ... pipe:1"
+        std::string pipe_cmd = std::string("cmd /c \"")  // cmd /c "
+            + "\"" + getAdb() + "\""  // "adb"
+            + " -s " + ud.preferred_adb_id
+            + " exec-out screenrecord --output-format=h264"
+              " --bit-rate 4M --size " + size_str + " --time-limit 0 -"
+            + " | \"" + getFfmpeg() + "\""  // | "ffmpeg"
+              " -loglevel quiet -f h264 -i pipe:0"
+              " -vf fps=15 -q:v 3 -f mjpeg pipe:1\"";  // pipe:1"
 
-        STARTUPINFOA si_adb{};
-        si_adb.cb = sizeof(si_adb);
-        si_adb.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-        si_adb.hStdOutput = pipe_adb_w;
-        si_adb.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
-        si_adb.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi_adb{};
+        STARTUPINFOA si_pipe{};
+        si_pipe.cb = sizeof(si_pipe);
+        si_pipe.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+        si_pipe.hStdOutput = pipe_ff_w;   // cmd stdout → reader
+        // stdin/stderrにINVALID_HANDLE_VALUEを渡すとCreateProcessが失敗する
+        // NULデバイスを使う（継承フラグ付き）
+        SECURITY_ATTRIBUTES sa_nul{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+        HANDLE hNulIn  = CreateFileA("NUL", GENERIC_READ,  FILE_SHARE_READ|FILE_SHARE_WRITE, &sa_nul, OPEN_EXISTING, 0, nullptr);
+        HANDLE hNulErr = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE, &sa_nul, OPEN_EXISTING, 0, nullptr);
+        si_pipe.hStdInput  = hNulIn;
+        si_pipe.hStdError  = hNulErr;
+        si_pipe.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi_pipe{};
 
-        if (!CreateProcessA(nullptr, adb_cmd.data(), nullptr, nullptr,
+        if (!CreateProcessA(nullptr, pipe_cmd.data(), nullptr, nullptr,
                             TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
-                            &si_adb, &pi_adb)) {
-            MLOG_ERROR("adb_h264", "adb launch failed: %lu [%s]",
-                       GetLastError(), adb_cmd.c_str());
-            CloseHandle(pipe_adb_r); CloseHandle(pipe_adb_w);
-            CloseHandle(pipe_ff_r);  CloseHandle(pipe_ff_w);
-            return false;
-        }
-        CloseHandle(pipe_adb_w);      // adbがwriteを保持してるのでreaderCloseHandleのみ
-        CloseHandle(pi_adb.hThread);
-        entry.proc_adb = pi_adb.hProcess;
-
-        // --- ffmpegプロセス起動: H264 → MJPEG ---
-        // -vf fps=15 で15FPS出力（調整可）
-        // -q:v 3 でJPEG品質(1=最高, 31=最低)
-        std::string ff_cmd =
-            "\"" + getFfmpeg() + "\""
-            " -loglevel error"
-            " -f h264 -i pipe:0"
-            " -vf fps=15"
-            " -q:v 3"
-            " -f mjpeg pipe:1";
-
-        STARTUPINFOA si_ff{};
-        si_ff.cb = sizeof(si_ff);
-        si_ff.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-        si_ff.hStdInput  = pipe_adb_r;  // adb stdout → ffmpeg stdin
-        si_ff.hStdOutput = pipe_ff_w;   // ffmpeg stdout → reader
-        si_ff.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
-        si_ff.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi_ff{};
-
-        if (!CreateProcessA(nullptr, ff_cmd.data(), nullptr, nullptr,
-                            TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
-                            &si_ff, &pi_ff)) {
-            MLOG_ERROR("adb_h264", "ffmpeg launch failed: %lu", GetLastError());
-            TerminateProcess(entry.proc_adb, 0);
-            CloseHandle(entry.proc_adb); entry.proc_adb = INVALID_HANDLE_VALUE;
-            CloseHandle(pipe_adb_r);
+                            &si_pipe, &pi_pipe)) {
+            MLOG_ERROR("adb_h264", "pipe launch failed: %lu [%s]",
+                       GetLastError(), pipe_cmd.c_str());
             CloseHandle(pipe_ff_r); CloseHandle(pipe_ff_w);
+            CloseHandle(hNulIn); CloseHandle(hNulErr);
             return false;
         }
-        CloseHandle(pipe_adb_r);      // ffmpegがstdinを保持してるので閉じる
-        CloseHandle(pipe_ff_w);       // ffmpegがstdoutを保持してるので閉じる
-        CloseHandle(pi_ff.hThread);
-        entry.proc_ffmpeg  = pi_ff.hProcess;
-        entry.pipe_ff_out  = pipe_ff_r;
+        CloseHandle(pipe_ff_w);       // cmdが書き込み端を持つ
+        CloseHandle(hNulIn);          // 親側は不要
+        CloseHandle(hNulErr);
+        CloseHandle(pi_pipe.hThread);
+        entry.proc_adb    = pi_pipe.hProcess;  // cmdプロセスを追跡
+        entry.proc_ffmpeg = INVALID_HANDLE_VALUE;
+        entry.pipe_ff_out = pipe_ff_r;
 
-        MLOG_INFO("adb_h264", "Started: %s (%s) %s adb_pid=%lu ff_pid=%lu",
+        MLOG_INFO("adb_h264", "Started: %s (%s) %s cmd_pid=%lu",
                   ud.display_name.c_str(), ud.preferred_adb_id.c_str(),
-                  size_str.c_str(), pi_adb.dwProcessId, pi_ff.dwProcessId);
+                  size_str.c_str(), pi_pipe.dwProcessId);
 
         devices_.insert({ud.hardware_id, std::move(entry)});
         return true;

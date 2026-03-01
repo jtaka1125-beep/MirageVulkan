@@ -39,7 +39,11 @@ namespace mirage {
 // ADB command helper (hidden window, captures stdout)
 // ---------------------------------------------------------------------------
 static std::string run_adb_cmd(const std::string& adb_id, const std::string& cmd) {
-    std::string full_cmd = "adb";
+    // ctx().adb_manager経由でadbパスを取得 (config.json設定を反映)
+    auto& _adb_mgr_ref = mirage::ctx().adb_manager;
+    std::string _adb_exe = (_adb_mgr_ref && _adb_mgr_ref.get())
+        ? _adb_mgr_ref->getAdbPath() : "adb";
+    std::string full_cmd = _adb_exe;
     if (!adb_id.empty()) {
         full_cmd += " -s " + adb_id;
     }
