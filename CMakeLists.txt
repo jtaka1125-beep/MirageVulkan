@@ -79,6 +79,8 @@ set(AI_SOURCES
     src/ai/template_hot_reload.hpp
     src/ai/vision_decision_engine.cpp
     src/ai/vision_decision_engine.hpp
+    src/ai/ollama_vision.cpp
+    src/ai/ollama_vision.hpp
 )
 
 # Video pipeline (Vulkan Video + FFmpeg fallback)
@@ -230,6 +232,7 @@ set(MIRAGE_LIBS
     Vulkan::Vulkan
     dwmapi
     ws2_32
+    winhttp
 )
 
 # FFmpeg
@@ -263,7 +266,7 @@ else()
 endif()
 
 # WASAPI audio
-list(APPEND MIRAGE_LIBS ole32 uuid)
+list(APPEND MIRAGE_LIBS ole32 uuid winhttp)
 
 # Bluetooth
 list(APPEND MIRAGE_LIBS bthprops)
@@ -277,7 +280,7 @@ if(USE_OCR)
     target_sources(mirage_core PRIVATE src/frame_analyzer.cpp)
     target_include_directories(mirage_core PRIVATE ${TESSERACT_INCLUDE_DIRS} ${LEPTONICA_INCLUDE_DIRS})
     target_link_directories(mirage_core PUBLIC ${TESSERACT_LIBRARY_DIRS} ${LEPTONICA_LIBRARY_DIRS})
-    target_compile_definitions(mirage_core PRIVATE MIRAGE_OCR_ENABLED=1)
+    target_compile_definitions(mirage_core PRIVATE MIRAGE_OCR_ENABLED=1 USE_OCR)
     list(APPEND MIRAGE_LIBS ${TESSERACT_LIBRARIES} ${LEPTONICA_LIBRARIES})
 
     message(STATUS "Tesseract OCR enabled: ${TESSERACT_LIBRARIES}")
@@ -590,13 +593,14 @@ if(BUILD_TESTS)
         target_link_libraries(test_action_mapper PRIVATE gtest)
         target_compile_definitions(test_action_mapper PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-        # VisionDecisionEngine test (CPU only, 迥ｶ諷矩・遘ｻ繝ｭ繧ｸ繝・け)
+        # VisionDecisionEngine test (CPU only, 状態遷移ロジック)
         add_executable(test_vision_decision_engine
             tests/test_vision_decision_engine.cpp
             src/ai/vision_decision_engine.cpp
+            src/ai/ollama_vision.cpp
         )
         target_include_directories(test_vision_decision_engine PRIVATE src src/ai)
-        target_link_libraries(test_vision_decision_engine PRIVATE gtest)
+        target_link_libraries(test_vision_decision_engine PRIVATE gtest winhttp)
         target_compile_definitions(test_vision_decision_engine PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
         enable_testing()

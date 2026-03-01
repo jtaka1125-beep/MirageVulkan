@@ -12,6 +12,7 @@
 // =============================================================================
 
 #include "vision_decision_engine.hpp"
+#include "ollama_vision.hpp"
 #include "mirage_log.hpp"
 #include "event_bus.hpp"
 #include <algorithm>
@@ -392,6 +393,81 @@ const VisionMatch* VisionDecisionEngine::findErrorMatch(
         if (m.is_error_group) return &m;
     }
     return nullptr;
+}
+
+// =============================================================================
+// Layer 3: OllamaVision 統合
+// =============================================================================
+
+void VisionDecisionEngine::setOllamaVision(std::shared_ptr<OllamaVision> ollama) {
+    ollama_vision_ = std::move(ollama);
+}
+
+bool VisionDecisionEngine::isLayer3OnCooldown(
+    const std::string& device_id,
+    std::chrono::steady_clock::time_point now) const
+{
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return false;
+
+    const auto& ds = it->second;
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - ds.layer3_last_call).count();
+    return elapsed < config_.layer3_cooldown_ms;
+}
+
+bool VisionDecisionEngine::tryLayer3Fallback(
+    const std::string& device_id,
+    const uint8_t* rgba, int width, int height,
+    Layer3Callback on_detected,
+    std::chrono::steady_clock::time_point now)
+{
+    // Layer 3無効 or OllamaVision未設定
+    if (!config_.enable_layer3 || !ollama_vision_) {
+        return false;
+    }
+
+    // 冷却中チェック
+    if (isLayer3OnCooldown(device_id, now)) {
+        MLOG_DEBUG("ai.vision", "Layer 3冷却中: device=%s", device_id.c_str());
+        return false;
+    }
+
+    auto& ds = getOrCreateState(device_id);
+    ds.layer3_last_call = now;
+
+    MLOG_INFO("ai.vision", "Layer 3 (OllamaVision) 呼び出し開始: device=%s %dx%d",
+              device_id.c_str(), width, height);
+
+    // Ollama API呼び出し（同期、60秒程度かかる可能性）
+    OllamaVisionResult result = ollama_vision_->detectPopup(rgba, width, height);
+
+    if (!result.error.empty()) {
+        MLOG_WARN("ai.vision", "Layer 3エラー: device=%s error=%s",
+                  device_id.c_str(), result.error.c_str());
+        return false;
+    }
+
+    if (!result.found) {
+        MLOG_DEBUG("ai.vision", "Layer 3: ポップアップ検出なし (%dms)",
+                   result.elapsed_ms);
+        return false;
+    }
+
+    // ポップアップ検出成功
+    int x = (result.x_percent * width) / 100;
+    int y = (result.y_percent * height) / 100;
+
+    MLOG_INFO("ai.vision", "Layer 3検出成功: device=%s type=%s button='%s' pos=(%d,%d) (%dms)",
+              device_id.c_str(), result.type.c_str(), result.button_text.c_str(),
+              x, y, result.elapsed_ms);
+
+    // コールバック呼び出し（テンプレート自動登録等に使用）
+    if (on_detected) {
+        on_detected(x, y, result.button_text);
+    }
+
+    return true;
 }
 
 } // namespace mirage::ai

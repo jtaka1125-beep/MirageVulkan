@@ -126,7 +126,7 @@ private:
     VideoDataCallback video_callback_;
 
     // AOA HID touch per device (primary path)
-    std::map<std::string, std::unique_ptr<mirage::AoaHidTouch>> hid_touches_;
+    std::map<std::string, std::shared_ptr<mirage::AoaHidTouch>> hid_touches_;
     mutable std::mutex hid_mutex_;  // Protects hid_touches_ from concurrent access
 
     // ADB fallback (last resort)

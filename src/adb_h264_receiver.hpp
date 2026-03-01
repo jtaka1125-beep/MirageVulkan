@@ -1,7 +1,7 @@
 // =============================================================================
-// AdbH264Receiver v2
-// adb exec-out screenrecord (H264) → ffmpeg pipe (MJPEG) → JPEG cache
-// MirrorReceiver/Vulkan不要。クラッシュしない外部プロセス方式。
+// AdbH264Receiver v7 - オンデマンド screencap方式
+// screenshotリクエスト時にその場で adb screencap → ffmpeg → JPEG
+// パイプ継承制御を正しく実装 (Pythonと同等の動作)
 // =============================================================================
 #pragma once
 
@@ -12,11 +12,8 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <thread>
-#include <atomic>
 #include <mutex>
-#include <memory>
-#include <chrono>
+#include <atomic>
 #include "adb_device_manager.hpp"
 #include "mirage_log.hpp"
 
@@ -24,423 +21,172 @@ namespace mirage {
 
 class AdbH264Receiver {
 public:
-    AdbH264Receiver() = default;
+    AdbH264Receiver()  = default;
     ~AdbH264Receiver() { stop(); }
 
-    // --- 設定 ---
     void setAdbPath(const std::string& p)    { adb_path_    = p; }
     void setFfmpegPath(const std::string& p) { ffmpeg_path_ = p; }
 
     void setDeviceManager(::gui::AdbDeviceManager* mgr) {
-        {
-            std::lock_guard<std::mutex> lk(devices_mtx_);
-            adb_mgr_ = mgr;
-        }
-        // 即座にsyncDevicesをトリガー
-        sync_requested_.store(true);
+        std::lock_guard<std::mutex> lk(mtx_);
+        adb_mgr_ = mgr;
     }
     bool has_manager() const { return adb_mgr_ != nullptr; }
 
-    // --- ライフサイクル ---
-    bool start() {
-        if (running_.load()) return true;
-        running_ = true;
-        supervisor_thread_ = std::thread(&AdbH264Receiver::supervisorLoop, this);
-        MLOG_INFO("adb_h264", "AdbH264Receiver started (ffmpeg-pipe mode)");
-        return true;
+    bool start() { running_ = true; return true; }
+    void stop()  { running_ = false; }
+    bool running() const { return running_.load(); }
+
+    // デバイス数 = adb_managerのデバイス数
+    int device_count() const {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (!adb_mgr_) return 0;
+        return (int)adb_mgr_->getUniqueDevices().size();
     }
 
-    void stop() {
-        if (!running_.exchange(false)) return;
-        sync_requested_.store(false);
-        if (supervisor_thread_.joinable()) supervisor_thread_.join();
-        std::lock_guard<std::mutex> lk(devices_mtx_);
-        for (auto& kv : devices_) stopEntry(kv.second);
-        devices_.clear();
-        MLOG_INFO("adb_h264", "AdbH264Receiver stopped");
-    }
-
-    bool running()      const { return running_.load(); }
-    int  device_count() const {
-        std::lock_guard<std::mutex> lk(devices_mtx_);
-        return (int)devices_.size();
-    }
-    int  active_count() const {
-        std::lock_guard<std::mutex> lk(devices_mtx_);
-        int n = 0;
-        for (auto& kv : devices_)
-            if (kv.second.proc_adb != INVALID_HANDLE_VALUE) n++;
-        return n;
-    }
-
-    // 最新フレームをJPEGで取得（スレッドセーフ）
-    bool get_latest_jpeg(const std::string& hw_id,
+    // オンデマンドスクリーンキャプチャ → JPEG
+    bool get_latest_jpeg(const std::string& hw_id_or_adb,
                          std::vector<uint8_t>& out_jpeg, int& out_w, int& out_h) {
-        std::lock_guard<std::mutex> lk(devices_mtx_);
-        auto it = devices_.find(hw_id);
-        if (it == devices_.end() || it->second.latest_jpeg.empty()) return false;
-        out_jpeg = it->second.latest_jpeg;
-        out_w    = it->second.width;
-        out_h    = it->second.height;
-        return true;
+        std::string adb_serial;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            if (!adb_mgr_) return false;
+            for (auto& ud : adb_mgr_->getUniqueDevices()) {
+                if (ud.hardware_id == hw_id_or_adb ||
+                    ud.preferred_adb_id == hw_id_or_adb) {
+                    adb_serial = ud.preferred_adb_id;
+                    out_w = ud.screen_width  > 0 ? ud.screen_width  : 1080;
+                    out_h = ud.screen_height > 0 ? ud.screen_height : 1920;
+                    break;
+                }
+            }
+        }
+        if (adb_serial.empty()) return false;
+        return captureOneFrame(adb_serial, out_jpeg);
     }
 
-    float get_fps(const std::string& hw_id) {
-        std::lock_guard<std::mutex> lk(devices_mtx_);
-        auto it = devices_.find(hw_id);
-        return (it != devices_.end()) ? it->second.fps : 0.f;
-    }
+    float get_fps(const std::string&) { return 0.f; }
 
 private:
-    // ----------------------------------------------------------------
-    struct DeviceEntry {
-        std::string hardware_id;
-        std::string adb_serial;
-        HANDLE proc_adb     = INVALID_HANDLE_VALUE;
-        HANDLE proc_ffmpeg  = INVALID_HANDLE_VALUE;
-        HANDLE pipe_ff_out  = INVALID_HANDLE_VALUE;  // ffmpeg stdout (MJPEG)
-        std::thread reader_thread;
-        std::vector<uint8_t> latest_jpeg;
-        int     width  = 0;
-        int     height = 0;
-        float   fps    = 0.f;
-        uint64_t frame_count = 0;
-
-        DeviceEntry() = default;
-        DeviceEntry(DeviceEntry&&) = default;
-        DeviceEntry& operator=(DeviceEntry&&) = default;
-        DeviceEntry(const DeviceEntry&) = delete;
-        DeviceEntry& operator=(const DeviceEntry&) = delete;
-    };
-
-    // ----------------------------------------------------------------
     std::string adb_path_;
     std::string ffmpeg_path_;
     ::gui::AdbDeviceManager* adb_mgr_ = nullptr;
-
     std::atomic<bool> running_{false};
-    std::atomic<bool> sync_requested_{false};  // setDeviceManager後の即座sync用
-    std::thread supervisor_thread_;
-    mutable std::mutex devices_mtx_;
-    std::map<std::string, DeviceEntry> devices_;
+    mutable std::mutex mtx_;
 
-    // ----------------------------------------------------------------
     std::string getAdb() const {
         return adb_path_.empty() ? "adb" : adb_path_;
     }
     std::string getFfmpeg() const {
-        if (!ffmpeg_path_.empty()) return ffmpeg_path_;
-        return "C:/msys64/mingw64/bin/ffmpeg.exe";
+        return ffmpeg_path_.empty() ? "C:/msys64/mingw64/bin/ffmpeg.exe" : ffmpeg_path_;
     }
 
-    // ----------------------------------------------------------------
-    void supervisorLoop() {
-        // adb_mgrが設定されるまで最大10秒待つ
-        for (int i = 0; i < 50 && running_.load(); i++) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            if (adb_mgr_) break;
-        }
+    // ============================================================
+    // パイプ継承を正しく制御した pipe chain:
+    //   adb [stdout=p1w] → p1r → ffmpeg [stdin=p1r, stdout=p2w] → p2r → ReadFile
+    //
+    // 継承ルール:
+    //   adb起動前:  p1w=Inherit ON, 他=Inherit OFF
+    //   ffmpeg起動前: p1r=Inherit ON, p2w=Inherit ON, 他=Inherit OFF
+    //   C++は p2r を ReadFile で読む (NonInheritable)
+    // ============================================================
+    bool captureOneFrame(const std::string& adb_serial, std::vector<uint8_t>& jpeg_out) {
+        // 全パイプをInherit=FALSEで作成してから必要なものだけONにする
+        SECURITY_ATTRIBUTES sa_no{}; sa_no.nLength = sizeof(sa_no); sa_no.bInheritHandle = FALSE;
 
-        while (running_.load()) {
-            syncDevices();
+        HANDLE p1r = INVALID_HANDLE_VALUE, p1w = INVALID_HANDLE_VALUE;
+        HANDLE p2r = INVALID_HANDLE_VALUE, p2w = INVALID_HANDLE_VALUE;
 
-            // 次のsyncまで待つ（30秒、ただしsync_requestedで短縮可）
-            for (int i = 0; i < 150 && running_.load(); i++) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                if (sync_requested_.exchange(false)) {
-                    // setDeviceManagerが呼ばれた → 即座にsync
-                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                    break;
-                }
-            }
-        }
-    }
-
-    // ----------------------------------------------------------------
-    void syncDevices() {
-        std::vector<std::string> to_start_threads;
-
-        // Phase1: mutex保持でプロセス起動
-        {
-            std::lock_guard<std::mutex> lk(devices_mtx_);
-            if (!adb_mgr_) return;
-
-            auto devs = adb_mgr_->getUniqueDevices();
-            MLOG_INFO("adb_h264", "syncDevices: %d unique devices", (int)devs.size());
-
-            // 新規デバイスを起動
-            for (const auto& ud : devs) {
-                if (ud.preferred_adb_id.empty()) continue;
-                auto it = devices_.find(ud.hardware_id);
-                bool need_start = (it == devices_.end());
-                // 既存でも死んでたら再起動
-                if (!need_start && it->second.proc_adb != INVALID_HANDLE_VALUE) {
-                    DWORD code = 0;
-                    if (!GetExitCodeProcess(it->second.proc_adb, &code) ||
-                        code != STILL_ACTIVE) {
-                        MLOG_WARN("adb_h264", "Process died for %s, restarting",
-                                  ud.hardware_id.c_str());
-                        stopEntry(it->second);
-                        devices_.erase(it);
-                        need_start = true;
-                    }
-                }
-                if (need_start) {
-                    if (startEntry(ud))
-                        to_start_threads.push_back(ud.hardware_id);
-                }
-            }
-
-            // 削除されたデバイスを停止
-            for (auto it = devices_.begin(); it != devices_.end(); ) {
-                bool found = false;
-                for (const auto& ud : devs)
-                    if (ud.hardware_id == it->first) { found = true; break; }
-                if (!found) {
-                    MLOG_INFO("adb_h264", "Device removed: %s", it->first.c_str());
-                    stopEntry(it->second);
-                    it = devices_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
-
-        // Phase2: mutex外でreaderThread起動（デッドロック回避）
-        for (const auto& hw_id : to_start_threads) {
-            std::lock_guard<std::mutex> lk(devices_mtx_);
-            auto it = devices_.find(hw_id);
-            if (it != devices_.end() && !it->second.reader_thread.joinable()) {
-                std::string id = hw_id;
-                it->second.reader_thread = std::thread([this, id]() { readerLoop(id); });
-            }
-        }
-    }
-
-    // ----------------------------------------------------------------
-    // mutex保持中に呼ぶ。成功時true。devices_にinsert済み。
-    bool startEntry(const ::gui::AdbDeviceManager::UniqueDevice& ud) {
-        DeviceEntry entry;
-        entry.hardware_id = ud.hardware_id;
-        entry.adb_serial  = ud.preferred_adb_id;
-
-        // サイズ指定: デバイス既知サイズがある場合のみ指定
-        // 0 or デバイスと合わない値は指定しない（screenrecordがハングする）
-        int w = ud.screen_width;
-        int h = ud.screen_height;
-        std::string size_str;
-        if (w > 0 && h > 0) {
-            // H.264制限: 16の倍数
-            w = ((w + 15) / 16) * 16;
-            h = ((h + 15) / 16) * 16;
-            // 最大解像度を1344に制限 (screenrecordの安全な上限)
-            if (w > 1344 || h > 1344) {
-                float scale = 1344.0f / std::max(w, h);
-                w = ((int)(w * scale + 15) / 16) * 16;
-                h = ((int)(h * scale + 15) / 16) * 16;
-            }
-            size_str = std::to_string(w) + "x" + std::to_string(h);
-        }
-        entry.width  = w > 0 ? w : 800;
-        entry.height = h > 0 ? h : 1344;
-
-        SECURITY_ATTRIBUTES sa{};
-        sa.nLength = sizeof(sa);
-        sa.bInheritHandle = TRUE;
-        // GUIアプリはSTD_ERROR_HANDLEが無効。NULデバイスをstderrとして使う
-
-        // パイプ: adb stdout → ffmpeg stdin (1MB buffer)
-        HANDLE pipe_adb_r, pipe_adb_w;
-        if (!CreatePipe(&pipe_adb_r, &pipe_adb_w, &sa, 1024 * 1024)) {
-            MLOG_ERROR("adb_h264", "CreatePipe(adb->ff) failed: %lu", GetLastError());
+        // Pipe1: adb_stdout → ffmpeg_stdin
+        if (!CreatePipe(&p1r, &p1w, &sa_no, 1024*1024)) {
+            MLOG_ERROR("adb_h264", "CreatePipe(p1) failed: %lu", GetLastError());
             return false;
         }
-        SetHandleInformation(pipe_adb_r, HANDLE_FLAG_INHERIT, 0);  // readは非継承
-
-        // パイプ: ffmpeg stdout → reader (256KB buffer)
-        HANDLE pipe_ff_r, pipe_ff_w;
-        if (!CreatePipe(&pipe_ff_r, &pipe_ff_w, &sa, 256 * 1024)) {
-            CloseHandle(pipe_adb_r); CloseHandle(pipe_adb_w);
-            MLOG_ERROR("adb_h264", "CreatePipe(ff->reader) failed: %lu", GetLastError());
-            return false;
-        }
-        SetHandleInformation(pipe_ff_r, HANDLE_FLAG_INHERIT, 0);  // readは非継承
-
-        // --- cmd /c "adb ... | ffmpeg ..." 1プロセスパイプ方式 ---
-        // bInheritHandleの複雑さを回避: OSのパイプをcmd.exeに任せる
-        // pipe_adb_*は使わない
-        if (pipe_adb_r != INVALID_HANDLE_VALUE) CloseHandle(pipe_adb_r);
-        if (pipe_adb_w != INVALID_HANDLE_VALUE) CloseHandle(pipe_adb_w);
-        // cmd /c ""adb" -s ID exec-out screenrecord ... | "ffmpeg" ... pipe:1"
-        std::string pipe_cmd = std::string("cmd /c \"")  // cmd /c "
-            + "\"" + getAdb() + "\""  // "adb"
-            + " -s " + ud.preferred_adb_id
-            + " exec-out screenrecord --output-format=h264"
-              " --bit-rate 4M"
-            + (size_str.empty() ? "" : " --size " + size_str)
-            + " --time-limit 179 -"
-            + " | \"" + getFfmpeg() + "\""  // | "ffmpeg"
-              " -loglevel quiet"
-              " -probesize 32 -analyzeduration 0"
-              " -f h264 -i pipe:0"
-              " -q:v 2 -f mjpeg pipe:1\"";  // pipe:1"
-
-        STARTUPINFOA si_pipe{};
-        si_pipe.cb = sizeof(si_pipe);
-        si_pipe.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-        si_pipe.hStdOutput = pipe_ff_w;   // cmd stdout → reader
-        // stdin/stderrにINVALID_HANDLE_VALUEを渡すとCreateProcessが失敗する
-        // NULデバイスを使う（継承フラグ付き）
-        SECURITY_ATTRIBUTES sa_nul{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-        HANDLE hNulIn  = CreateFileA("NUL", GENERIC_READ,  FILE_SHARE_READ|FILE_SHARE_WRITE, &sa_nul, OPEN_EXISTING, 0, nullptr);
-        HANDLE hNulErr = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE, &sa_nul, OPEN_EXISTING, 0, nullptr);
-        si_pipe.hStdInput  = hNulIn;
-        si_pipe.hStdError  = hNulErr;
-        si_pipe.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi_pipe{};
-
-        if (!CreateProcessA(nullptr, pipe_cmd.data(), nullptr, nullptr,
-                            TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
-                            &si_pipe, &pi_pipe)) {
-            MLOG_ERROR("adb_h264", "pipe launch failed: %lu [%s]",
-                       GetLastError(), pipe_cmd.c_str());
-            CloseHandle(pipe_ff_r); CloseHandle(pipe_ff_w);
-            CloseHandle(hNulIn); CloseHandle(hNulErr);
-            return false;
-        }
-        CloseHandle(pipe_ff_w);       // cmdが書き込み端を持つ
-        CloseHandle(hNulIn);          // 親側は不要
-        CloseHandle(hNulErr);
-        CloseHandle(pi_pipe.hThread);
-        entry.proc_adb    = pi_pipe.hProcess;  // cmdプロセスを追跡
-        entry.proc_ffmpeg = INVALID_HANDLE_VALUE;
-        entry.pipe_ff_out = pipe_ff_r;
-
-        MLOG_INFO("adb_h264", "Started: %s (%s) %s cmd_pid=%lu",
-                  ud.display_name.c_str(), ud.preferred_adb_id.c_str(),
-                  size_str.c_str(), pi_pipe.dwProcessId);
-
-        devices_.insert({ud.hardware_id, std::move(entry)});
-        return true;
-    }
-
-    // ----------------------------------------------------------------
-    // MJPEG streamからJPEGフレームを切り出してキャッシュに保存
-    void readerLoop(const std::string& hw_id) {
-        std::vector<uint8_t> buf;
-        buf.reserve(512 * 1024);
-        std::vector<uint8_t> chunk(65536);
-        auto t0 = std::chrono::steady_clock::now();
-        uint64_t frames = 0;
-        bool first_frame = true;  // 最初のフレームでt0をリセットしてFPS計測精度向上
-
-        while (running_.load()) {
-            HANDLE hRead;
-            {
-                std::lock_guard<std::mutex> lk(devices_mtx_);
-                auto it = devices_.find(hw_id);
-                if (it == devices_.end() || it->second.pipe_ff_out == INVALID_HANDLE_VALUE)
-                    break;
-                hRead = it->second.pipe_ff_out;
-            }
-
-            DWORD n = 0;
-            BOOL ok = ReadFile(hRead, chunk.data(), (DWORD)chunk.size(), &n, nullptr);
-            if (!ok || n == 0) {
-                MLOG_WARN("adb_h264", "Reader EOF/error for %s", hw_id.c_str());
-                break;
-            }
-
-            buf.insert(buf.end(), chunk.begin(), chunk.begin() + n);
-
-            // MJPEG: SOI(FFD8FF) + ... + EOI(FFD9)の繰り返し
-            // bufからJPEGフレームを全部取り出す
-            size_t pos = 0;
-            while (pos + 4 <= buf.size()) {
-                // SOI探索
-                if (!(buf[pos] == 0xFF && buf[pos+1] == 0xD8)) {
-                    pos++;
-                    continue;
-                }
-                // EOI探索 (FFD9)
-                // JPEG内にはEOIが1つだけある
-                size_t end = buf.size();
-                for (size_t j = pos + 2; j + 1 < buf.size(); j++) {
-                    if (buf[j] == 0xFF && buf[j+1] == 0xD9) {
-                        end = j + 2;
-                        break;
-                    }
-                }
-                if (end == buf.size()) break;  // EOI未到着、次回へ
-
-                // JPEGフレーム完成
-                frames++;
-                if (first_frame) {
-                    first_frame = false;
-                    t0 = std::chrono::steady_clock::now();  // 最初フレームでtをリセット
-                    frames = 1;
-                }
-                float elapsed = std::chrono::duration<float>(
-                    std::chrono::steady_clock::now() - t0).count();
-                {
-                    std::lock_guard<std::mutex> lk(devices_mtx_);
-                    auto it = devices_.find(hw_id);
-                    if (it != devices_.end()) {
-                        it->second.latest_jpeg.assign(buf.begin() + pos,
-                                                      buf.begin() + end);
-                        it->second.frame_count = frames;
-                        if (elapsed > 1.0f)
-                            it->second.fps = (float)frames / elapsed;
-                    }
-                }
-                pos = end;
-            }
-
-            // 処理済み部分をbufから除去
-            if (pos > 0)
-                buf.erase(buf.begin(), buf.begin() + pos);
-
-            // バッファ溢れ防止
-            if (buf.size() > 8 * 1024 * 1024) {
-                MLOG_WARN("adb_h264", "Buffer overflow for %s, clearing", hw_id.c_str());
-                buf.clear();
-            }
+        // Pipe2: ffmpeg_stdout → C++_read
+        if (!CreatePipe(&p2r, &p2w, &sa_no, 512*1024)) {
+            MLOG_ERROR("adb_h264", "CreatePipe(p2) failed: %lu", GetLastError());
+            CloseHandle(p1r); CloseHandle(p1w); return false;
         }
 
-        // 終了時にpipe_ff_outをクリア
-        {
-            std::lock_guard<std::mutex> lk(devices_mtx_);
-            auto it = devices_.find(hw_id);
-            if (it != devices_.end())
-                it->second.pipe_ff_out = INVALID_HANDLE_VALUE;
-        }
-        MLOG_INFO("adb_h264", "Reader exited: %s (frames=%llu)", hw_id.c_str(), frames);
-    }
+        // --- adb 起動: p1wをInheritONにして渡す ---
+        SetHandleInformation(p1w, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
 
-    // ----------------------------------------------------------------
-    // mutex保持中に呼ぶ
-    void stopEntry(DeviceEntry& e) {
-        if (e.proc_adb != INVALID_HANDLE_VALUE) {
-            TerminateProcess(e.proc_adb, 0);
-            WaitForSingleObject(e.proc_adb, 2000);
-            CloseHandle(e.proc_adb);
-            e.proc_adb = INVALID_HANDLE_VALUE;
+        std::string adb_cmd = "\"" + getAdb() + "\" -s " + adb_serial +
+                              " exec-out screencap -p";
+        STARTUPINFOA si_a{}; si_a.cb = sizeof(si_a);
+        si_a.dwFlags    = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+        si_a.hStdOutput = p1w;
+        si_a.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+        si_a.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi_a{};
+        std::string abuf = adb_cmd;
+        bool adb_ok = CreateProcessA(nullptr, abuf.data(), nullptr, nullptr,
+                                      TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si_a, &pi_a);
+        // adb起動後にp1wを閉じる (adbが持つのでC++は不要)
+        SetHandleInformation(p1w, HANDLE_FLAG_INHERIT, 0);
+        CloseHandle(p1w); p1w = INVALID_HANDLE_VALUE;
+
+        if (!adb_ok) {
+            MLOG_ERROR("adb_h264", "adb CreateProcess failed: %lu [%s]", GetLastError(), adb_cmd.c_str());
+            CloseHandle(p1r); CloseHandle(p2r); CloseHandle(p2w); return false;
         }
-        if (e.proc_ffmpeg != INVALID_HANDLE_VALUE) {
-            TerminateProcess(e.proc_ffmpeg, 0);
-            WaitForSingleObject(e.proc_ffmpeg, 2000);
-            CloseHandle(e.proc_ffmpeg);
-            e.proc_ffmpeg = INVALID_HANDLE_VALUE;
+        CloseHandle(pi_a.hThread);
+
+        // --- ffmpeg 起動: p1rとp2wをInheritONにして渡す ---
+        SetHandleInformation(p1r, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        SetHandleInformation(p2w, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+
+        std::string ff_cmd = "\"" + getFfmpeg() + "\""
+                             " -loglevel error"
+                             " -i pipe:0"
+                             " -vframes 1"
+                             " -f image2 -vcodec mjpeg -q:v 5"
+                             " pipe:1";
+        STARTUPINFOA si_f{}; si_f.cb = sizeof(si_f);
+        si_f.dwFlags    = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+        si_f.hStdInput  = p1r;
+        si_f.hStdOutput = p2w;
+        si_f.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+        si_f.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi_f{};
+        std::string fbuf = ff_cmd;
+        bool ff_ok = CreateProcessA(nullptr, fbuf.data(), nullptr, nullptr,
+                                     TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si_f, &pi_f);
+        // ffmpeg起動後に不要なハンドルをC++から閉じる
+        SetHandleInformation(p1r, HANDLE_FLAG_INHERIT, 0);
+        SetHandleInformation(p2w, HANDLE_FLAG_INHERIT, 0);
+        CloseHandle(p1r); p1r = INVALID_HANDLE_VALUE;
+        CloseHandle(p2w); p2w = INVALID_HANDLE_VALUE;
+
+        if (!ff_ok) {
+            MLOG_ERROR("adb_h264", "ffmpeg CreateProcess failed: %lu", GetLastError());
+            TerminateProcess(pi_a.hProcess, 0);
+            WaitForSingleObject(pi_a.hProcess, 2000);
+            CloseHandle(pi_a.hProcess);
+            CloseHandle(p2r); return false;
         }
-        if (e.pipe_ff_out != INVALID_HANDLE_VALUE) {
-            CloseHandle(e.pipe_ff_out);
-            e.pipe_ff_out = INVALID_HANDLE_VALUE;
-        }
-        if (e.reader_thread.joinable()) {
-            // reader_threadはReadFileでブロックしてる可能性
-            // pipe_ff_outを閉じたのでReadFileが戻るはず
-            e.reader_thread.join();
-        }
+        CloseHandle(pi_f.hThread);
+
+        // --- ffmpeg stdoutからJPEGを読み取る ---
+        jpeg_out.clear();
+        jpeg_out.reserve(128*1024);
+        std::vector<uint8_t> chunk(32768);
+        DWORD nr = 0;
+        while (ReadFile(p2r, chunk.data(), (DWORD)chunk.size(), &nr, nullptr) && nr > 0)
+            jpeg_out.insert(jpeg_out.end(), chunk.begin(), chunk.begin() + nr);
+        CloseHandle(p2r);
+
+        // プロセス後始末
+        WaitForSingleObject(pi_f.hProcess, 5000);
+        TerminateProcess(pi_a.hProcess, 0);
+        WaitForSingleObject(pi_a.hProcess, 2000);
+        CloseHandle(pi_f.hProcess);
+        CloseHandle(pi_a.hProcess);
+
+        bool ok = jpeg_out.size() > 1000;
+        if (!ok) MLOG_WARN("adb_h264", "empty jpeg: %zu bytes from %s",
+                            jpeg_out.size(), adb_serial.c_str());
+        return ok;
     }
 };
 

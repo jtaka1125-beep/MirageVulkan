@@ -30,7 +30,7 @@ bool HybridCommandSender::start() {
     // Register HID touch during AOA mode switch (before AOA_START_ACCESSORY)
     usb_sender_->set_pre_start_callback([this](libusb_device_handle* handle, int aoa_version) -> bool {
         if (aoa_version < 2) return false;
-        auto touch = std::make_unique<mirage::AoaHidTouch>();
+        auto touch = std::make_shared<mirage::AoaHidTouch>();
         MLOG_INFO("hybridcmd", "Registering HID touch device during AOA switch (v%d)", aoa_version);
         if (!touch->register_device(handle)) return false;
         // ISSUE-3: unique key per handle to avoid collision when multiple devices connect simultaneously

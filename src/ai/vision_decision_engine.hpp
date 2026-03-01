@@ -13,8 +13,14 @@
 #include <unordered_map>
 #include <chrono>
 #include <cstdint>
+#include <memory>
+#include <functional>
 
 namespace mirage::ai {
+
+// 前方宣言
+class OllamaVision;
+struct OllamaVisionResult;
 
 // =============================================================================
 // 状態定義
@@ -52,6 +58,9 @@ struct VisionDecisionConfig {
     bool  enable_ewma      = false;  // EWMA平滑化 ON/OFF（デフォルトOFF=後方互換）
     float ewma_alpha       = 0.40f;  // 平滑化係数 (0=強平滑, 1=生スコアそのまま)
     float ewma_confirm_thr = 0.60f;  // EWMA が この値以上でないと CONFIRMED 不可
+    // ── Layer 3: Ollama LLM Vision ──
+    bool enable_layer3 = false;      // Layer 3 (LLM Vision) を有効化
+    int layer3_cooldown_ms = 30000;  // Layer 3 呼び出し後の冷却時間(ms) - LLMは重いので長め
 };
 
 // =============================================================================
@@ -114,6 +123,9 @@ struct DeviceVisionState {
     // ── 改善D: EWMA ──
     float ewma_score = 0.0f;              // テンプレート存在感の指数移動平均
     std::string ewma_template_id;          // EWMA追跡中のテンプレートID
+    // ── Layer 3: LLM Vision ──
+    std::chrono::steady_clock::time_point layer3_last_call;  // Layer 3最終呼び出し時刻
+    bool layer3_pending = false;           // Layer 3結果待ち中
 };
 
 // =============================================================================
@@ -155,6 +167,27 @@ public:
                      std::chrono::steady_clock::time_point now =
                          std::chrono::steady_clock::now()) const;
 
+    // ── Layer 3: LLM Vision ──
+    // OllamaVisionインスタンスを設定（外部から注入）
+    void setOllamaVision(std::shared_ptr<OllamaVision> ollama);
+
+    // Layer 3フォールバック呼び出し（フレームデータを渡す）
+    // 検出成功時は VisionMatch を返す（自動テンプレート登録用）
+    // @param rgba: RGBAフレームデータ
+    // @param width, height: 画像サイズ
+    // @param on_detected: 検出成功時のコールバック (x, y, button_text)
+    using Layer3Callback = std::function<void(int x, int y, const std::string& button_text)>;
+    bool tryLayer3Fallback(const std::string& device_id,
+                           const uint8_t* rgba, int width, int height,
+                           Layer3Callback on_detected = nullptr,
+                           std::chrono::steady_clock::time_point now =
+                               std::chrono::steady_clock::now());
+
+    // Layer 3が冷却中かチェック
+    bool isLayer3OnCooldown(const std::string& device_id,
+                            std::chrono::steady_clock::time_point now =
+                                std::chrono::steady_clock::now()) const;
+
 private:
     VisionDecisionConfig config_;
 
@@ -164,6 +197,9 @@ private:
     // デバウンスマップ: (device_id + template_id) → 最終実行時刻
     std::unordered_map<DebounceKey, std::chrono::steady_clock::time_point,
                        DebounceKeyHash> debounce_map_;
+
+    // Layer 3: OllamaVision (外部注入)
+    std::shared_ptr<OllamaVision> ollama_vision_;
 
     // 内部ヘルパー
     DeviceVisionState& getOrCreateState(const std::string& device_id);
