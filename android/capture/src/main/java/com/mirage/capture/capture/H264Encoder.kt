@@ -55,9 +55,11 @@ class H264Encoder(
             val hw = android.os.Build.HARDWARE?.lowercase() ?: ""
             val model = android.os.Build.MODEL?.lowercase() ?: ""
             val soc = try { android.os.Build.SOC_MODEL?.lowercase() ?: "" } catch (_: Throwable) { "" }
-            // Allow override via system property (adb shell setprop mirage.repeater.force 1)
+            // Allow override via reflection (adb shell setprop mirage.repeater.force 1)
             val forceEnable = try {
-                android.os.SystemProperties.get("mirage.repeater.force", "0") == "1"
+                val cls = Class.forName("android.os.SystemProperties")
+                val method = cls.getMethod("get", String::class.java, String::class.java)
+                method.invoke(null, "mirage.repeater.force", "0") == "1"
             } catch (_: Throwable) { false }
             if (forceEnable) return true
             // Conservative blacklist

@@ -1533,9 +1533,9 @@ public:
 
 
         // VisionDecisionEngine経由で状態遷移判断
-
-
-
+        if (!vision_engine_) {
+            MLOG_WARN("ai", "vision_engine_ is null! slot=%d", slot);
+        }
         if (vision_engine_) {
 
 
@@ -3004,25 +3004,8 @@ private:
 
 
     void onFrameReady(const mirage::FrameReadyEvent& evt) {
-        if (!initialized_) return;
-
-        // hardware_id -> slot index マッピング (EventBus経由フレームをAIに転送)
-        int slot = 0;
-        {
-            std::lock_guard<std::mutex> lk(hw_slot_mutex_);
-            auto it = hw_to_slot_.find(evt.device_id);
-            if (it == hw_to_slot_.end()) {
-                slot = (int)hw_to_slot_.size();
-                hw_to_slot_[evt.device_id] = slot;
-                MLOG_INFO("ai", "EventBus device registered: %s -> slot %d",
-                          evt.device_id.c_str(), slot);
-            } else {
-                slot = it->second;
-            }
-        }
-
-        if (!async_enabled_.load()) return;
-        enqueueAsyncFrame(slot, evt.rgba_data, evt.width, evt.height, true);
+        // GUI経由フレームはgui_init.cppのsetFrameCallbackでAIに直接転送
+        (void)evt;
     }
 
 
@@ -4428,9 +4411,7 @@ private:
 
 
     std::unordered_map<std::string, mirage::ai::DeviceAdaptation> device_adaptations_;
-    // EventBus経由フレーム: hardware_id -> slot index
-    std::unordered_map<std::string, int> hw_to_slot_;
-    mutable std::mutex hw_slot_mutex_;
+
 
 
 

@@ -88,9 +88,9 @@
 3. GUIのLearning Modeでテンプレート収集 → C++ AIEngineのLayer1/2テスト
 4. AOA full-path test [BLOCKED: physical USB]
 
-## GUI File Line Counts (Updated 2026-03-01)
+## GUI File Line Counts (Updated 2026-03-02)
 - gui_ai_panel.cpp:       663
-- gui_init.cpp:           837
+- gui_init.cpp:           880
 - gui_threads.cpp:        642
 - gui_device_control.cpp: 539
 - gui_command.cpp:        356
@@ -98,7 +98,7 @@
 - gui_main.cpp:           295
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 3580 lines
+- TOTAL:                 3623 lines
 
 ## Key Decisions Log
 - 2026-03-01: AIパイプライン整備完了。tool_ai_analyze(Python/Ollama)とC++ AIEngine(テンプレートマッチ)は並立。

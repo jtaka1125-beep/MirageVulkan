@@ -56,9 +56,38 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
         std::string ui_xml = g_adb_manager->adbCommand(adb_id,
             "shell uiautomator dump /dev/stdout");
         if (!ui_xml.empty()) {
-            // "Start now" / "莉翫☆縺宣幕蟋・ / "START NOW" 縺ｮbounds繧呈､懃ｴ｢
+            // Step 1: "全体" / "Entire screen" 選択 (Android 14+ の画面選択ダイアログ)
+            // タップしないと "Start now" が押せない
+            for (const char* label : {"Entire screen", "\\xe5\\x85\\xa8\\xe4\\xbd\\x93",  // 全体
+                                      "Whole screen", "Entire Screen"}) {
+                size_t label_pos = ui_xml.find(label);
+                if (label_pos == std::string::npos) continue;
+                size_t bounds_pos = ui_xml.find("bounds=\"", label_pos);
+                size_t node_start = ui_xml.rfind("<node", label_pos);
+                if ((bounds_pos == std::string::npos || bounds_pos - label_pos > 500) && node_start != std::string::npos)
+                    bounds_pos = ui_xml.find("bounds=\"", node_start);
+                if (bounds_pos != std::string::npos && bounds_pos < label_pos + 500) {
+                    size_t b_start = ui_xml.find('[', bounds_pos);
+                    if (b_start != std::string::npos) {
+                        int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+                        if (sscanf(ui_xml.c_str() + b_start, "[%d,%d][%d,%d]",
+                                   &x1, &y1, &x2, &y2) == 4) {
+                            int tap_x = (x1 + x2) / 2;
+                            int tap_y = (y1 + y2) / 2;
+                            g_adb_manager->adbCommand(adb_id,
+                                "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y));
+                            MLOG_INFO("gui", "Auto-tapped 'Entire screen' on %s (%d,%d)",
+                                      display_name.c_str(), tap_x, tap_y);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Step 2: "Start now" / "今すぐ開始" / "START NOW" のboundsを検索
             for (const char* label : {"Start now", "START NOW",
-                                      "\xe4\xbb\x8a\xe3\x81\x99\xe3\x81\x90\xe9\x96\x8b\xe5\xa7\x8b"}) {
+                                      "\\xe4\\xbb\\x8a\\xe3\\x81\\x99\\xe3\\x81\\x90\\xe9\\x96\\x8b\\xe5\\xa7\\x8b"}) {
                 size_t label_pos = ui_xml.find(label);
                 if (label_pos == std::string::npos) continue;
                 // 隧ｲ蠖薙ヮ繝ｼ繝峨・bounds螻樊ｧ繧呈爾縺・ bounds="[x1,y1][x2,y2]"
@@ -108,11 +137,20 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
             size_t physical_pos = wm_size.find("Physical size");
             if (override_pos != std::string::npos) parse_wh(wm_size.substr(override_pos), screen_w, screen_h);
             else if (physical_pos != std::string::npos) parse_wh(wm_size.substr(physical_pos), screen_w, screen_h);
+            // Fallback Step 1: "全体" を選択 (画面上部 30% 付近に表示されることが多い)
+            int entire_x = static_cast<int>(screen_w * 0.50f);
+            int entire_y = static_cast<int>(screen_h * 0.30f);
+            g_adb_manager->adbCommand(adb_id,
+                "shell input tap " + std::to_string(entire_x) + " " + std::to_string(entire_y));
+            MLOG_INFO("gui", "Auto-tapped 'Entire screen' fallback on %s (%dx%d -> %d,%d)",
+                      display_name.c_str(), screen_w, screen_h, entire_x, entire_y);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            // Fallback Step 2: "今すぐ開始" (画面下部 61% 付近)
             int tap_x = static_cast<int>(screen_w * 0.73f);
             int tap_y = static_cast<int>(screen_h * 0.61f);
             g_adb_manager->adbCommand(adb_id,
                 "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y));
-            MLOG_INFO("gui", "Auto-tapped MediaProjection dialog (fallback) on %s (%dx%d -> %d,%d)",
+            MLOG_INFO("gui", "Auto-tapped 'Start now' fallback on %s (%dx%d -> %d,%d)",
                       display_name.c_str(), screen_w, screen_h, tap_x, tap_y);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -320,6 +358,7 @@ int success = 0;
         if (g_ai_engine && g_ai_enabled && frame.width > 0 && frame.height > 0) {
             static std::unordered_map<std::string, int> s_hw_slot;
             static std::mutex s_hw_mutex;
+            static bool s_async_started = false;
             int slot = 0;
             {
                 std::lock_guard<std::mutex> lk(s_hw_mutex);
@@ -329,6 +368,10 @@ int success = 0;
                     s_hw_slot[hardware_id] = slot;
                 } else {
                     slot = it->second;
+                }
+                if (!s_async_started) {
+                    g_ai_engine->setAsyncMode(true);
+                    s_async_started = true;
                 }
             }
             g_ai_engine->processFrameAsync(slot, frame.rgba.data(), frame.width, frame.height);
@@ -704,7 +747,7 @@ void initializeGUI(HWND hwnd) {
     mirage::gui::GuiConfig config;
     config.window_width = 1920;
     config.window_height = 1080;
-    config.vsync = false;
+    config.vsync = true;
 
     if (!g_gui->initialize(hwnd, config)) {
         MLOG_ERROR("gui", "GUI initialization failed");

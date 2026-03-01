@@ -598,7 +598,10 @@ bool VisionDecisionEngine::shouldTriggerLayer3(
     if (!config_.enable_layer3) return false;
 
     auto it = device_states_.find(device_id);
-    if (it == device_states_.end()) return false;
+    if (it == device_states_.end()) {
+        MLOG_INFO("ai.vde", "shouldTriggerLayer3: device %s not found", device_id.c_str());
+        return false;
+    }
     const auto& ds = it->second;
 
     // 既に Layer 3 実行中または冷却中はスキップ
@@ -608,6 +611,12 @@ bool VisionDecisionEngine::shouldTriggerLayer3(
     if (layer3_active_count_.load() >= LAYER3_MAX_CONCURRENT) return false;
 
     // ① 連続マッチなしフレーム数トリガー
+    {
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - ds.last_any_match_time).count();
+        MLOG_INFO("ai.vde", "L3check: dev=%s no_match=%d elapsed=%lldms",
+                  device_id.c_str(), ds.consecutive_no_match, (long long)elapsed_ms);
+    }
     if (config_.layer3_no_match_frames > 0 &&
         ds.consecutive_no_match >= config_.layer3_no_match_frames) {
         MLOG_DEBUG("ai.vision", "Layer3トリガー(no_match_frames): device=%s count=%d",
