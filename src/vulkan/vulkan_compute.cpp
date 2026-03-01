@@ -96,12 +96,12 @@ bool VulkanComputePipeline::create(
     // Count descriptor types from bindings
     std::vector<VkDescriptorPoolSize> pool_sizes;
     for (const auto& b : bindings) {
-        pool_sizes.push_back({b.descriptorType, 16});
+        pool_sizes.push_back({b.descriptorType, 256});
     }
 
     VkDescriptorPoolCreateInfo dpci{};
     dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 16;
+    dpci.maxSets = 256;
     dpci.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
     dpci.pPoolSizes = pool_sizes.data();
     dpci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
