@@ -31,7 +31,7 @@ namespace mirage::gui::init {
 // =========================================================================
 // Helper: Auto-start MirageCapture ScreenCaptureService on one device
 // =========================================================================
-static void autoStartCaptureService(const std::string& adb_id, const std::string& display_name) {
+static void autoStartCaptureService(const std::string& adb_id, const std::string& display_name, int tcp_port = 0) {
     if (!g_adb_manager) return;
 
     std::string svc_check = g_adb_manager->adbCommand(adb_id,
@@ -44,7 +44,7 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
     MLOG_INFO("gui", "Auto-starting MirageCapture on %s (%s)", display_name.c_str(), adb_id.c_str());
     g_adb_manager->adbCommand(adb_id,
         "shell am start -n com.mirage.capture/.ui.CaptureActivity "
-        "--ez auto_mirror true --es mirror_mode tcp");
+        "--ez auto_mirror true --es mirror_mode tcp --ei tcp_port " + std::to_string(tcp_port > 0 ? tcp_port : 50100));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
@@ -58,7 +58,7 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
         if (!ui_xml.empty()) {
             // Step 1: "全体" / "Entire screen" 選択 (Android 14+ の画面選択ダイアログ)
             // タップしないと "Start now" が押せない
-            for (const char* label : {"Entire screen", "\\xe5\\x85\\xa8\\xe4\\xbd\\x93",  // 全体
+            for (const char* label : {"Entire screen", u8"\u5168\u4f53",  // 全体
                                       "Whole screen", "Entire Screen"}) {
                 size_t label_pos = ui_xml.find(label);
                 if (label_pos == std::string::npos) continue;
@@ -269,7 +269,7 @@ bool initializeMultiReceiver() {
     // MirageCapture APK 縺後く繝｣繝励メ繝｣繝ｻ騾∽ｿ｡繧呈球縺・(scrcpy荳堺ｽｿ逕ｨ)
     // === Auto-start MirageCapture ScreenCaptureService on all devices ===
     for (const auto& dev : g_adb_manager->getUniqueDevices()) {
-        autoStartCaptureService(dev.preferred_adb_id, dev.display_name);
+        autoStartCaptureService(dev.preferred_adb_id, dev.display_name, dev.assigned_tcp_port);
     }
 
     auto devices = g_adb_manager->getUniqueDevices();
@@ -631,7 +631,7 @@ static void onStartMirroring() {
     if (gui) gui->logInfo(u8"Starting mirroring on all devices...");
     auto all_devs = g_adb_manager->getUniqueDevices();
     for (const auto& dev : all_devs) {
-        autoStartCaptureService(dev.preferred_adb_id, dev.display_name);
+        autoStartCaptureService(dev.preferred_adb_id, dev.display_name, dev.assigned_tcp_port);
     }
     if (gui) gui->logInfo(u8"Mirroring started on " + std::to_string(all_devs.size()) + u8" device(s)");
 }
@@ -747,7 +747,7 @@ void initializeGUI(HWND hwnd) {
     mirage::gui::GuiConfig config;
     config.window_width = 1920;
     config.window_height = 1080;
-    config.vsync = true;
+    config.vsync = false;
 
     if (!g_gui->initialize(hwnd, config)) {
         MLOG_ERROR("gui", "GUI initialization failed");

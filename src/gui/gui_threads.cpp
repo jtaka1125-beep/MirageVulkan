@@ -626,7 +626,7 @@ void wifiAdbWatchdogThread() {
                               dev.display_name.c_str());
                     g_adb_manager->adbCommand(wifi_id,
                         "shell am start -n com.mirage.capture/.ui.CaptureActivity "
-                        "--ez auto_mirror true --es mirror_mode tcp --ei mirror_port 50100");
+                        "--ez auto_mirror true --es mirror_mode tcp --ei tcp_port " + std::to_string(dev.assigned_tcp_port > 0 ? dev.assigned_tcp_port : 50100));
                 }
             }
         }
