@@ -55,6 +55,11 @@ class H264Encoder(
             val hw = android.os.Build.HARDWARE?.lowercase() ?: ""
             val model = android.os.Build.MODEL?.lowercase() ?: ""
             val soc = try { android.os.Build.SOC_MODEL?.lowercase() ?: "" } catch (_: Throwable) { "" }
+            // Allow override via system property (adb shell setprop mirage.repeater.force 1)
+            val forceEnable = try {
+                android.os.SystemProperties.get("mirage.repeater.force", "0") == "1"
+            } catch (_: Throwable) { false }
+            if (forceEnable) return true
             // Conservative blacklist
             if (model.contains("t606")) return false
             if (soc.contains("mt6789")) return false
@@ -65,12 +70,12 @@ class H264Encoder(
         private const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
         private const val MIN_FPS = 10
         private const val MAX_FPS = 60
-        private const val BASE_BITRATE = 8_000_000
+        private const val BASE_BITRATE = 10_000_000
         private const val BASE_FPS = 30
-        private const val BITRATE_CAP = 24_000_000
+        private const val BITRATE_CAP = 32_000_000
         private const val LOG_INTERVAL_MS = 5000L
-        private const val SPS_PPS_RESEND_INTERVAL_MS = 30000L
-        private const val I_FRAME_INTERVAL = 4
+        private const val SPS_PPS_RESEND_INTERVAL_MS = 5000L
+        private const val I_FRAME_INTERVAL = 1
     }
 
     private var codec: MediaCodec? = null
@@ -93,7 +98,7 @@ class H264Encoder(
         mtuPayload = 1200
     )
 
-    private val sendQueue = ArrayBlockingQueue<List<ByteArray>>(32)
+    private val sendQueue = ArrayBlockingQueue<List<ByteArray>>(16)
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -256,7 +261,7 @@ class H264Encoder(
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         while (running) {
             try {
-                val packets = sendQueue.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                val packets = sendQueue.poll(10, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
                 val sender = senderRef.get()
                 for (pkt in packets) { sender.send(pkt) }
                 sender.flush() // FIX-3: interface経由、instanceof不要
@@ -278,7 +283,7 @@ class H264Encoder(
         var lastLogFrameCount = 0L
 
         while (running) {
-            val outputIndex = codec!!.dequeueOutputBuffer(bufferInfo, 10_000)
+            val outputIndex = codec!!.dequeueOutputBuffer(bufferInfo, 5_000)
 
             if (outputIndex >= 0) {
                 val outputBuffer = codec!!.getOutputBuffer(outputIndex)

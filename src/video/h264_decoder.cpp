@@ -117,7 +117,7 @@ bool H264Decoder::init(bool use_hevc) {
 
   if (!hw_enabled_) {
     MLOG_INFO("h264", "No HW acceleration available, using CPU decode");
-    codec_ctx_->thread_count = 2;
+    codec_ctx_->thread_count = 4;  // 60fps: increased for sub-device CPU decode
   }
 
   AVDictionary* opts = nullptr;

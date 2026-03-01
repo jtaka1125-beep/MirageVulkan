@@ -1042,6 +1042,29 @@ void MirrorReceiver::decode_thread_func() {
         return !nal_queue_.empty() || !running_.load();
       });
       if (!running_.load() && nal_queue_.empty()) break;
+
+      // Drop strategy: if queue depth > 8 frames, skip old P-frames until next IDR
+      // This prevents latency snowball when decoder falls behind
+      constexpr size_t DROP_THRESHOLD = 8;
+      if (nal_queue_.size() > DROP_THRESHOLD) {
+        size_t dropped = 0;
+        while (nal_queue_.size() > 2) {
+          const auto& front = nal_queue_.front();
+          // IDR/SPS/PPS は保持、それ以外(Pフレーム等)は捨てる
+          bool is_key = front.data.size() > 0 &&
+                        ((front.data[0] & 0x1f) == 5  ||  // IDR slice
+                         (front.data[0] & 0x1f) == 7  ||  // SPS
+                         (front.data[0] & 0x1f) == 8);    // PPS
+          if (is_key) break;
+          nal_queue_.pop();
+          dropped++;
+        }
+        if (dropped > 0) {
+          MLOG_DEBUG("mirror", "Queue drop: %zu P-frames dropped (queue was overflowing)", dropped);
+          need_idr_.store(false);  // IDRまで待たずに再開 (IDRが来るまで破綻フレームを許容)
+        }
+      }
+
       while (!nal_queue_.empty()) {
         batch.push_back(std::move(nal_queue_.front()));
         nal_queue_.pop();

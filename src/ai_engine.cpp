@@ -3004,57 +3004,25 @@ private:
 
 
     void onFrameReady(const mirage::FrameReadyEvent& evt) {
-
-
-
         if (!initialized_) return;
 
-
-
-
-
-
-
-        // device_id から slot番号を推定（"slot_N" 形式）
-
-
-
+        // hardware_id -> slot index マッピング (EventBus経由フレームをAIに転送)
         int slot = 0;
-
-
-
-        if (evt.device_id.substr(0, 5) == "slot_") {
-
-
-
-            try { slot = std::stoi(evt.device_id.substr(5)); } catch (...) {}
-
-
-
+        {
+            std::lock_guard<std::mutex> lk(hw_slot_mutex_);
+            auto it = hw_to_slot_.find(evt.device_id);
+            if (it == hw_to_slot_.end()) {
+                slot = (int)hw_to_slot_.size();
+                hw_to_slot_[evt.device_id] = slot;
+                MLOG_INFO("ai", "EventBus device registered: %s -> slot %d",
+                          evt.device_id.c_str(), slot);
+            } else {
+                slot = it->second;
+            }
         }
 
-
-
-        (void)slot;  // 将来のパイプライン統合用
-
-
-
-
-
-
-
-        // processFrameは外部（gui_threads.cpp）から直接呼ばれるため、
-
-
-
-        // EventBus経由では重複呼び出しを避ける。
-
-
-
-        // EventBus購読は将来のパイプライン統合用に準備のみ。
-
-
-
+        if (!async_enabled_.load()) return;
+        enqueueAsyncFrame(slot, evt.rgba_data, evt.width, evt.height, true);
     }
 
 
@@ -4460,6 +4428,9 @@ private:
 
 
     std::unordered_map<std::string, mirage::ai::DeviceAdaptation> device_adaptations_;
+    // EventBus経由フレーム: hardware_id -> slot index
+    std::unordered_map<std::string, int> hw_to_slot_;
+    mutable std::mutex hw_slot_mutex_;
 
 
 

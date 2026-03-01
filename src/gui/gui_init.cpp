@@ -307,6 +307,7 @@ int success = 0;
 
     // 繝輔Ξ繝ｼ繝繧ｳ繝ｼ繝ｫ繝舌ャ繧ｯ險ｭ螳・ 繝・さ繝ｼ繝画ｸ医∩繝輔Ξ繝ｼ繝繧脱ventBus邨檎罰縺ｧGUI縺ｫ驟堺ｿ｡
     g_multi_receiver->setFrameCallback([](const std::string& hardware_id, const ::gui::MirrorFrame& frame) {
+        // GUIと AI で同じフレームを共用
         mirage::FrameReadyEvent evt;
         evt.device_id = hardware_id;
         evt.rgba_data = frame.rgba.data();
@@ -314,6 +315,24 @@ int success = 0;
         evt.height = frame.height;
         evt.frame_id = frame.frame_id;
         mirage::bus().publish(evt);
+
+        // AI エンジンにも転送 (hardware_id -> slot 静的マッピング)
+        if (g_ai_engine && g_ai_enabled && frame.width > 0 && frame.height > 0) {
+            static std::unordered_map<std::string, int> s_hw_slot;
+            static std::mutex s_hw_mutex;
+            int slot = 0;
+            {
+                std::lock_guard<std::mutex> lk(s_hw_mutex);
+                auto it = s_hw_slot.find(hardware_id);
+                if (it == s_hw_slot.end()) {
+                    slot = (int)s_hw_slot.size();
+                    s_hw_slot[hardware_id] = slot;
+                } else {
+                    slot = it->second;
+                }
+            }
+            g_ai_engine->processFrameAsync(slot, frame.rgba.data(), frame.width, frame.height);
+        }
     });
 
     return success > 0;
@@ -645,7 +664,7 @@ static void onDeviceSelected(const std::string& device_id) {
         std::string sel_id = device_id;
         std::thread([devices, sel_id]() {
             for (const auto& dev : devices) {
-                int target_fps = (dev.hardware_id == sel_id) ? 120 : 60;
+                int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
                 std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps "
                                   + std::to_string(target_fps) + " --ei fps " + std::to_string(target_fps);
                 if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
@@ -669,7 +688,7 @@ static void onDeviceSelected(const std::string& device_id) {
             std::string hw_id = uid;
             auto it = usb_to_hw.find(uid);
             if (it != usb_to_hw.end()) hw_id = it->second;
-            int target_fps = (hw_id == device_id) ? 120 : 60;
+            int target_fps = (hw_id == device_id) ? 60 : 30;
             g_hybrid_cmd->send_video_fps(uid, target_fps);
             MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
                       uid.c_str(), target_fps,
