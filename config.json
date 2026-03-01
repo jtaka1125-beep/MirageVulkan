@@ -47,10 +47,25 @@
   "ai": {
     "enabled": true,
     "templates_dir": "templates",
-    "default_threshold": 0.8
+    "default_threshold": 0.75,
+    "enable_multi_scale": true,
+    "vde_confirm_count": 2,
+    "vde_cooldown_ms": 2000,
+    "vde_debounce_window_ms": 500,
+    "vde_enable_layer3": false,
+    "vde_layer3_no_match_frames": 60,
+    "vde_layer3_stuck_frames": 90,
+    "vde_layer3_no_match_ms": 5000,
+    "vde_layer3_cooldown_ms": 10000
   },
   "ocr": {
     "enabled": false,
     "language": "eng+jpn"
+  },
+  "ollama": {
+    "host": "127.0.0.1",
+    "port": 11434,
+    "model": "llava:7b",
+    "timeout_ms": 30000
   }
 }

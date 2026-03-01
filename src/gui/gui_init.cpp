@@ -752,6 +752,13 @@ void initializeAI() {
     if (ai_cfg.vde_debounce_window_ms > 0)
         ai_config.vde_debounce_window_ms = ai_cfg.vde_debounce_window_ms;
 
+    // Layer 3 (OllamaVision) 設定反映
+    ai_config.vde_enable_layer3          = ai_cfg.vde_enable_layer3;
+    ai_config.vde_layer3_no_match_frames = ai_cfg.vde_layer3_no_match_frames;
+    ai_config.vde_layer3_stuck_frames    = ai_cfg.vde_layer3_stuck_frames;
+    ai_config.vde_layer3_no_match_ms     = ai_cfg.vde_layer3_no_match_ms;
+    ai_config.vde_layer3_cooldown_ms     = ai_cfg.vde_layer3_cooldown_ms;
+
     // Pass VulkanContext for GPU compute backend
     mirage::vk::VulkanContext* vk_ctx = gui ? gui->vulkanContext() : nullptr;
     auto initResult = g_ai_engine->initialize(ai_config, vk_ctx);

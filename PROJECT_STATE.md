@@ -99,15 +99,15 @@
 
 ## GUI File Line Counts (Updated 2026-03-01)
 - gui_ai_panel.cpp:       663
-- gui_init.cpp:           802
-- gui_threads.cpp:        606
+- gui_init.cpp:           818
+- gui_threads.cpp:        642
 - gui_device_control.cpp: 539
 - gui_command.cpp:        356
 - gui_window.cpp:         237
-- gui_main.cpp:           279
+- gui_main.cpp:           295
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 3493 lines
+- TOTAL:                 3561 lines
 
 ## Key Decisions Log
 - 2026-02-24 Sess8: Migration Phase 3 COMPLETE. tools/ archive finalized, .gitignore patterns added, untracked patch scripts excluded.
