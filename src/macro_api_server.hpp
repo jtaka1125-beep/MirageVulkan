@@ -14,7 +14,10 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include "event_bus.hpp"
 #include <mutex>
+#include <map>
+#include <vector>
 #include <vector>
 #include "ai/ui_finder.hpp"
 
@@ -22,8 +25,6 @@
 #ifndef _WINSOCK2API_
 typedef unsigned long long SOCKET;
 #endif
-
-namespace mirage { class AdbH264Receiver; }
 
 namespace mirage {
 
@@ -91,8 +92,16 @@ private:
     std::string resolve_device_id(const std::string& device_id);
     std::string resolve_hw_id(const std::string& device_id);
 
-    // AdbH264Receiver: screenrecord H.264 fast screenshot
-    std::unique_ptr<AdbH264Receiver> adb_h264_receiver_;
+    // Per-device JPEGフレームキャッシュ (FrameReadyEventで更新)
+    struct JpegCache {
+        std::vector<uint8_t> jpeg;
+        int width = 0, height = 0;
+        uint64_t frame_id = 0;
+    };
+    mutable std::mutex jpeg_cache_mutex_;
+    std::map<std::string, JpegCache> jpeg_cache_;
+    std::atomic<bool> frame_cb_registered_{false};
+    mirage::SubscriptionHandle frame_sub_;
 
     std::atomic<bool> running_{false};
     int port_ = DEFAULT_PORT;
