@@ -40,18 +40,14 @@ namespace cmd = mirage::gui::command;
 // =============================================================================
 
 static LONG WINAPI mirageUnhandledExceptionFilter(EXCEPTION_POINTERS* ep) {
-    try { if (mirage::ctx().macro_api_server) mirage::ctx().macro_api_server->stop(); } catch (...) {}
+    // WSACleanupのみ: macro_api_serverはWSA_FLAG_NO_HANDLE_INHERITで対策済み
     WSACleanup();
     mirage::log::closeLogFile();
-    // デバッグ用: EXCEPTION_CONTINUE_SEARCHでOSにレポート生成させる
-    return EXCEPTION_CONTINUE_SEARCH;
+    return EXCEPTION_CONTINUE_SEARCH;  // OSのクラッシュレポーターに渡す
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                    LPSTR /*lpCmdLine*/, int nCmdShow) {
-
-    // SEH例外フィルタ登録 (クラッシュ時にソケットをクリーンアップ)
-    SetUnhandledExceptionFilter(mirageUnhandledExceptionFilter);
 
     // Initialize Winsock
     WSADATA wsaData;
@@ -198,6 +194,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
 
 #ifdef USE_OCR
     initializeOCR();
+#endif
+
+#if defined(USE_AI) && defined(USE_OCR)
+    // FrameAnalyzer -> AIEngine 接続 (OCRフォールバック有効化)
+    if (g_ai_engine) {
+        g_ai_engine->setFrameAnalyzer(&mirage::analyzer());
+        MLOG_INFO("gui", "FrameAnalyzer -> AIEngine connected (OCR fallback enabled)");
+        if (g_gui) g_gui->logInfo(u8"OCR -> AIEngine connected (OCR fallback enabled)");
+    }
 #endif
 
     // Start device update thread

@@ -16,6 +16,7 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include "ai/ui_finder.hpp"
 
 // WinSock forward declaration 繧帝∩縺代ヾOCKET蝙九□縺大ｮ夂ｾｩ
 #ifndef _WINSOCK2API_
@@ -67,7 +68,13 @@ private:
     std::string handle_force_stop(const std::string& device_id, const std::string& package);
     std::string handle_screenshot(const std::string& device_id);
 
-    // OCR繝上Φ繝峨Λ
+        // UiFinder - ADB fallback for click_text/click_id
+    std::string handle_ui_find(const std::string& device_id, const std::string& query, const std::string& strategy);
+    void ensure_ui_finder_initialized(const std::string& adb_id);
+    mirage::ai::UiFinder ui_finder_;
+    std::string ui_finder_last_adb_id_;
+
+// OCR繝上Φ繝峨Λ
 #ifdef MIRAGE_OCR_ENABLED
     std::string handle_ocr_analyze(const std::string& device_id);
     std::string handle_ocr_find_text(const std::string& device_id, const std::string& query);

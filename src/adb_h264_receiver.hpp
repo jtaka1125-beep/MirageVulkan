@@ -224,14 +224,25 @@ private:
         entry.hardware_id = ud.hardware_id;
         entry.adb_serial  = ud.preferred_adb_id;
 
-        int w = ud.screen_width  > 0 ? ud.screen_width  : 800;
-        int h = ud.screen_height > 0 ? ud.screen_height : 1344;
-        // H.264制限: 16の倍数
-        w = ((w + 15) / 16) * 16;
-        h = ((h + 15) / 16) * 16;
-        std::string size_str = std::to_string(w) + "x" + std::to_string(h);
-        entry.width  = w;
-        entry.height = h;
+        // サイズ指定: デバイス既知サイズがある場合のみ指定
+        // 0 or デバイスと合わない値は指定しない（screenrecordがハングする）
+        int w = ud.screen_width;
+        int h = ud.screen_height;
+        std::string size_str;
+        if (w > 0 && h > 0) {
+            // H.264制限: 16の倍数
+            w = ((w + 15) / 16) * 16;
+            h = ((h + 15) / 16) * 16;
+            // 最大解像度を1344に制限 (screenrecordの安全な上限)
+            if (w > 1344 || h > 1344) {
+                float scale = 1344.0f / std::max(w, h);
+                w = ((int)(w * scale + 15) / 16) * 16;
+                h = ((int)(h * scale + 15) / 16) * 16;
+            }
+            size_str = std::to_string(w) + "x" + std::to_string(h);
+        }
+        entry.width  = w > 0 ? w : 800;
+        entry.height = h > 0 ? h : 1344;
 
         SECURITY_ATTRIBUTES sa{};
         sa.nLength = sizeof(sa);
@@ -265,10 +276,14 @@ private:
             + "\"" + getAdb() + "\""  // "adb"
             + " -s " + ud.preferred_adb_id
             + " exec-out screenrecord --output-format=h264"
-              " --bit-rate 4M --size " + size_str + " --time-limit 0 -"
+              " --bit-rate 4M"
+            + (size_str.empty() ? "" : " --size " + size_str)
+            + " --time-limit 179 -"
             + " | \"" + getFfmpeg() + "\""  // | "ffmpeg"
-              " -loglevel quiet -f h264 -i pipe:0"
-              " -vf fps=15 -q:v 3 -f mjpeg pipe:1\"";  // pipe:1"
+              " -loglevel quiet"
+              " -probesize 32 -analyzeduration 0"
+              " -f h264 -i pipe:0"
+              " -q:v 2 -f mjpeg pipe:1\"";  // pipe:1"
 
         STARTUPINFOA si_pipe{};
         si_pipe.cb = sizeof(si_pipe);

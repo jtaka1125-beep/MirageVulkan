@@ -26,6 +26,8 @@
 #ifdef MIRAGE_OCR_ENABLED
 #include "frame_analyzer.hpp"
 #endif
+#include "ai/ui_finder.hpp"
+
 
 #include <algorithm>
 #include <sstream>

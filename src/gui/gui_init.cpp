@@ -743,6 +743,15 @@ void initializeAI() {
     ai_config.default_threshold = mirage::config::getConfig().ai.default_threshold;
     ai_config.enable_multi_scale = true;
 
+    // Apply VDE config from system config (if available)
+    const auto& ai_cfg = mirage::config::getConfig().ai;
+    if (ai_cfg.vde_confirm_count > 0)
+        ai_config.vde_confirm_count = ai_cfg.vde_confirm_count;
+    if (ai_cfg.vde_cooldown_ms > 0)
+        ai_config.vde_cooldown_ms = ai_cfg.vde_cooldown_ms;
+    if (ai_cfg.vde_debounce_window_ms > 0)
+        ai_config.vde_debounce_window_ms = ai_cfg.vde_debounce_window_ms;
+
     // Pass VulkanContext for GPU compute backend
     mirage::vk::VulkanContext* vk_ctx = gui ? gui->vulkanContext() : nullptr;
     auto initResult = g_ai_engine->initialize(ai_config, vk_ctx);

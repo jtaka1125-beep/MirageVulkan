@@ -44,6 +44,10 @@ struct AiConfig {
     bool enabled = true;
     std::string templates_dir = "templates";
     float default_threshold = 0.80f;
+    // VisionDecisionEngine settings (configurable via config.json)
+    int  vde_confirm_count      = 3;
+    int  vde_cooldown_ms        = 2000;
+    int  vde_debounce_window_ms = 500;
 };
 
 struct OcrConfig {
@@ -167,6 +171,9 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ai.enabled = jsonGet<bool>(j, "ai", "enabled", true);
         config.ai.templates_dir = jsonGet<std::string>(j, "ai", "templates_dir", "templates");
         config.ai.default_threshold = jsonGet<float>(j, "ai", "default_threshold", 0.80f);
+        config.ai.vde_confirm_count = jsonGet<int>(j, "ai", "vde_confirm_count", 3);
+        config.ai.vde_cooldown_ms = jsonGet<int>(j, "ai", "vde_cooldown_ms", 2000);
+        config.ai.vde_debounce_window_ms = jsonGet<int>(j, "ai", "vde_debounce_window_ms", 500);
 
         config.ocr.enabled = jsonGet<bool>(j, "ocr", "enabled", false);
         config.ocr.language = jsonGet<std::string>(j, "ocr", "language", "eng+jpn");
@@ -199,6 +206,9 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
     config.ai.templates_dir = extractJsonString(json, "templates_dir");
     if (config.ai.templates_dir.empty()) config.ai.templates_dir = "templates";
     config.ai.default_threshold = extractJsonFloat(json, "default_threshold", 0.80f);
+    config.ai.vde_confirm_count = extractJsonInt(json, "vde_confirm_count", 3);
+    config.ai.vde_cooldown_ms = extractJsonInt(json, "vde_cooldown_ms", 2000);
+    config.ai.vde_debounce_window_ms = extractJsonInt(json, "vde_debounce_window_ms", 500);
 
     config.ocr.enabled = extractJsonBool(json, "enabled", false);
     config.ocr.language = extractJsonString(json, "language");

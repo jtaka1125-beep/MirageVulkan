@@ -610,15 +610,15 @@ public:
 
 
 
-        vde_config.confirm_count = 3;
+        vde_config.confirm_count = config.vde_confirm_count;
 
 
 
-        vde_config.cooldown_ms = 2000;
+        vde_config.cooldown_ms = config.vde_cooldown_ms;
 
 
 
-        vde_config.debounce_window_ms = 500;
+        vde_config.debounce_window_ms = config.vde_debounce_window_ms;
 
 
 

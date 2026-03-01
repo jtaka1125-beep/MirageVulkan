@@ -59,7 +59,12 @@ std::string execCommandHidden(const std::string& cmd) {
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.hStdOutput = hWritePipe;
     si.hStdError = hWritePipe;
-    si.hStdInput = nullptr;
+    // NULを開いてstdinに設定 (nullptr/INVALIDだとadbがBEXでクラッシュする)
+    SECURITY_ATTRIBUTES sa_nul{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE hNulStdin = CreateFileA("NUL", GENERIC_READ,
+                                   FILE_SHARE_READ|FILE_SHARE_WRITE,
+                                   &sa_nul, OPEN_EXISTING, 0, nullptr);
+    si.hStdInput = hNulStdin;
     si.wShowWindow = SW_HIDE;
 
     PROCESS_INFORMATION pi = {};
@@ -69,6 +74,7 @@ std::string execCommandHidden(const std::string& cmd) {
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
         CloseHandle(hWritePipe);
         hWritePipe = nullptr;
+        if (hNulStdin != INVALID_HANDLE_VALUE) { CloseHandle(hNulStdin); hNulStdin = nullptr; }
 
         // Non-blocking read with 8s timeout (prevents hanging on unresponsive ADB)
         const DWORD EXEC_TIMEOUT_MS = 8000;

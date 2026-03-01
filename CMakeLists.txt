@@ -22,9 +22,9 @@ option(USE_VULKAN_VIDEO "Enable Vulkan Video H.264 decode" ON)
 option(USE_FFMPEG "Enable FFmpeg fallback decoder" ON)
 option(USE_LIBUSB "Enable USB AOA video receiver" ON)
 option(BUILD_TESTS "Build test executables" ON)
-option(USE_OCR "Enable Tesseract OCR frame analysis" OFF)
-option(MIRAGE_OCR_ENABLED "Enable OCR integration (alias for USE_OCR)" OFF)
-option(USE_AI "Enable AI engine (template matching + OCR integration)" OFF)
+option(USE_OCR "Enable Tesseract OCR frame analysis" ON)
+option(MIRAGE_OCR_ENABLED "Enable OCR integration (alias for USE_OCR)" ON)
+option(USE_AI "Enable AI engine (template matching + OCR integration)" ON)
 
 # =============================================================================
 # Find Vulkan

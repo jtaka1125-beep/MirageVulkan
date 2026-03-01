@@ -1,6 +1,7 @@
 # MirageSystem Project State
-# Updated: 2026-02-24 Session 8
+# Updated: 2026-03-01
 # Read at session start, updated at session end.
+# THIS IS THE MAIN REPOSITORY (MirageComplete is legacy/migrated)
 
 ## Current Phase: Migration Phase 3 COMPLETE + GUI Refactoring COMPLETE
 

@@ -43,6 +43,11 @@ struct AIConfig {
     // 改善M: ホットリロード
     bool hot_reload           = false;
     int  hot_reload_interval_ms = 1000;
+
+    // VisionDecisionEngine initial config
+    int  vde_confirm_count      = 3;     // DETECTED->CONFIRMED required consecutive detections
+    int  vde_cooldown_ms        = 2000;  // Cooldown after action (ms)
+    int  vde_debounce_window_ms = 500;   // Debounce window (ms)
 };
 
 struct AIAction {
