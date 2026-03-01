@@ -48,6 +48,12 @@ struct AiConfig {
     int  vde_confirm_count      = 3;
     int  vde_cooldown_ms        = 2000;
     int  vde_debounce_window_ms = 500;
+    // Layer 3 (OllamaVision)
+    bool vde_enable_layer3          = false;
+    int  vde_layer3_no_match_frames = 150;
+    int  vde_layer3_stuck_frames    = 300;
+    int  vde_layer3_no_match_ms     = 5000;
+    int  vde_layer3_cooldown_ms     = 30000;
 };
 
 struct OcrConfig {
@@ -174,6 +180,12 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ai.vde_confirm_count = jsonGet<int>(j, "ai", "vde_confirm_count", 3);
         config.ai.vde_cooldown_ms = jsonGet<int>(j, "ai", "vde_cooldown_ms", 2000);
         config.ai.vde_debounce_window_ms = jsonGet<int>(j, "ai", "vde_debounce_window_ms", 500);
+        // Layer 3
+        config.ai.vde_enable_layer3       = jsonGet<bool>(j, "ai", "vde_enable_layer3", false);
+        config.ai.vde_layer3_no_match_frames = jsonGet<int>(j, "ai", "vde_layer3_no_match_frames", 150);
+        config.ai.vde_layer3_stuck_frames = jsonGet<int>(j, "ai", "vde_layer3_stuck_frames", 300);
+        config.ai.vde_layer3_no_match_ms  = jsonGet<int>(j, "ai", "vde_layer3_no_match_ms", 5000);
+        config.ai.vde_layer3_cooldown_ms  = jsonGet<int>(j, "ai", "vde_layer3_cooldown_ms", 30000);
 
         config.ocr.enabled = jsonGet<bool>(j, "ocr", "enabled", false);
         config.ocr.language = jsonGet<std::string>(j, "ocr", "language", "eng+jpn");
@@ -209,6 +221,12 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
     config.ai.vde_confirm_count = extractJsonInt(json, "vde_confirm_count", 3);
     config.ai.vde_cooldown_ms = extractJsonInt(json, "vde_cooldown_ms", 2000);
     config.ai.vde_debounce_window_ms = extractJsonInt(json, "vde_debounce_window_ms", 500);
+    // Layer 3
+    config.ai.vde_enable_layer3       = extractJsonBool(json, "vde_enable_layer3", false);
+    config.ai.vde_layer3_no_match_frames = extractJsonInt(json, "vde_layer3_no_match_frames", 150);
+    config.ai.vde_layer3_stuck_frames = extractJsonInt(json, "vde_layer3_stuck_frames", 300);
+    config.ai.vde_layer3_no_match_ms  = extractJsonInt(json, "vde_layer3_no_match_ms", 5000);
+    config.ai.vde_layer3_cooldown_ms  = extractJsonInt(json, "vde_layer3_cooldown_ms", 30000);
 
     config.ocr.enabled = extractJsonBool(json, "enabled", false);
     config.ocr.language = extractJsonString(json, "language");

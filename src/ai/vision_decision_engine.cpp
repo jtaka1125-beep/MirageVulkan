@@ -90,6 +90,10 @@ VisionDecision VisionDecisionEngine::update(
             mirage::bus().publish(evt);
         }
         // ERROR_RECOVERY中はエラー以外のアクション抑制
+        // Layer3トリガーカウンタをリセット（エラー対応中は未知UIではない）
+        ds.consecutive_no_match = 0;
+        ds.consecutive_same_match = 0;
+        ds.last_any_match_time = now;
         decision.state = ds.state;
         return decision;
     }
@@ -117,6 +121,10 @@ VisionDecision VisionDecisionEngine::update(
             ds.cooldown_template_id.clear();
         } else {
             // まだCOOLDOWN中 — アクション抑制
+            // Layer3トリガーカウンタをリセット（冷却中は正常な待機状態）
+            ds.consecutive_no_match = 0;
+            ds.consecutive_same_match = 0;
+            ds.last_any_match_time = now;
             decision.state = VisionState::COOLDOWN;
             return decision;
         }
@@ -380,7 +388,15 @@ bool VisionDecisionEngine::isDebounced(
 // =============================================================================
 
 DeviceVisionState& VisionDecisionEngine::getOrCreateState(const std::string& device_id) {
-    return device_states_[device_id];
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) {
+        // 新規デバイス: last_any_match_time を now で初期化して起動即トリガーを防ぐ
+        DeviceVisionState& ds = device_states_[device_id];
+        ds.last_any_match_time = std::chrono::steady_clock::now();
+        ds.layer3_last_call   = std::chrono::steady_clock::now();
+        return ds;
+    }
+    return it->second;
 }
 
 void VisionDecisionEngine::transitionTo(DeviceVisionState& ds, VisionState new_state) {

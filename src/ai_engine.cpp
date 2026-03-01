@@ -64,6 +64,9 @@
 
 #include "ai/vision_decision_engine.hpp"
 #include "ai/ollama_vision.hpp"
+#include "ai/template_manifest.hpp"
+#include "ai/template_writer.hpp"
+#include "ai/template_capture.hpp"
 
 
 
@@ -76,6 +79,7 @@
 
 
 #include "stb_image.h"
+#include <cstring>
 
 
 
@@ -620,6 +624,12 @@ public:
 
 
         vde_config.debounce_window_ms = config.vde_debounce_window_ms;
+        // Layer 3 設定反映
+        vde_config.enable_layer3          = config.vde_enable_layer3;
+        vde_config.layer3_no_match_frames = config.vde_layer3_no_match_frames;
+        vde_config.layer3_stuck_frames    = config.vde_layer3_stuck_frames;
+        vde_config.layer3_no_match_ms     = config.vde_layer3_no_match_ms;
+        vde_config.layer3_cooldown_ms     = config.vde_layer3_cooldown_ms;
 
 
 
@@ -1230,11 +1240,74 @@ public:
 
     }
 
+    // Layer 3 検出成功時にテンプレートをファイル保存 & ランタイム登録
+    void registerLayer3Template(
+        const VisionDecisionEngine::Layer3Result& l3,
+        const uint8_t* rgba, int frame_w, int frame_h)
+    {
+        if (!vk_processor_ || config_.templates_dir.empty()) return;
 
+        // ROI: ボタン中心 ±80px（境界クランプ）
+        constexpr int HALF = 80;
+        int cx = l3.x, cy = l3.y;
+        int rx0 = std::max(0, cx - HALF);
+        int ry0 = std::max(0, cy - HALF);
+        int rx1 = std::min(frame_w, cx + HALF);
+        int ry1 = std::min(frame_h, cy + HALF);
+        int rw = rx1 - rx0, rh = ry1 - ry0;
+        if (rw <= 0 || rh <= 0) return;
 
+        // RGBA ROI 切り出し
+        std::vector<uint8_t> roi_rgba(rw * rh * 4);
+        for (int row = 0; row < rh; row++) {
+            const uint8_t* src = rgba + ((ry0 + row) * frame_w + rx0) * 4;
+            uint8_t* dst = roi_rgba.data() + row * rw * 4;
+            std::memcpy(dst, src, rw * 4);
+        }
 
+        // RGBA -> Gray8
+        std::vector<uint8_t> gray(rw * rh);
+        if (!vk_processor_->rgbaToGray(roi_rgba.data(), rw, rh, gray.data())) {
+            MLOG_WARN("ai", "Layer3 テンプレート: Gray変換失敗");
+            return;
+        }
 
+        // ファイル名: auto_<type>_<timestamp>.png
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::string fname = "auto_" + l3.type + "_" + std::to_string(now_ms) + ".png";
+        std::string fpath = config_.templates_dir + "/" + fname;
 
+        // PNG 保存
+        mirage::ai::Gray8 img;
+        img.w = rw; img.h = rh; img.stride = rw;
+        img.pix = std::move(gray);
+        auto wr = mirage::ai::writeGray8Png(fpath, img);
+        if (wr.is_err()) {
+            MLOG_WARN("ai", "Layer3 PNG保存失敗: %s", wr.error().message.c_str());
+            return;
+        }
+
+        // manifest.json 更新
+        std::string manifest_path = config_.templates_dir + "/manifest.json";
+        mirage::ai::TemplateManifest manifest;
+        mirage::ai::loadManifestJson(manifest_path, manifest);
+        mirage::ai::TemplateEntry entry;
+        entry.template_id = mirage::ai::allocateNextId(manifest);
+        entry.name  = "auto_" + l3.type + "_" + l3.button_text;
+        entry.file  = fname;
+        entry.w = rw; entry.h = rh;
+        entry.tags  = "layer3_auto";
+        manifest.entries.push_back(entry);
+        if (!mirage::ai::saveManifestJson(manifest_path, manifest)) {
+            MLOG_WARN("ai", "Layer3 manifest保存失敗");
+        }
+
+        // ランタイム登録（次フレームから Layer 1 で検出可能）
+        if (addTemplate(entry.name, roi_rgba.data(), rw, rh)) {
+            MLOG_INFO("ai", "Layer3 テンプレート自動登録: %s (%dx%d)", entry.name.c_str(), rw, rh);
+        }
+    }
 
     void clearTemplates() {
 
@@ -1718,6 +1791,8 @@ if (decision.should_act && can_send) {
                             stats_.idle_frames = 0;
                             stats_.actions_executed++;
                             MLOG_INFO("ai", "Layer 3 TAP: slot=%d (%d,%d) %s", slot, l3.x, l3.y, l3.button_text.c_str());
+                            // Layer 3 成功 → テンプレート自動登録（次回から Layer 1 で検出）
+                            registerLayer3Template(l3, rgba, width, height);
                         }
                     }
                     if (action.type == AIAction::Type::NONE) {
