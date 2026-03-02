@@ -380,7 +380,8 @@ int success = 0;
         }
 
         // Use dispatcher for unified SharedFrame delivery
-        std::string device_id = "slot_" + std::to_string(slot);
+        // device_id uses hardware_id for mainview matching; slot index for AI engine
+        std::string device_id = hardware_id;
         int source_port = 0;
         {
             std::lock_guard<std::mutex> lk(g_hwport_m);
