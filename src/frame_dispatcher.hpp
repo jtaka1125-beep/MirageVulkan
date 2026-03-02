@@ -3,6 +3,7 @@
 // =============================================================================
 // Service layer between receivers and GUI.
 // Auto-registers new devices, publishes FrameReadyEvent via EventBus.
+// Now uses SharedFrame for zero-copy frame delivery.
 // =============================================================================
 #pragma once
 #include "event_bus.hpp"
@@ -18,43 +19,36 @@ namespace mirage {
 
 class FrameDispatcher {
 public:
-    void dispatchFrame(const std::string& device_id,
-                       const uint8_t* rgba_data, int width, int height,
-                       uint64_t frame_id = 0) {
+    // SharedFrame-based dispatch (single copy, shared across all consumers)
+
+    // Direct SharedFrame dispatch (no copy, for internal use)
+    void dispatchSharedFrame(std::shared_ptr<SharedFrame> frame) {
+        if (!frame) return;
+
         // Auto-register new devices
         {
             std::lock_guard<std::mutex> lock(devices_mutex_);
-            if (known_devices_.find(device_id) == known_devices_.end()) {
-                known_devices_.insert(device_id);
+            if (known_devices_.find(frame->device_id) == known_devices_.end()) {
+                known_devices_.insert(frame->device_id);
 
                 DeviceConnectedEvent evt;
-                evt.device_id = device_id;
-                evt.display_name = device_id;
+                evt.device_id = frame->device_id;
+                evt.display_name = frame->device_id;
                 evt.connection_type = "auto";
                 bus().publish(evt);
 
-                MLOG_INFO("dispatch", "Auto-registered device: %s", device_id.c_str());
+                MLOG_INFO("dispatch", "Auto-registered device: %s", frame->device_id.c_str());
             }
         }
 
-
-        // Copy frame into persistent buffer so GUI/event consumers never see freed stack memory.
-        const size_t bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-        const uint8_t* stable_ptr = rgba_data;
-        if (rgba_data && bytes > 0) {
-            std::lock_guard<std::mutex> fl(frames_mutex_);
-            auto& buf = frame_buffers_[device_id];
-            if (buf.size() != bytes) buf.resize(bytes);
-            std::memcpy(buf.data(), rgba_data, bytes);
-            stable_ptr = buf.data();
-        }
-
         FrameReadyEvent evt;
-        evt.device_id = device_id;
-        evt.rgba_data = stable_ptr;
-        evt.width = width;
-        evt.height = height;
-        evt.frame_id = frame_id;
+        evt.device_id = frame->device_id;
+        evt.rgba_data = frame->data();
+        evt.width = frame->width;
+        evt.height = frame->height;
+        evt.frame_id = frame->frame_id;
+        evt.source_port = frame->source_port;
+        evt.frame = frame;
         bus().publish(evt);
     }
 
@@ -102,10 +96,6 @@ public:
 private:
     mutable std::mutex devices_mutex_;
     std::set<std::string> known_devices_;
-
-    // Persistent per-device RGBA buffers (FrameReadyEvent uses raw pointer; lifetime must outlive publish)
-    mutable std::mutex frames_mutex_;
-    std::unordered_map<std::string, std::vector<uint8_t>> frame_buffers_;
 };
 
 // Global dispatcher singleton

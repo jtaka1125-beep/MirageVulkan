@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem - GUI Initialization Helpers
 // =============================================================================
 // Split from gui_main.cpp for maintainability
@@ -12,34 +12,26 @@
 #include "mirage_config.hpp"
 #include "config_loader.hpp"
 #include "event_bus.hpp"
-#include "frame_dispatcher.hpp"
 #include "bandwidth_monitor.hpp"
 #include "winusb_checker.hpp"
 #include "route_controller.hpp"
 #include "vid0_parser.hpp"
 
 #include <thread>
-#include <chrono>
 #include <map>
 #include <unordered_map>
 #include <vector>
-#include <tuple>
 #include <fstream>
-#include <mutex>
+
 using namespace mirage::gui::state;
 using namespace mirage::gui::command;
 
 namespace mirage::gui::init {
 
-// Frame source diagnostics (hardware_id -> local TCP port)
-static std::mutex g_hwport_m;
-static std::unordered_map<std::string, int> g_hw_to_port;
-
-
 // =========================================================================
 // Helper: Auto-start MirageCapture ScreenCaptureService on one device
 // =========================================================================
-static void autoStartCaptureService(const std::string& adb_id, const std::string& display_name, int tcp_port = 0) {
+static void autoStartCaptureService(const std::string& adb_id, const std::string& display_name) {
     if (!g_adb_manager) return;
 
     std::string svc_check = g_adb_manager->adbCommand(adb_id,
@@ -52,7 +44,7 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
     MLOG_INFO("gui", "Auto-starting MirageCapture on %s (%s)", display_name.c_str(), adb_id.c_str());
     g_adb_manager->adbCommand(adb_id,
         "shell am start -n com.mirage.capture/.ui.CaptureActivity "
-        "--ez auto_mirror true --es mirror_mode tcp --ei tcp_port " + std::to_string(tcp_port > 0 ? tcp_port : 50100));
+        "--ez auto_mirror true --es mirror_mode tcp");
 
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
@@ -66,7 +58,7 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
         if (!ui_xml.empty()) {
             // Step 1: "全体" / "Entire screen" 選択 (Android 14+ の画面選択ダイアログ)
             // タップしないと "Start now" が押せない
-            for (const char* label : {"Entire screen", u8"\u5168\u4f53",  // 全体
+            for (const char* label : {"Entire screen", "\\xe5\\x85\\xa8\\xe4\\xbd\\x93",  // 全体
                                       "Whole screen", "Entire Screen"}) {
                 size_t label_pos = ui_xml.find(label);
                 if (label_pos == std::string::npos) continue;
@@ -277,7 +269,7 @@ bool initializeMultiReceiver() {
     // MirageCapture APK 縺後く繝｣繝励メ繝｣繝ｻ騾∽ｿ｡繧呈球縺・(scrcpy荳堺ｽｿ逕ｨ)
     // === Auto-start MirageCapture ScreenCaptureService on all devices ===
     for (const auto& dev : g_adb_manager->getUniqueDevices()) {
-        autoStartCaptureService(dev.preferred_adb_id, dev.display_name, dev.assigned_tcp_port);
+        autoStartCaptureService(dev.preferred_adb_id, dev.display_name);
     }
 
     auto devices = g_adb_manager->getUniqueDevices();
@@ -331,11 +323,6 @@ int success = 0;
                 else local_port = BASE_LOCAL_PORT + static_cast<int>(i) * 2;
             }
         }
-        {
-            std::lock_guard<std::mutex> lk(g_hwport_m);
-            g_hw_to_port[dev.hardware_id] = local_port;
-        }
-
 
         // adb forward險ｭ螳・
         std::string fwd_cmd = "forward tcp:" + std::to_string(local_port) +
@@ -357,49 +344,37 @@ int success = 0;
               success, devices.size());
 
     // 繝輔Ξ繝ｼ繝繧ｳ繝ｼ繝ｫ繝舌ャ繧ｯ險ｭ螳・ 繝・さ繝ｼ繝画ｸ医∩繝輔Ξ繝ｼ繝繧脱ventBus邨檎罰縺ｧGUI縺ｫ驟堺ｿ｡
-    // Frame callback: decoded frames -> EventBus for GUI/AI/Macro (unified path)
     g_multi_receiver->setFrameCallback([](const std::string& hardware_id, const ::gui::MirrorFrame& frame) {
-        // Convert hardware_id to slot_N format for AI engine
-        static std::unordered_map<std::string, int> s_hw_slot;
-        static std::mutex s_hw_mutex;
-        static bool s_async_started = false;
-        int slot = 0;
-        {
-            std::lock_guard<std::mutex> lk(s_hw_mutex);
-            auto it = s_hw_slot.find(hardware_id);
-            if (it == s_hw_slot.end()) {
-                slot = (int)s_hw_slot.size();
-                s_hw_slot[hardware_id] = slot;
-            } else {
-                slot = it->second;
-            }
-            if (!s_async_started && g_ai_engine && g_ai_enabled) {
-                g_ai_engine->setAsyncMode(true);
-                s_async_started = true;
-            }
-        }
+        // GUIと AI で同じフレームを共用
+        mirage::FrameReadyEvent evt;
+        evt.device_id = hardware_id;
+        evt.rgba_data = frame.rgba.data();
+        evt.width = frame.width;
+        evt.height = frame.height;
+        evt.frame_id = frame.frame_id;
+        mirage::bus().publish(evt);
 
-        // Use dispatcher for unified SharedFrame delivery
-        std::string device_id = "slot_" + std::to_string(slot);
-        int source_port = 0;
-        {
-            std::lock_guard<std::mutex> lk(g_hwport_m);
-            auto it = g_hw_to_port.find(hardware_id);
-            if (it != g_hw_to_port.end()) source_port = it->second;
-        }
-
-        // Single dispatchFrame call delivers to GUI, AI, Macro, OCR via EventBus
-        // dispatchSharedFrame: move frame.rgba (zero-copy)
-        {
-            auto sf = std::make_shared<mirage::SharedFrame>();
-            sf->width       = frame.width;
-            sf->height      = frame.height;
-            sf->frame_id    = frame.frame_id;
-            sf->device_id   = device_id;
-            sf->source_port = source_port;
-            auto vec_owner  = std::make_shared<std::vector<uint8_t>>(std::move(frame.rgba));
-            sf->rgba = std::shared_ptr<uint8_t[]>(vec_owner, vec_owner->data());
-            mirage::dispatcher().dispatchSharedFrame(sf);
+        // AI エンジンにも転送 (hardware_id -> slot 静的マッピング)
+        if (g_ai_engine && g_ai_enabled && frame.width > 0 && frame.height > 0) {
+            static std::unordered_map<std::string, int> s_hw_slot;
+            static std::mutex s_hw_mutex;
+            static bool s_async_started = false;
+            int slot = 0;
+            {
+                std::lock_guard<std::mutex> lk(s_hw_mutex);
+                auto it = s_hw_slot.find(hardware_id);
+                if (it == s_hw_slot.end()) {
+                    slot = (int)s_hw_slot.size();
+                    s_hw_slot[hardware_id] = slot;
+                } else {
+                    slot = it->second;
+                }
+                if (!s_async_started) {
+                    g_ai_engine->setAsyncMode(true);
+                    s_async_started = true;
+                }
+            }
+            g_ai_engine->processFrameAsync(slot, frame.rgba.data(), frame.width, frame.height);
         }
     });
 
@@ -656,7 +631,7 @@ static void onStartMirroring() {
     if (gui) gui->logInfo(u8"Starting mirroring on all devices...");
     auto all_devs = g_adb_manager->getUniqueDevices();
     for (const auto& dev : all_devs) {
-        autoStartCaptureService(dev.preferred_adb_id, dev.display_name, dev.assigned_tcp_port);
+        autoStartCaptureService(dev.preferred_adb_id, dev.display_name);
     }
     if (gui) gui->logInfo(u8"Mirroring started on " + std::to_string(all_devs.size()) + u8" device(s)");
 }
@@ -685,29 +660,7 @@ static void registerEventBusSubscriptions() {
     auto sub_frame = mirage::bus().subscribe<mirage::FrameReadyEvent>(
         [](const mirage::FrameReadyEvent& e) {
             auto gui = g_gui;
-            static std::mutex s_mu;
-            static std::unordered_map<std::string, std::tuple<int,int,int>> s_last;
-            static std::unordered_map<std::string, uint64_t> s_last_log_ms;
-            {
-                std::lock_guard<std::mutex> lk(s_mu);
-                auto cur = std::make_tuple(e.source_port, e.width, e.height);
-                auto it = s_last.find(e.device_id);
-                bool changed = (it == s_last.end() || it->second != cur);
-                uint64_t now_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-                uint64_t& last_ms = s_last_log_ms[e.device_id];
-                bool due = (now_ms - last_ms) >= 2000; // log at most once per 2s per device
-                if (changed || due) {
-                    s_last[e.device_id] = cur;
-                    last_ms = now_ms;
-                    std::string s = "id=" + e.device_id + " port=" + std::to_string(e.source_port) + " " + std::to_string(e.width) + "x" + std::to_string(e.height) + " frame_id=" + std::to_string((unsigned long long)e.frame_id);
-                    MLOG_INFO("ui", "FrameIn: %s", s.c_str());
-                }
-            }
-            if (gui) {
-                if (e.frame) {
-                    gui->queueFrame(e.device_id, e.frame);
-                }
-            }
+            if (gui) gui->queueFrame(e.device_id, e.rgba_data, e.width, e.height);
         });
     sub_frame.release();
 
@@ -794,7 +747,7 @@ void initializeGUI(HWND hwnd) {
     mirage::gui::GuiConfig config;
     config.window_width = 1920;
     config.window_height = 1080;
-    config.vsync = false;
+    config.vsync = true;
 
     if (!g_gui->initialize(hwnd, config)) {
         MLOG_ERROR("gui", "GUI initialization failed");
@@ -923,12 +876,5 @@ void initializeOCR() {
 #endif
 
 } // namespace mirage::gui::init
-
-
-
-
-
-
-
 
 

@@ -73,6 +73,7 @@ inline void write(Level level, const char* tag, const char* fmt, ...) {
     va_end(args);
     std::lock_guard<std::mutex> lock(g_log_mutex);
     fprintf(stderr, "%s [%s] [%s] (T%lu) %s\n", time_str, levelStr(level), tag, tid, msg);
+    fflush(stderr);
     if (g_log_file) {
         fprintf(g_log_file, "%s [%s] [%s] (T%lu) %s\n",
                 time_str, levelStr(level), tag, tid, msg);

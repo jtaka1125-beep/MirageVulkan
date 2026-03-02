@@ -2,6 +2,7 @@
 // MirageSystem - Frame Analyzer (Tesseract OCR)
 // =============================================================================
 // EventBus連携フレーム解析。FrameReadyEventからOCRテキスト抽出。
+// Now uses SharedFrame for zero-copy frame access.
 // Usage:
 //   mirage::analyzer().init("eng+jpn");
 //   mirage::analyzer().startCapture();
@@ -65,14 +66,14 @@ public:
     // 状態
     bool isInitialized() const { return initialized_.load(); }
 
-private:
-    struct FrameCache {
-        std::vector<uint8_t> rgba;
-        int width = 0;
-        int height = 0;
-        uint64_t frame_id = 0;
-    };
+    // SharedFrame直接アクセス（外部用）
+    std::shared_ptr<SharedFrame> getFrame(const std::string& device_id) const {
+        std::lock_guard<std::mutex> lock(frames_mutex_);
+        auto it = frames_.find(device_id);
+        return (it != frames_.end()) ? it->second : nullptr;
+    }
 
+private:
     // フレームイベントハンドラ
     void onFrame(const FrameReadyEvent& evt);
 
@@ -83,7 +84,7 @@ private:
     SubscriptionHandle frame_sub_;
 
     mutable std::mutex frames_mutex_;
-    std::map<std::string, FrameCache> frames_;  // device_id -> 最新フレーム
+    std::map<std::string, std::shared_ptr<SharedFrame>> frames_;  // device_id -> SharedFrame (zero-copy)
 
     // Tesseractインスタンス（スレッドセーフでないため ocr_mutex_ で保護）
     std::mutex ocr_mutex_;

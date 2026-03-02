@@ -118,6 +118,8 @@ class TcpVideoSender(
 
     override fun isActive(): Boolean = active.get()
 
+    override fun flush() { /* no-op: TCP is unbuffered per packet */ }
+
     override fun close() {
         if (!active.getAndSet(false)) return
 

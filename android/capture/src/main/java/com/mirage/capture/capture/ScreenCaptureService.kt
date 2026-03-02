@@ -74,6 +74,7 @@ class ScreenCaptureService : Service() {
     private var encoder: H264Encoder? = null
     private var videoSender: VideoSender? = null
     private var tcpSecondarySender: TcpVideoSender? = null
+    @Volatile private var primaryTcpPort: Int = DEFAULT_TCP_PORT
 
     // Public getter for CaptureActivity status display
     var mirrorMode: String = MIRROR_MODE_UDP
@@ -270,6 +271,7 @@ class ScreenCaptureService : Service() {
         }
 
         val tcpPort = intent?.getIntExtra(EXTRA_TCP_PORT, DEFAULT_TCP_PORT) ?: DEFAULT_TCP_PORT
+        primaryTcpPort = tcpPort
         videoSender = when (mirrorMode) {
             MIRROR_MODE_USB -> {
                 Log.w(TAG, "USB mode requested but no stream attached, falling back to UDP")
@@ -303,12 +305,12 @@ class ScreenCaptureService : Service() {
             return
         }
         try {
-            val tcpSender = TcpVideoSender(tcpPort + 1) {
+            val tcpSender = TcpVideoSender(primaryTcpPort + 1) {
                 encoder?.requestIdr()
             }
             tcpSecondarySender = tcpSender
             encoder?.addSecondarySender(tcpSender)
-            Log.i(TAG, "TCP secondary sender started on port ${tcpPort + 1} (for GUI)")
+            Log.i(TAG, "TCP secondary sender started on port ${primaryTcpPort + 1} (for GUI)")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to start TCP secondary sender: ${e.message}")
         }

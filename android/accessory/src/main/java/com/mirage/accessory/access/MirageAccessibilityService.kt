@@ -41,6 +41,8 @@ class MirageAccessibilityService : AccessibilityService() {
             "Screen capture", "Screen Cast", "画面のキャスト", "画面録画",
             "Cast screen", "MediaProjection", "casting", "screen sharing",
             "MirageCapture", "mirage.capture",
+            "アプリの共有または録画", "Share or record",  // Android 15 AppSelectorActivity
+            "画面全体", "Entire screen",                  // AppSelector tab
         )
     }
 
@@ -86,34 +88,69 @@ class MirageAccessibilityService : AccessibilityService() {
      * SystemUI上で「開始」「Start」「Start now」ボタンを検索し、
      * 見つかった場合は自動クリックする。
      */
+    /**
+     * MediaProjection許可フロー自動処理。
+     *
+     * Android 15のA9では3ステップ:
+     *   Step1: AppSelectorActivity → MirageCapture をクリック
+     *   Step2: AppSelectorActivity(全体タブ表示) → 「画面全体」タブをクリック
+     *   Step3: PermissionActivity → 「今すぐ開始」をクリック
+     *
+     * X1(Android版)はStep1スキップでStep3から始まる場合あり。
+     */
     private fun handleMediaProjectionDialog() {
         val root = rootInActiveWindow ?: return
-        // FIX-6: 日本語・英語・中国語ボタンテキストを拡充
-        val targets = listOf(
-            "開始", "Start", "Start now",
-            "Allow", "許可", "同意", "はい", "OK",
-        )
-        for (label in targets) {
+        val pkg = root.packageName?.toString() ?: ""
+
+        fun clickNode(node: android.view.accessibility.AccessibilityNodeInfo, label: String): Boolean {
+            if (node.isClickable) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "MediaProjection自動承認: $label clicked")
+                return true
+            }
+            var p = node.parent; var d = 0
+            while (p != null && d < 5) {
+                if (p.isClickable) {
+                    p.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "MediaProjection自動承認: $label clicked(parent d=$d)")
+                    return true
+                }
+                p = p.parent; d++
+            }
+            return false
+        }
+
+        if (pkg.contains("systemui", ignoreCase = true)) {
+
+            // --- Step1: AppSelectorActivity → まず「画面全体」タブを選択 ---
+            for (label in listOf("画面全体", "Entire screen", "Full screen")) {
+                val nodes = root.findAccessibilityNodeInfosByText(label)
+                if (!nodes.isNullOrEmpty()) {
+                    if (clickNode(nodes[0], "全体タブ:$label")) {
+                        Log.i(TAG, "MediaProjection Step1: 画面全体タブ選択")
+                        return  // 次のeventでStep2処理
+                    }
+                }
+            }
+
+            // --- Step2: 画面全体タブ選択後 → MirageCapture を選択 ---
+            for (label in listOf("MirageCapture", "Mirage Capture")) {
+                val nodes = root.findAccessibilityNodeInfosByText(label)
+                if (!nodes.isNullOrEmpty()) {
+                    if (clickNode(nodes[0], "AppSelector:$label")) {
+                        Log.i(TAG, "MediaProjection Step2: MirageCapture選択")
+                        return  // 次のeventでStep3処理
+                    }
+                }
+            }
+        }
+
+        // --- Step3: 「今すぐ開始」ボタン（PermissionActivity）---
+        for (label in listOf("今すぐ開始", "Start now")) {
             val nodes = root.findAccessibilityNodeInfosByText(label)
             if (nodes.isNullOrEmpty()) continue
             for (node in nodes) {
-                if (node.isClickable) {
-                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.i(TAG, "MediaProjection自動承認: $label")
-                    return
-                }
-                // 親を最大5段遡ってクリック可能なノードを探す
-                var parent = node.parent
-                var depth = 0
-                while (parent != null && depth < 5) {
-                    if (parent.isClickable) {
-                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.i(TAG, "MediaProjection自動承認(親 depth=$depth): $label")
-                        return
-                    }
-                    parent = parent.parent
-                    depth++
-                }
+                if (clickNode(node, "開始:$label")) return
             }
         }
     }

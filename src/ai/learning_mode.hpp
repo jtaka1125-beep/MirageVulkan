@@ -79,10 +79,15 @@ private:
     // フレームキャッシュ（最新フレームを保持）
     struct FrameCache {
         std::string device_id;
-        std::vector<uint8_t> rgba;
+        std::vector<uint8_t> rgba;                          // legacy path
+        std::shared_ptr<mirage::SharedFrame> shared_frame;  // zero-copy path
         int width = 0;
         int height = 0;
         uint64_t frame_id = 0;
+        // Returns raw pointer regardless of storage path
+        const uint8_t* data() const {
+            return shared_frame ? shared_frame->data() : (rgba.empty() ? nullptr : rgba.data());
+        }
     };
 
     mutable std::mutex mutex_;

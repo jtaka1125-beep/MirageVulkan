@@ -15,6 +15,20 @@ using namespace mirage;
 // FrameDispatcher uses the global bus(), so we test through the global singleton.
 // Each test creates a fresh FrameDispatcher instance for isolation.
 
+// Helper: wrap raw pointer into SharedFrame for tests
+static std::shared_ptr<mirage::SharedFrame> make_sf(
+    const std::string& dev, const uint8_t* rgba, int w, int h, uint64_t fid = 0) {
+    auto sf = std::make_shared<mirage::SharedFrame>();
+    sf->device_id = dev; sf->width = w; sf->height = h; sf->frame_id = fid;
+    if (rgba && w > 0 && h > 0) {
+        size_t bytes = (size_t)w * h * 4;
+        auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[bytes]);
+        std::memcpy(buf.get(), rgba, bytes);
+        sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
+    }
+    return sf;
+}
+
 class FrameDispatcherTest : public ::testing::Test {
 protected:
     FrameDispatcher fd;
@@ -82,7 +96,7 @@ TEST_F(FrameDispatcherTest, DispatchFrameAutoRegisters) {
     uint8_t dummy_rgba[4] = {255, 0, 0, 255};
 
     EXPECT_FALSE(fd.isKnownDevice("auto-dev"));
-    fd.dispatchFrame("auto-dev", dummy_rgba, 1, 1, 0);
+    fd.dispatchSharedFrame(make_sf("auto-dev", dummy_rgba, 1, 1, 0));
     EXPECT_TRUE(fd.isKnownDevice("auto-dev"));
 }
 
@@ -92,9 +106,9 @@ TEST_F(FrameDispatcherTest, DispatchFrameAutoRegisterOnlyOnce) {
     auto sub = bus().subscribe<DeviceConnectedEvent>(
         [&](const DeviceConnectedEvent&) { connect_count++; });
 
-    fd.dispatchFrame("once-dev", dummy_rgba, 1, 1, 0);
-    fd.dispatchFrame("once-dev", dummy_rgba, 1, 1, 1);
-    fd.dispatchFrame("once-dev", dummy_rgba, 1, 1, 2);
+    fd.dispatchSharedFrame(make_sf("once-dev", dummy_rgba, 1, 1, 0));
+    fd.dispatchSharedFrame(make_sf("once-dev", dummy_rgba, 1, 1, 1));
+    fd.dispatchSharedFrame(make_sf("once-dev", dummy_rgba, 1, 1, 2));
 
     // auto-register event should fire only for the first frame
     EXPECT_EQ(connect_count, 1);
@@ -117,7 +131,7 @@ TEST_F(FrameDispatcherTest, DispatchFramePublishesEvent) {
             received_frame_id = e.frame_id;
         });
 
-    fd.dispatchFrame("dev-1", rgba, 2, 2, 42);
+    fd.dispatchSharedFrame(make_sf("dev-1", rgba, 2, 2, 42));
 
     EXPECT_EQ(received_device, "dev-1");
     EXPECT_EQ(received_w, 2);
@@ -206,7 +220,7 @@ TEST_F(FrameDispatcherTest, ConcurrentDispatchNoDataRace) {
         threads.emplace_back([&, i]() {
             std::string dev = "dev-" + std::to_string(i);
             for (int j = 0; j < 100; j++) {
-                fd.dispatchFrame(dev, rgba, 1, 1, j);
+                fd.dispatchSharedFrame(make_sf(dev, rgba, 1, 1, j));
             }
         });
     }

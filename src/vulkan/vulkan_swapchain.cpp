@@ -78,7 +78,9 @@ bool VulkanSwapchain::createSwapchain(int w, int h) {
     std::vector<VkPresentModeKHR> pms(pc);
     vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface_, &pc, pms.data());
     VkPresentModeKHR pm = VK_PRESENT_MODE_FIFO_KHR;
-    for (auto m : pms) if (m == VK_PRESENT_MODE_MAILBOX_KHR) { pm = m; break; }
+    // Prefer IMMEDIATE > MAILBOX > FIFO for low latency
+  for (auto m : pms) if (m == VK_PRESENT_MODE_MAILBOX_KHR) { pm = m; }
+  for (auto m : pms) if (m == VK_PRESENT_MODE_IMMEDIATE_KHR) { pm = m; break; }
 
     if (caps.currentExtent.width != (std::numeric_limits<uint32_t>::max)())
         extent_ = caps.currentExtent;

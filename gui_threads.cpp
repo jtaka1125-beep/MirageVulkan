@@ -227,24 +227,17 @@ void adbDetectionThread() {
 static void updateSlotReceiverFrames(const std::shared_ptr<gui::GuiApplication>& gui) {
     for (int i = 0; i < MAX_SLOTS; i++) {
         if (g_receivers[i]) {
-            // Copy #1 eliminated: get_latest_shared_frame returns O(1) shared_ptr
-            std::shared_ptr<mirage::SharedFrame> sf_direct;
-            if (g_receivers[i]->get_latest_shared_frame(sf_direct) && sf_direct) {
-                std::string id = "slot_" + std::to_string(i);
-                sf_direct->device_id = id;
-                mirage::dispatcher().dispatchSharedFrame(sf_direct);
-                // Legacy MirrorFrame for AI code below (no rgba data, metadata only)
-                ::gui::MirrorFrame frame;
-                frame.width    = sf_direct->width;
-                frame.height   = sf_direct->height;
-                frame.frame_id = sf_direct->frame_id;
-                if (true) {
+            ::gui::MirrorFrame frame;
+            if (g_receivers[i]->get_latest_frame(frame)) {
+                if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
+                    std::string id = "slot_" + std::to_string(i);
+                    mirage::dispatcher().dispatchFrame(id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
 
 #ifdef USE_AI
                     if (g_ai_engine && g_ai_enabled) {
                         static bool s_async_started=false;
                         if(!s_async_started){g_ai_engine->setAsyncMode(true);s_async_started=true;}
-                        // processFrameAsync removed: dispatchFrame delivers via EventBus/onFrameReady
+                        g_ai_engine->processFrameAsync(i, frame.rgba.data(), frame.width, frame.height);
                         // Push match results to GUI overlays
                         if (gui) {
                             auto matches = g_ai_engine->getLastMatches();
@@ -382,17 +375,7 @@ static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplicatio
                 }
                 fps = st.last_fps;
             }
-            {
-                // dispatchSharedFrame: move update.frame.rgba (zero-copy)
-                auto sf = std::make_shared<mirage::SharedFrame>();
-                sf->width    = update.frame.width;
-                sf->height   = update.frame.height;
-                sf->frame_id = update.frame.frame_id;
-                sf->device_id = resolved_id;
-                auto vec_owner = std::make_shared<std::vector<uint8_t>>(std::move(update.frame.rgba));
-                sf->rgba = std::shared_ptr<uint8_t[]>(vec_owner, vec_owner->data());
-                mirage::dispatcher().dispatchSharedFrame(sf);
-            }
+            mirage::dispatcher().dispatchFrame(resolved_id, update.frame.rgba.data(), update.frame.width, update.frame.height, update.frame.frame_id);
             mirage::dispatcher().dispatchStatus(resolved_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive), fps, 0, 0);
         }
     }
@@ -410,17 +393,7 @@ static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplicatio
                     gui->setMainDevice(g_fallback_device_id);
                     g_fallback_device_added = true;
                 }
-                {
-                    // dispatchSharedFrame: move frame.rgba (fallback path, zero-copy)
-                    auto sf = std::make_shared<mirage::SharedFrame>();
-                    sf->width    = frame.width;
-                    sf->height   = frame.height;
-                    sf->frame_id = frame.frame_id;
-                    sf->device_id = g_fallback_device_id;
-                    auto vec_owner = std::make_shared<std::vector<uint8_t>>(std::move(frame.rgba));
-                    sf->rgba = std::shared_ptr<uint8_t[]>(vec_owner, vec_owner->data());
-                    mirage::dispatcher().dispatchSharedFrame(sf);
-                }
+                mirage::dispatcher().dispatchFrame(g_fallback_device_id, frame.rgba.data(), frame.width, frame.height, frame.frame_id);
                 mirage::dispatcher().dispatchStatus(g_fallback_device_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
             }
         }
@@ -653,7 +626,7 @@ void wifiAdbWatchdogThread() {
                               dev.display_name.c_str());
                     g_adb_manager->adbCommand(wifi_id,
                         "shell am start -n com.mirage.capture/.ui.CaptureActivity "
-                        "--ez auto_mirror true --es mirror_mode tcp --ei tcp_port " + std::to_string(dev.assigned_tcp_port > 0 ? dev.assigned_tcp_port : 50100));
+                        "--ez auto_mirror true --es mirror_mode tcp --ei mirror_port 50100");
                 }
             }
         }

@@ -92,15 +92,24 @@ void LearningMode::start() {
     // FrameReadyEvent を購読してフレームキャッシュを更新
     frame_sub_ = mirage::bus().subscribe<FrameReadyEvent>(
         [this](const FrameReadyEvent& e) {
-            if (!e.rgba_data || e.width <= 0 || e.height <= 0) return;
             std::lock_guard<std::mutex> lock(mutex_);
             auto& cache = frame_cache_[e.device_id];
-            size_t sz = static_cast<size_t>(e.width) * e.height * 4;
             cache.device_id = e.device_id;
-            cache.width = e.width;
-            cache.height = e.height;
             cache.frame_id = e.frame_id;
-            cache.rgba.assign(e.rgba_data, e.rgba_data + sz);
+            if (e.frame) {
+                // Zero-copy: store shared_ptr reference
+                cache.shared_frame = e.frame;
+                cache.width  = e.frame->width;
+                cache.height = e.frame->height;
+                cache.rgba.clear();  // not used when shared_frame is set
+            } else {
+                if (!e.rgba_data || e.width <= 0 || e.height <= 0) return;
+                size_t sz = static_cast<size_t>(e.width) * e.height * 4;
+                cache.shared_frame.reset();
+                cache.width = e.width;
+                cache.height = e.height;
+                cache.rgba.assign(e.rgba_data, e.rgba_data + sz);
+            }
         });
 
     // LearningStartEvent を購読してテンプレート学習を実行

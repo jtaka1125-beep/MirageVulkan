@@ -385,13 +385,20 @@ void MirrorReceiver::stop() {
 bool MirrorReceiver::get_latest_frame(MirrorFrame& out) {
   std::lock_guard<std::mutex> lock(frame_mtx_);
   if (!has_new_frame_) return false;
-  // Swap rgba buffers (O(1) pointer swap) instead of 8MB deep copy.
-  // The caller's old buffer is recycled by the decode thread next frame.
   out.width    = current_frame_.width;
   out.height   = current_frame_.height;
   out.frame_id = current_frame_.frame_id;
   out.pts_us   = current_frame_.pts_us;
-  std::swap(out.rgba, current_frame_.rgba);
+  // SharedFrame path only (current_frame_.rgba no longer populated)
+  has_new_frame_ = false;
+  return true;
+}
+
+// SharedFrame version: O(1) shared_ptr copy, no rgba memcpy
+bool MirrorReceiver::get_latest_shared_frame(std::shared_ptr<mirage::SharedFrame>& out) {
+  std::lock_guard<std::mutex> lock(frame_mtx_);
+  if (!has_new_frame_ || !current_shared_frame_) return false;
+  out = current_shared_frame_;  // O(1)
   has_new_frame_ = false;
   return true;
 }
@@ -1176,16 +1183,22 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
 
   const size_t frame_bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
 
-  current_frame_.width = width;
-  current_frame_.height = height;
-  current_frame_.frame_id = ++test_frame_id_;
-  current_frame_.pts_us = static_cast<uint64_t>(pts);
-
-  if (current_frame_.rgba.size() == frame_bytes) {
-    std::memcpy(current_frame_.rgba.data(), rgba, frame_bytes);
-  } else {
-    current_frame_.rgba.assign(rgba, rgba + frame_bytes);
+  // Copy once into SharedFrame (FFmpeg buffer expires after callback)
+  auto sf = std::make_shared<mirage::SharedFrame>();
+  sf->width    = width;
+  sf->height   = height;
+  sf->frame_id = ++test_frame_id_;
+  sf->pts_us   = static_cast<uint64_t>(pts);
+  if (frame_bytes > 0) {
+    auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[frame_bytes]);
+    std::memcpy(buf.get(), rgba, frame_bytes);
+    sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
+  current_shared_frame_ = sf;
+  current_frame_.width    = width;
+  current_frame_.height   = height;
+  current_frame_.frame_id = sf->frame_id;
+  current_frame_.pts_us   = sf->pts_us;
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
@@ -1203,16 +1216,22 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
 
   const size_t frame_bytes = static_cast<size_t>(width) * height * 4;
 
-  current_frame_.width = width;
-  current_frame_.height = height;
-  current_frame_.frame_id = ++test_frame_id_;
-  current_frame_.pts_us = pts;
-
-  if (current_frame_.rgba.size() == frame_bytes) {
-    std::memcpy(current_frame_.rgba.data(), rgba, frame_bytes);
-  } else {
-    current_frame_.rgba.assign(rgba, rgba + frame_bytes);
+  // Copy once into SharedFrame
+  auto sf = std::make_shared<mirage::SharedFrame>();
+  sf->width    = width;
+  sf->height   = height;
+  sf->frame_id = ++test_frame_id_;
+  sf->pts_us   = pts;
+  if (frame_bytes > 0) {
+    auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[frame_bytes]);
+    std::memcpy(buf.get(), rgba, frame_bytes);
+    sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
+  current_shared_frame_ = sf;
+  current_frame_.width    = width;
+  current_frame_.height   = height;
+  current_frame_.frame_id = sf->frame_id;
+  current_frame_.pts_us   = sf->pts_us;
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
@@ -1233,9 +1252,9 @@ void MirrorReceiver::generate_test_frame(int w, int h) {
   current_frame_.frame_id = ++test_frame_id_;
   current_frame_.pts_us = test_frame_id_ * 33333;
 
-  current_frame_.rgba.resize(w * h * 4);
-
-  uint8_t* px = current_frame_.rgba.data();
+  const size_t tf_bytes = static_cast<size_t>(w) * h * 4;
+  auto tf_buf = std::shared_ptr<uint8_t[]>(new uint8_t[tf_bytes]);
+  uint8_t* px = tf_buf.get();
   int bar_width = w / 8;
 
   uint8_t colors[8][4] = {
@@ -1264,6 +1283,13 @@ void MirrorReceiver::generate_test_frame(int w, int h) {
     }
   }
 
+  auto tf_sf = std::make_shared<mirage::SharedFrame>();
+  tf_sf->width    = w;
+  tf_sf->height   = h;
+  tf_sf->frame_id = current_frame_.frame_id;
+  tf_sf->pts_us   = current_frame_.pts_us;
+  tf_sf->rgba     = std::shared_ptr<const uint8_t[]>(std::move(tf_buf));
+  current_shared_frame_ = std::move(tf_sf);
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
 }

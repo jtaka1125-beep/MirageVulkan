@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "event_bus.hpp"
 #include <cstdint>
 #include <vector>
 #include <mutex>
@@ -89,6 +90,8 @@ public:
 
   // Get latest frame (thread-safe, returns false if no new frame)
   bool get_latest_frame(MirrorFrame& out);
+  // SharedFrame version: zero-copy delivery (preferred)
+  bool get_latest_shared_frame(std::shared_ptr<mirage::SharedFrame>& out);
 
   // Stats
   uint64_t packets_received() const { return packets_received_.load(); }
@@ -124,7 +127,8 @@ private:
 
   // Frame buffer
   std::mutex frame_mtx_;
-  MirrorFrame current_frame_;
+  MirrorFrame current_frame_;   // legacy (kept for compatibility)
+  std::shared_ptr<mirage::SharedFrame> current_shared_frame_;  // preferred
   bool has_new_frame_ = false;
 
   // RTP depacketizer state

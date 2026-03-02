@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem - Event Bus
 // =============================================================================
 // Thread-safe, type-erased publish/subscribe event system.
@@ -41,39 +41,16 @@ struct DeviceDisconnectedEvent : Event {
     std::string device_id;
 };
 
-// =============================================================================
-// SharedFrame - Reference-counted frame buffer for zero-copy delivery
-// =============================================================================
-// All consumers (GUI, AI, Macro, OCR) share the same buffer via shared_ptr.
-// Eliminates redundant memcpy operations across the frame processing pipeline.
-// =============================================================================
-struct SharedFrame {
-    std::shared_ptr<const uint8_t[]> rgba;   // Reference-counted RGBA buffer
-    int width = 0;
-    int height = 0;
-    uint64_t frame_id = 0;
-    std::string device_id;
-    int source_port = 0;
-    uint64_t pts_us = 0;  // presentation timestamp (us)
-
-    // Convenience accessor for legacy raw pointer APIs (temporary, for migration)
-    const uint8_t* data() const { return rgba.get(); }
-    size_t size_bytes() const { return static_cast<size_t>(width) * height * 4; }
-};
-
 // Frame delivery
 struct FrameReadyEvent : Event {
     std::string device_id;
-    const uint8_t* rgba_data = nullptr;      // Legacy: will be deprecated
+    const uint8_t* rgba_data = nullptr;
     int width = 0;
     int height = 0;
     uint64_t frame_id = 0;
     // Optional: where this frame came from (TCP local port, USB=0, unknown=-1)
     // Used for GUI diagnostics to correlate texture updates with receiver routes.
     int source_port = 0;
-
-    // New: shared ownership frame (preferred over rgba_data)
-    std::shared_ptr<SharedFrame> frame;
 };
 
 // Device status
@@ -85,7 +62,7 @@ struct DeviceStatusEvent : Event {
     float bandwidth_mbps = 0;
 };
 
-// コマンドソース種別（AI自動/ユーザー操作/マクロ）
+// 繧ｳ繝槭Φ繝峨た繝ｼ繧ｹ遞ｮ蛻･・・I閾ｪ蜍・繝ｦ繝ｼ繧ｶ謇句虚/繝槭け繝ｭ・・
 enum class CommandSource { AI, USER, MACRO };
 
 // Commands (GUI/AI/Macro -> backend)
@@ -108,7 +85,7 @@ struct KeyCommandEvent : Event {
     CommandSource source = CommandSource::USER;
 };
 
-// 改善: AI決定アクション通知イベント
+// 謾ｹ蝟Т: AI豎ｺ螳壹い繧ｯ繧ｷ繝ｧ繝ｳ騾夂衍繧､繝吶Φ繝・
 struct AIActionEvent : Event {
     int slot = 0;
     std::string device_id;
@@ -122,9 +99,9 @@ struct AIActionEvent : Event {
 // Learning mode (GUI -> AI)
 struct LearningStartEvent : Event {
     std::string device_id;
-    std::string name_stem;         // テンプレート名のベース（例: "home_button"）
-    int roi_x = 0, roi_y = 0;     // ROI左上座標（フレーム座標系 px）
-    int roi_w = 0, roi_h = 0;     // ROIサイズ（px）
+    std::string name_stem;         // 繝・Φ繝励Ξ繝ｼ繝亥錐縺ｮ繝吶・繧ｹ・井ｾ・ "home_button"・・
+    int roi_x = 0, roi_y = 0;     // ROI蟾ｦ荳雁ｺｧ讓呻ｼ医ヵ繝ｬ繝ｼ繝蠎ｧ讓咏ｳｻ px・・
+    int roi_w = 0, roi_h = 0;     // ROI繧ｵ繧､繧ｺ・・x・・
 };
 
 struct LearningCaptureEvent : Event {
@@ -134,10 +111,10 @@ struct LearningCaptureEvent : Event {
     std::string name_stem;
     int template_id = -1;
     int w = 0, h = 0;
-    std::string saved_file_rel;    // manifest相対パス
+    std::string saved_file_rel;    // manifest逶ｸ蟇ｾ繝代せ
 };
 
-// AI テンプレートマッチング結果
+// AI 繝・Φ繝励Ξ繝ｼ繝医・繝・メ繝ｳ繧ｰ邨先棡
 struct MatchResultEvent : Event {
     std::string device_id;
     struct Match {
@@ -145,7 +122,7 @@ struct MatchResultEvent : Event {
         int x = 0, y = 0;
         float score = 0.0f;
         int template_id = -1;
-        // テンプレートサイズ情報
+        // 繝・Φ繝励Ξ繝ｼ繝医し繧､繧ｺ諠・ｱ
         int template_width = 0;
         int template_height = 0;
     };
@@ -154,20 +131,20 @@ struct MatchResultEvent : Event {
     double process_time_ms = 0.0;
 };
 
-// OCR テキスト認識結果（AIEngine → GUI/ログ用）
+// OCR 繝・く繧ｹ繝郁ｪ崎ｭ倡ｵ先棡・・IEngine 竊・GUI/繝ｭ繧ｰ逕ｨ・・
 struct OcrMatchResult : Event {
     std::string device_id;
-    std::string text;          // 認識テキスト
-    int x = 0, y = 0;         // テキスト中心座標
-    float confidence = 0.0f;   // 信頼度 (0-100)
+    std::string text;          // 隱崎ｭ倥ユ繧ｭ繧ｹ繝・
+    int x = 0, y = 0;         // 繝・く繧ｹ繝井ｸｭ蠢・ｺｧ讓・
+    float confidence = 0.0f;   // 菫｡鬆ｼ蠎ｦ (0-100)
 };
 
-// AI 状態遷移イベント（VisionDecisionEngine → GUI/ログ用）
+// AI 迥ｶ諷矩・遘ｻ繧､繝吶Φ繝茨ｼ・isionDecisionEngine 竊・GUI/繝ｭ繧ｰ逕ｨ・・
 struct StateChangeEvent : Event {
     std::string device_id;
-    int old_state = 0;         // VisionState enum値
-    int new_state = 0;         // VisionState enum値
-    std::string template_id;   // 関連テンプレートID（空の場合あり）
+    int old_state = 0;         // VisionState enum蛟､
+    int new_state = 0;         // VisionState enum蛟､
+    std::string template_id;   // 髢｢騾｣繝・Φ繝励Ξ繝ｼ繝・D・育ｩｺ縺ｮ蝣ｴ蜷医≠繧奇ｼ・
     int64_t timestamp = 0;     // steady_clock epoch ms
 };
 
@@ -201,7 +178,7 @@ public:
     SubscriptionHandle& operator=(const SubscriptionHandle&) = delete;
 
     void release() { unsub_ = nullptr; } // detach: subscription lives forever
-    explicit operator bool() const { return static_cast<bool>(unsub_); } // activeチェック
+    explicit operator bool() const { return static_cast<bool>(unsub_); } // active繝√ぉ繝・け
 
 private:
     std::function<void()> unsub_;

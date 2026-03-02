@@ -17,7 +17,6 @@ namespace mirage::video {
 // =============================================================================
 struct UnifiedDecoder::FFmpegDecoder {
     std::unique_ptr<::gui::H264Decoder> decoder;
-    std::vector<uint8_t> frame_buffer;
 
     bool init(VideoCodec codec) {
         decoder = std::make_unique<::gui::H264Decoder>();
@@ -25,14 +24,12 @@ struct UnifiedDecoder::FFmpegDecoder {
     }
 
     void setCallback(std::function<void(const uint8_t*, int, int, int64_t)> cb) {
-        // IMPORTANT: H264Decoder's callback pointer is only valid during the callback.
-        // Copy into a persistent buffer before forwarding.
-        decoder->set_frame_callback([this, cb](const uint8_t* data, int w, int h, uint64_t pts) {
+        // H264Decoder ptr is valid only during this callback.
+        // Pass directly to cb (on_unified_frame) which does the single copy into SharedFrame.
+        // frame_buffer intermediate copy eliminated.
+        decoder->set_frame_callback([cb](const uint8_t* data, int w, int h, uint64_t pts) {
             if (!data || w <= 0 || h <= 0) return;
-            const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4;
-            if (frame_buffer.size() != bytes) frame_buffer.resize(bytes);
-            std::memcpy(frame_buffer.data(), data, bytes);
-            cb(frame_buffer.data(), w, h, static_cast<int64_t>(pts));
+            cb(data, w, h, static_cast<int64_t>(pts));
         });
     }
 

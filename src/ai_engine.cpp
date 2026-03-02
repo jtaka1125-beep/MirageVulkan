@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 
 
 
@@ -1417,6 +1417,7 @@ public:
 
 
 
+        std::lock_guard<std::mutex> vk_lk(vk_processor_mutex_);
         auto* gray_gpu = vk_processor_->rgbaToGrayGpu(rgba, width, height);
 
 
@@ -2607,7 +2608,8 @@ if (decision.should_act && can_send) {
 
 
 
-                    auto action = processFrame(job.slot, job.rgba.data(), job.width, job.height, job.can_send);
+                    const uint8_t* rgba_ptr = job.frame ? job.frame->data() : job.rgba.data();
+                    auto action = processFrame(job.slot, rgba_ptr, job.width, job.height, job.can_send);
 
 
 
@@ -2784,6 +2786,22 @@ if (decision.should_act && can_send) {
 
     }
 
+    void enqueueAsyncFrameShared(int slot, std::shared_ptr<mirage::SharedFrame> frm, bool can_send) {
+        if (slot < 0 || slot >= kMaxAsyncSlots || !frm) return;
+        AsyncFrameJob job;
+        job.slot = slot;
+        job.frame = frm;
+        job.width = frm->width;
+        job.height = frm->height;
+        job.can_send = can_send;
+        {
+            std::lock_guard<std::mutex> lk(async_q_mutexes_[slot]);
+            while (async_queues_[slot].size() >= 2) async_queues_[slot].pop();
+            async_queues_[slot].push(std::move(job));
+        }
+        async_q_cvs_[slot].notify_one();
+    }
+
 
 
     void setHotReload(bool enable, int interval_ms) {
@@ -2935,25 +2953,11 @@ private:
 
 
     struct AsyncFrameJob {
-
-
-
-        int slot;
-
-
-
-        std::vector<uint8_t> rgba;
-
-
-
-        int width, height;
-
-
-
-        bool can_send;
-
-
-
+        int slot = 0;
+        std::vector<uint8_t> rgba;                    // legacy path
+        std::shared_ptr<mirage::SharedFrame> frame;   // zero-copy path (preferred)
+        int width = 0, height = 0;
+        bool can_send = false;
     };
 
 
@@ -3004,8 +3008,20 @@ private:
 
 
     void onFrameReady(const mirage::FrameReadyEvent& evt) {
-        // GUI経由フレームはgui_init.cppのsetFrameCallbackでAIに直接転送
-        (void)evt;
+        if (!evt.frame && !evt.rgba_data) return;
+        int slot = 0;
+        const std::string& did = evt.device_id;
+        if (did.size() > 5 && did.substr(0, 5) == "slot_") {
+            try { slot = std::stoi(did.substr(5)); } catch (...) { slot = 0; }
+        }
+        if (slot < 0 || slot >= kMaxAsyncSlots) return;
+        // can_send is resolved at AIEngine level; use true here to pass frame through
+        // processFrame() itself checks action validity before sending
+        if (evt.frame) {
+            enqueueAsyncFrameShared(slot, evt.frame, true);
+        } else {
+            enqueueAsyncFrame(slot, evt.rgba_data, evt.width, evt.height, true);
+        }
     }
 
 
@@ -4346,6 +4362,7 @@ private:
 
 
     std::unique_ptr<mirage::vk::VulkanComputeProcessor> vk_processor_;
+    std::mutex vk_processor_mutex_;
 
 
 
@@ -5231,6 +5248,7 @@ std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() co
 
 
 #endif // USE_AI
+
 
 
 

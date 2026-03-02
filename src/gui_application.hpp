@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "event_bus.hpp"
 
 // Vulkan backend
 #include "vulkan/vulkan_context.hpp"
@@ -288,7 +289,9 @@ public:
     
     // Thread-safe frame queue (call from any thread)
     // This copies data to queue, main thread processes with processPendingFrames()
-    void queueFrame(const std::string& id, const uint8_t* rgba_data, int width, int height);
+
+    // SharedFrame version (zero-copy, preferred)
+    void queueFrame(const std::string& id, std::shared_ptr<mirage::SharedFrame> frame);
     
     // Process pending frames - MUST be called from main thread only
     void processPendingFrames();
@@ -432,6 +435,7 @@ private:
     // === Thread-safe frame queue ===
     struct PendingFrame {
         std::vector<uint8_t> rgba_data;
+        std::shared_ptr<mirage::SharedFrame> shared_frame;  // Zero-copy alternative
         int width = 0;
         int height = 0;
     };

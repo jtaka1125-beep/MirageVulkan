@@ -209,21 +209,26 @@ bool MacroApiServer::start(int port) {
     if (!frame_cb_registered_.exchange(true)) {
         frame_sub_ = mirage::bus().subscribe<FrameReadyEvent>(
             [this](const FrameReadyEvent& e) {
-                if (!e.rgba_data || e.width <= 0 || e.height <= 0) return;
+                // Use SharedFrame if available (zero-copy), otherwise legacy pointer
+                const uint8_t* rgba = e.frame ? e.frame->data() : e.rgba_data;
+                int width = e.frame ? e.frame->width : e.width;
+                int height = e.frame ? e.frame->height : e.height;
+
+                if (!rgba || width <= 0 || height <= 0) return;
                 std::vector<uint8_t> jpeg;
-                jpeg.reserve(e.width * e.height / 4);
+                jpeg.reserve(width * height / 4);
                 auto write_cb = [](void* ctx, void* data, int size) {
                     auto* buf = reinterpret_cast<std::vector<uint8_t>*>(ctx);
                     auto* p = reinterpret_cast<uint8_t*>(data);
                     buf->insert(buf->end(), p, p + size);
                 };
-                stbi_write_jpg_to_func(write_cb, &jpeg, e.width, e.height, 4, e.rgba_data, 85);
+                stbi_write_jpg_to_func(write_cb, &jpeg, width, height, 4, rgba, 85);
                 if (jpeg.empty()) return;
                 std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
                 auto& entry = jpeg_cache_[e.device_id];
                 entry.jpeg   = std::move(jpeg);
-                entry.width  = e.width;
-                entry.height = e.height;
+                entry.width  = width;
+                entry.height = height;
                 entry.frame_id = e.frame_id;
             });
         MLOG_INFO("macro_api", "Frame cache: subscribed to FrameReadyEvent");

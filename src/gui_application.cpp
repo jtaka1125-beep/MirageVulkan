@@ -29,21 +29,6 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace mirage::gui {
 
-// === Rotate RGBA buffer 90deg clockwise (portrait view for landscape frames) ===
-static void RotateRgba90CW(const uint8_t* src, int sw, int sh, std::vector<uint8_t>& dst) {
-    const int dw = sh;
-    const int dh = sw;
-    dst.resize((size_t)dw * (size_t)dh * 4);
-    for (int y = 0; y < sh; y++) {
-        for (int x = 0; x < sw; x++) {
-            int dx = sh - 1 - y;
-            int dy = x;
-            const uint8_t* sp = src + ((size_t)y * sw + x) * 4;
-            uint8_t* dp = dst.data() + ((size_t)dy * dw + dx) * 4;
-            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
-        }
-    }
-}
 
 
 // =============================================================================
@@ -261,17 +246,14 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
     const uint8_t* rgba_ptr = rgba_data;
 
     bool x1_rotated = false;
-    // Force portrait rotate for X1 when incoming frame is landscape.
-    // Must happen BEFORE expected-resolution checks so frames are not rejected.
+    // GPU rotation: X1 landscape frame detected, skip CPU RotateRgba90CW.
+    // Texture uploaded as landscape; render applies AddImageQuad UV 90°CW.
     {
         const bool isX1 = (id.find("f1925da3_") != std::string::npos);
         const bool frameLandscape = (width > height);
-        if (isX1 && frameLandscape && rgba_ptr) {
-            static thread_local std::vector<uint8_t> rotate_buf;
-            RotateRgba90CW(rgba_ptr, width, height, rotate_buf);
-            rgba_ptr = rotate_buf.data();
-            std::swap(width, height);
+        if (isX1 && frameLandscape) {
             x1_rotated = true;
+            // No CPU copy: rotation handled in gui_render_main_view via UV transform
         }
     }
 
@@ -435,9 +417,10 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
 }
 
 // Thread-safe frame queue - can be called from any thread
+
+// SharedFrame version (zero-copy)
 void GuiApplication::queueFrame(const std::string& id,
-                                 const uint8_t* rgba_data,
-                                 int width, int height) {
+                                 std::shared_ptr<mirage::SharedFrame> frame) {
     // Freeze diagnostics: count queued frames
     {
         std::lock_guard<std::mutex> dlock(devices_mutex_);
@@ -447,19 +430,17 @@ void GuiApplication::queueFrame(const std::string& id,
         }
     }
 
-    if (!rgba_data || width <= 0 || height <= 0) return;
-
-    size_t data_size = static_cast<size_t>(width) * height * 4;
+    if (!frame || !frame->data() || frame->width <= 0 || frame->height <= 0) return;
 
     {
         std::lock_guard<std::mutex> lock(pending_frames_mutex_);
 
-        // Overwrite existing entry for this device (auto-discard old frame)
-        auto& frame = pending_frames_[id];
-        frame.width = width;
-        frame.height = height;
-        frame.rgba_data.resize(data_size);
-        std::memcpy(frame.rgba_data.data(), rgba_data, data_size);
+        // Store SharedFrame reference (zero-copy)
+        auto& pf = pending_frames_[id];
+        pf.shared_frame = frame;
+        pf.rgba_data.clear();  // Don't use legacy data when SharedFrame is set
+        pf.width = frame->width;
+        pf.height = frame->height;
 
         // 実際の受信FPSを計測
         auto now = std::chrono::steady_clock::now();
@@ -474,7 +455,7 @@ void GuiApplication::queueFrame(const std::string& id,
         }
     }
 
-    // 計測FPSでdevice statsを更新 (pending_frames_mutex_外で取得)
+    // 計測FPSでdevice statsを更新
     float measured = 0.0f;
     {
         std::lock_guard<std::mutex> lock(pending_frames_mutex_);
@@ -489,11 +470,6 @@ void GuiApplication::queueFrame(const std::string& id,
         if (dit != devices_.end()) {
             dit->second.fps = measured;
         }
-    }
-
-    static std::atomic<int> dbg_count{0};
-    if (dbg_count.fetch_add(1) < 10) {
-        MLOG_INFO("app", "[queueFrame] device=%s w=%d h=%d (latest only)", id.c_str(), width, height);
     }
 }
 
@@ -526,7 +502,9 @@ void GuiApplication::processPendingFrames() {
             MLOG_INFO("app", "[processPendingFrames] -> updateDeviceFrame device=%s w=%d h=%d",
                       device_id.c_str(), frame.width, frame.height);
         }
-        updateDeviceFrame(device_id, frame.rgba_data.data(), frame.width, frame.height);
+        // Use SharedFrame if available (zero-copy), otherwise legacy data
+        const uint8_t* rgba_ptr = frame.shared_frame ? frame.shared_frame->data() : frame.rgba_data.data();
+        updateDeviceFrame(device_id, rgba_ptr, frame.width, frame.height);
     }
 }
 

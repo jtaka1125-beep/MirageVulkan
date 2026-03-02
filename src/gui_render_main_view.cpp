@@ -250,7 +250,11 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
 
 
     if (device.vk_texture_ds && device.texture_width > 0 && device.texture_height > 0) {
-        float aspect = static_cast<float>(device.texture_width) / device.texture_height;
+        // GPU-rotated: swap aspect so layout treats landscape texture as portrait
+        const bool gpu_rotated = (device.transform.rotation == 90);
+        float aspect = gpu_rotated
+            ? static_cast<float>(device.texture_height) / device.texture_width
+            : static_cast<float>(device.texture_width)  / device.texture_height;
         float container_aspect = w / h;  // Safe: h > 0 guaranteed above
 
         if (aspect > container_aspect) {
@@ -315,12 +319,26 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
             main_view_rect_.valid = true;
         }
 
-        // Draw texture
-        draw_list->AddImage(
-            reinterpret_cast<ImTextureID>(device.vk_texture_ds),
-            ImVec2(img_x, img_y),
-            ImVec2(img_x + img_w, img_y + img_h)
-        );
+        // Draw texture (GPU rotation via UV for 90°CW, zero CPU copy)
+        if (gpu_rotated) {
+            draw_list->AddImageQuad(
+                reinterpret_cast<ImTextureID>(device.vk_texture_ds),
+                ImVec2(img_x,       img_y),        // p1 top-left
+                ImVec2(img_x+img_w, img_y),        // p2 top-right
+                ImVec2(img_x+img_w, img_y+img_h), // p3 bottom-right
+                ImVec2(img_x,       img_y+img_h), // p4 bottom-left
+                ImVec2(0.0f, 1.0f),               // uv1: tex bottom-left
+                ImVec2(0.0f, 0.0f),               // uv2: tex top-left
+                ImVec2(1.0f, 0.0f),               // uv3: tex top-right
+                ImVec2(1.0f, 1.0f)                // uv4: tex bottom-right
+            );
+        } else {
+            draw_list->AddImage(
+                reinterpret_cast<ImTextureID>(device.vk_texture_ds),
+                ImVec2(img_x, img_y),
+                ImVec2(img_x + img_w, img_y + img_h)
+            );
+        }
 
 
 

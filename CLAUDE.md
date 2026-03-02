@@ -165,7 +165,7 @@ docs/            # 設計ドキュメント
 - **APKはrelease署名必須** — debug署名だとAccessoryが動かない（AOA認証に影響）
 
 ### プロトコル
-- **Protocol.kt 3箇所同期必須** — PC側、accessory、captureの3つ。1つでも漏れると通信失敗
+- **Protocol.kt 3箇所同期必須** — PC側、accessory、captureの3つ、1つでも漏れると通信失敗
 - **MIRA packetはリトルエンディアン** — Javaのデフォルト(BE)と逆なので注意
 
 ### TCPポート割り当てルール
@@ -182,3 +182,67 @@ docs/            # 設計ドキュメント
 - **ReTRY HUBのポートサイクルは1秒以上待つ** — 短すぎると認識失敗
 - **X1はUSBハブ経由だと電力不足になることがある** — 直結推奨
 - **デバイスoffline時の復旧**: 個別ポートではなくサブハブ全体(Port:2)をOFF→ONする
+
+
+## IP/Port 二段構えルール（BuildConfig + Intent + 自動割当）
+
+### 目的
+- 通常運用は「起動するだけ」で IP/Port をデフォルト適用（手間削減）
+- 例外時は PC→Android の Intent extra で従来通り上書き可能
+- 未確定でも衝突しないように自動割当し、決まったら固定化して以降は確認だけで回す
+
+### 採用優先順位（必須）
+1. Intent extra（PC側から渡す値）
+2. BuildConfig に焼き込んだデフォルト（APKビルド時設定）
+3. 自動割当（未確定・未設定時のみ）
+4. 最後の保険のハードコード（可能なら排除）
+
+### 対象パラメータ
+- TCP ミラー: tcp_port（※TCPミラーではIP不要：ADB forwardでPC localhost接続）
+- UDP ミラー: host / port
+
+### Build時デフォルト（APKに焼き込む）
+- BuildConfig.DEFAULT_TCP_PORT
+- BuildConfig.DEFAULT_HOST
+- BuildConfig.DEFAULT_UDP_PORT
+
+### 実行時上書き（現行維持）
+- Intent extra:
+  - tcp_port（--ei tcp_port）
+  - host（--es host）
+  - port（--ei port）
+- ただし通常運用では渡さなくても動く（= デフォルトが効く）
+
+### 未確定時の自動割当（衝突回避 + 固定化）
+- 自動割当が発動する条件:
+  - extra が無い（0/未設定）かつ BuildConfig も未設定（0/未設定）
+
+#### TCPポート自動割当（推奨）
+- base = 50100
+- step = 2（偶数のみ使用。port+1 を二次用途に空けやすい）
+- 初期候補: p = base + slot*step
+
+slot の決め方（推奨順）
+- A: devices.json に slot を持つ（最優先・安定）
+- B: hardware_id / usb_serial を hash して slot 化（自動・安定）
+
+衝突回避（必須）
+- 衝突判定:
+  - devices.json の既存 tcp_port（予約済み）
+  - PC側 LISTEN 中ポート（実使用中）
+- 衝突したら p += step で空きを探索して採用（探索上限を設ける）
+
+固定化（重要）
+- 自動割当で決めた tcp_port は devices.json に書き戻して固定化
+- 次回以降は同一端末が同一ポートを使う（運用は確認だけ）
+
+### IPの未確定時の扱い
+- 端末識別は hardware_id / usb_serial を主キーにする（IPはDHCPで変動しうる）
+- 接続時に得た adb_id（ip:5555）から最新IPを devices.json に更新して追従
+
+### “確認だけで済む”ログ要件
+起動時に必ず1行ログで以下を出す:
+- default（BuildConfig）/ extra（Intent）/ auto（自動割当）/ use（採用値）/ 衝突解決回数（shift）
+
+例:
+- CFG tcp: build=50100 extra=0 auto=50104 shift=2 -> use=50104 | udp: build=192.168.0.2:50000 extra=:0 -> use=...
