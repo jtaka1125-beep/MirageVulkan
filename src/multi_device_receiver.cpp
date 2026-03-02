@@ -225,7 +225,6 @@ void MultiDeviceReceiver::setFrameCallback(FrameCallback cb) {
 
 void MultiDeviceReceiver::framePollThreadFunc() {
     MLOG_INFO("multi", "フレームポーリングスレッド開始");
-    MirrorFrame frame;
 
     while (frame_poll_running_.load() && running_) {
         // 各デバイスのフレームをポーリング
@@ -240,10 +239,8 @@ void MultiDeviceReceiver::framePollThreadFunc() {
 
         for (const auto& hw_id : device_ids) {
             if (!frame_poll_running_.load()) break;
-            // get_latest_frame()がtrue返す = 新フレームあり → callback + stats更新
-            if (get_latest_frame(hw_id, frame)) {
-                // frame_callback_はget_latest_frame()内で呼ばれる
-            }
+            std::shared_ptr<mirage::SharedFrame> sf;
+            get_latest_shared_frame(hw_id, sf);  // callback fired inside if sf valid
         }
 
         // ~60FPS相当のポーリング間隔
@@ -309,15 +306,30 @@ bool MultiDeviceReceiver::get_latest_frame(const std::string& hardware_id, Mirro
             entry.last_stats_time = now;
         }
 
-        // Call frame callback if set
-        if (frame_callback_) {
-            frame_callback_(hardware_id, out);
-        }
+        // Call frame callback if set (legacy MirrorFrame path)
+        // Use get_latest_shared_frame for SharedFrame callback
+
 
         return true;
     }
 
     return false;
+}
+
+bool MultiDeviceReceiver::get_latest_shared_frame(const std::string& hardware_id,
+                                                    std::shared_ptr<mirage::SharedFrame>& out) {
+    std::lock_guard<std::mutex> lock(receivers_mutex_);
+    auto it = receivers_.find(hardware_id);
+    if (it == receivers_.end()) return false;
+    auto& entry = it->second;
+    if (!entry.receiver) return false;
+    if (!entry.receiver->get_latest_shared_frame(out)) return false;
+    entry.frames++;
+    entry.last_frame_time = std::chrono::steady_clock::now();
+    if (frame_callback_) {
+        frame_callback_(hardware_id, out);  // SharedFrame direct
+    }
+    return true;
 }
 
 bool MultiDeviceReceiver::get_latest_frame_by_port(int port, MirrorFrame& out) {

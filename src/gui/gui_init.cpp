@@ -358,7 +358,7 @@ int success = 0;
 
     // 繝輔Ξ繝ｼ繝繧ｳ繝ｼ繝ｫ繝舌ャ繧ｯ險ｭ螳・ 繝・さ繝ｼ繝画ｸ医∩繝輔Ξ繝ｼ繝繧脱ventBus邨檎罰縺ｧGUI縺ｫ驟堺ｿ｡
     // Frame callback: decoded frames -> EventBus for GUI/AI/Macro (unified path)
-    g_multi_receiver->setFrameCallback([](const std::string& hardware_id, const ::gui::MirrorFrame& frame) {
+    g_multi_receiver->setFrameCallback([](const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame) {
         // Convert hardware_id to slot_N format for AI engine
         static std::unordered_map<std::string, int> s_hw_slot;
         static std::mutex s_hw_mutex;
@@ -388,18 +388,11 @@ int success = 0;
             if (it != g_hw_to_port.end()) source_port = it->second;
         }
 
-        // Single dispatchFrame call delivers to GUI, AI, Macro, OCR via EventBus
-        // dispatchSharedFrame: move frame.rgba (zero-copy)
+        // SharedFrame direct dispatch (no MirrorFrame::rgba copy)
         {
-            auto sf = std::make_shared<mirage::SharedFrame>();
-            sf->width       = frame.width;
-            sf->height      = frame.height;
-            sf->frame_id    = frame.frame_id;
-            sf->device_id   = device_id;
-            sf->source_port = source_port;
-            auto vec_owner  = std::make_shared<std::vector<uint8_t>>(std::move(frame.rgba));
-            sf->rgba = std::shared_ptr<uint8_t[]>(vec_owner, vec_owner->data());
-            mirage::dispatcher().dispatchSharedFrame(sf);
+            frame->device_id   = device_id;
+            frame->source_port = source_port;
+            mirage::dispatcher().dispatchSharedFrame(frame);
         }
     });
 

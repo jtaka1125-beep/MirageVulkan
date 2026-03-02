@@ -36,7 +36,7 @@ public:
         uint64_t last_frame_time = 0;
     };
 
-    using FrameCallback = std::function<void(const std::string& hardware_id, const MirrorFrame& frame)>;
+    using FrameCallback = std::function<void(const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame)>;
 
     MultiDeviceReceiver();
     ~MultiDeviceReceiver();
@@ -57,6 +57,7 @@ public:
 
     // Get frame for specific device
     bool get_latest_frame(const std::string& hardware_id, MirrorFrame& out);
+    bool get_latest_shared_frame(const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame>& out);
 
     // Get frame for device by port
     bool get_latest_frame_by_port(int port, MirrorFrame& out);

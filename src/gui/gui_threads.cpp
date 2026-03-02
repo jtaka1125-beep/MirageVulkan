@@ -313,7 +313,7 @@ static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplicatio
         // Get frames from per-device decoders
         struct FrameUpdate {
             std::string device_id;
-            ::gui::MirrorFrame frame;
+            std::shared_ptr<mirage::SharedFrame> sf_frame;  // SharedFrame direct
             uint64_t frames_decoded;
             uint64_t packets_received;
         };
@@ -324,16 +324,14 @@ static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplicatio
             for (auto& [device_id, decoder] : g_usb_decoders) {
                 if (!decoder) continue;
 
-                ::gui::MirrorFrame frame;
-                if (decoder->get_latest_frame(frame)) {
-                    if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-                        FrameUpdate update;
-                        update.device_id = device_id;
-                        update.frame = std::move(frame);
-                        update.frames_decoded = decoder->frames_decoded();
-                        update.packets_received = decoder->packets_received();
-                        frame_updates.push_back(std::move(update));
-                    }
+                std::shared_ptr<mirage::SharedFrame> sf;
+                if (decoder->get_latest_shared_frame(sf) && sf) {
+                    FrameUpdate update;
+                    update.device_id = device_id;
+                    update.sf_frame = std::move(sf);
+                    update.frames_decoded = decoder->frames_decoded();
+                    update.packets_received = decoder->packets_received();
+                    frame_updates.push_back(std::move(update));
                 }
             }
         }
@@ -383,48 +381,14 @@ static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplicatio
                 fps = st.last_fps;
             }
             {
-                // dispatchSharedFrame: move update.frame.rgba (zero-copy)
-                auto sf = std::make_shared<mirage::SharedFrame>();
-                sf->width    = update.frame.width;
-                sf->height   = update.frame.height;
-                sf->frame_id = update.frame.frame_id;
-                sf->device_id = resolved_id;
-                auto vec_owner = std::make_shared<std::vector<uint8_t>>(std::move(update.frame.rgba));
-                sf->rgba = std::shared_ptr<uint8_t[]>(vec_owner, vec_owner->data());
-                mirage::dispatcher().dispatchSharedFrame(sf);
+                // SharedFrame direct dispatch (no MirrorFrame::rgba copy)
+                update.sf_frame->device_id = resolved_id;
+                mirage::dispatcher().dispatchSharedFrame(update.sf_frame);
             }
             mirage::dispatcher().dispatchStatus(resolved_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive), fps, 0, 0);
         }
     }
 
-    // Fallback: Update from hybrid receiver if no per-device decoders active
-    // NOTE: g_hybrid_receiver is currently always nullptr (MirageCapture TCP path
-    // handles video via g_usb_decoders + g_multi_receiver). This block is kept
-    // for future compatibility if HybridReceiver is re-enabled.
-    if (g_hybrid_receiver && g_hybrid_receiver->running() && g_usb_decoders.empty()) {
-        ::gui::MirrorFrame frame;
-        if (g_hybrid_receiver->get_latest_frame(frame)) {
-            if (frame.width > 0 && frame.height > 0 && !frame.rgba.empty()) {
-                if (!g_fallback_device_added) {
-                    mirage::dispatcher().registerDevice(g_fallback_device_id, "Hybrid Device", "hybrid");
-                    gui->setMainDevice(g_fallback_device_id);
-                    g_fallback_device_added = true;
-                }
-                {
-                    // dispatchSharedFrame: move frame.rgba (fallback path, zero-copy)
-                    auto sf = std::make_shared<mirage::SharedFrame>();
-                    sf->width    = frame.width;
-                    sf->height   = frame.height;
-                    sf->frame_id = frame.frame_id;
-                    sf->device_id = g_fallback_device_id;
-                    auto vec_owner = std::make_shared<std::vector<uint8_t>>(std::move(frame.rgba));
-                    sf->rgba = std::shared_ptr<uint8_t[]>(vec_owner, vec_owner->data());
-                    mirage::dispatcher().dispatchSharedFrame(sf);
-                }
-                mirage::dispatcher().dispatchStatus(g_fallback_device_id, static_cast<int>(mirage::gui::DeviceStatus::AndroidActive));
-            }
-        }
-    }
 
     // Note: g_multi_receiver frame delivery is handled by framePollThread via setFrameCallback
     // (gui_init.cpp). Polling get_latest_frame here races with has_new_frame_ flag causing
