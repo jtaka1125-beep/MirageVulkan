@@ -385,10 +385,10 @@ void MirrorReceiver::stop() {
 bool MirrorReceiver::get_latest_frame(MirrorFrame& out) {
   std::lock_guard<std::mutex> lock(frame_mtx_);
   if (!has_new_frame_) return false;
-  out.width    = current_frame_.width;
-  out.height   = current_frame_.height;
-  out.frame_id = current_frame_.frame_id;
-  out.pts_us   = current_frame_.pts_us;
+  out.width    = cur_width_;
+  out.height   = cur_height_;
+  out.frame_id = cur_frame_id_;
+  out.pts_us   = cur_pts_us_;
   // SharedFrame path only (current_frame_.rgba no longer populated)
   has_new_frame_ = false;
   return true;
@@ -1195,10 +1195,10 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
     sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
   current_shared_frame_ = sf;
-  current_frame_.width    = width;
-  current_frame_.height   = height;
-  current_frame_.frame_id = sf->frame_id;
-  current_frame_.pts_us   = sf->pts_us;
+  cur_width_    = width;
+  cur_height_   = height;
+  cur_frame_id_ = sf->frame_id;
+  cur_pts_us_   = sf->pts_us;
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
@@ -1228,10 +1228,10 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
     sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
   current_shared_frame_ = sf;
-  current_frame_.width    = width;
-  current_frame_.height   = height;
-  current_frame_.frame_id = sf->frame_id;
-  current_frame_.pts_us   = sf->pts_us;
+  cur_width_    = width;
+  cur_height_   = height;
+  cur_frame_id_ = sf->frame_id;
+  cur_pts_us_   = sf->pts_us;
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
@@ -1247,10 +1247,10 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
 void MirrorReceiver::generate_test_frame(int w, int h) {
   std::lock_guard<std::mutex> lock(frame_mtx_);
 
-  current_frame_.width = w;
-  current_frame_.height = h;
-  current_frame_.frame_id = ++test_frame_id_;
-  current_frame_.pts_us = test_frame_id_ * 33333;
+  cur_width_ = w;
+  cur_height_ = h;
+  cur_frame_id_ = ++test_frame_id_;
+  cur_pts_us_ = test_frame_id_ * 33333;
 
   const size_t tf_bytes = static_cast<size_t>(w) * h * 4;
   auto tf_buf = std::shared_ptr<uint8_t[]>(new uint8_t[tf_bytes]);
@@ -1286,8 +1286,8 @@ void MirrorReceiver::generate_test_frame(int w, int h) {
   auto tf_sf = std::make_shared<mirage::SharedFrame>();
   tf_sf->width    = w;
   tf_sf->height   = h;
-  tf_sf->frame_id = current_frame_.frame_id;
-  tf_sf->pts_us   = current_frame_.pts_us;
+  tf_sf->frame_id = cur_frame_id_;
+  tf_sf->pts_us   = cur_pts_us_;
   tf_sf->rgba     = std::shared_ptr<const uint8_t[]>(std::move(tf_buf));
   current_shared_frame_ = std::move(tf_sf);
   has_new_frame_ = true;

@@ -127,7 +127,11 @@ private:
 
   // Frame buffer
   std::mutex frame_mtx_;
-  MirrorFrame current_frame_;   // legacy (kept for compatibility)
+  // Metadata fields (replaces MirrorFrame current_frame_; rgba never populated)
+  int      cur_width_    = 0;
+  int      cur_height_   = 0;
+  uint64_t cur_frame_id_ = 0;
+  uint64_t cur_pts_us_   = 0;
   std::shared_ptr<mirage::SharedFrame> current_shared_frame_;  // preferred
   bool has_new_frame_ = false;
 
