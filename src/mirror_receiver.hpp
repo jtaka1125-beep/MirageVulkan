@@ -25,6 +25,67 @@ class UnifiedDecoder;
 namespace gui {
 
 /**
+ * Frame buffer pool for zero-allocation frame delivery.
+ * Pre-allocates buffers and recycles them via custom deleter.
+ * Thread-safe for concurrent acquire/release.
+ */
+class FrameBufferPool {
+public:
+  explicit FrameBufferPool(size_t buffer_size, size_t pool_size = 8)
+      : buffer_size_(buffer_size), pool_size_(pool_size) {
+    for (size_t i = 0; i < pool_size_; ++i) {
+      pool_.push(new uint8_t[buffer_size_]);
+    }
+  }
+
+  ~FrameBufferPool() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    while (!pool_.empty()) {
+      delete[] pool_.front();
+      pool_.pop();
+    }
+  }
+
+  // Acquire buffer with custom deleter that returns to pool
+  std::shared_ptr<uint8_t[]> acquire() {
+    uint8_t* raw = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!pool_.empty()) {
+        raw = pool_.front();
+        pool_.pop();
+        pool_hits_++;
+      }
+    }
+    if (!raw) {
+      raw = new uint8_t[buffer_size_];
+      pool_misses_++;
+    }
+    // Custom deleter returns buffer to pool
+    return std::shared_ptr<uint8_t[]>(raw, [this](uint8_t* p) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (pool_.size() < pool_size_ * 2) {  // Allow some growth
+        pool_.push(p);
+      } else {
+        delete[] p;  // Pool overflow, delete
+      }
+    });
+  }
+
+  size_t buffer_size() const { return buffer_size_; }
+  uint64_t hits() const { return pool_hits_.load(); }
+  uint64_t misses() const { return pool_misses_.load(); }
+
+private:
+  size_t buffer_size_;
+  size_t pool_size_;
+  std::queue<uint8_t*> pool_;
+  std::mutex mutex_;
+  std::atomic<uint64_t> pool_hits_{0};
+  std::atomic<uint64_t> pool_misses_{0};
+};
+
+/**
  * Mirror video frame (decoded RGBA)
  */
 struct MirrorFrame {
@@ -180,6 +241,9 @@ private:
 
   // Test pattern state
   uint64_t test_frame_id_ = 0;
+
+  // Frame buffer pool (reduces malloc overhead at 60fps)
+  std::unique_ptr<FrameBufferPool> frame_pool_;
 
   // Unified decoder (Vulkan Video / FFmpeg fallback)
   std::unique_ptr<mirage::video::UnifiedDecoder> unified_decoder_;

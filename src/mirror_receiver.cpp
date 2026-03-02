@@ -1190,7 +1190,13 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
   sf->frame_id = ++test_frame_id_;
   sf->pts_us   = static_cast<uint64_t>(pts);
   if (frame_bytes > 0) {
-    auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[frame_bytes]);
+    // Use buffer pool if available and size matches, else fallback to new
+    std::shared_ptr<uint8_t[]> buf;
+    if (frame_pool_ && frame_pool_->buffer_size() == frame_bytes) {
+      buf = frame_pool_->acquire();
+    } else {
+      buf = std::shared_ptr<uint8_t[]>(new uint8_t[frame_bytes]);
+    }
     std::memcpy(buf.get(), rgba, frame_bytes);
     sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
@@ -1202,6 +1208,12 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
+
+  // Initialize pool on first frame with known resolution
+  if (!frame_pool_ && frame_bytes > 0) {
+    frame_pool_ = std::make_unique<FrameBufferPool>(frame_bytes, 8);
+    MLOG_INFO("mirror", "FrameBufferPool initialized: %zu bytes x 8", frame_bytes);
+  }
 
   static bool first_unified_frame = true;
   if (first_unified_frame) {
@@ -1223,7 +1235,13 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
   sf->frame_id = ++test_frame_id_;
   sf->pts_us   = pts;
   if (frame_bytes > 0) {
-    auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[frame_bytes]);
+    // Use buffer pool if available and size matches, else fallback to new
+    std::shared_ptr<uint8_t[]> buf;
+    if (frame_pool_ && frame_pool_->buffer_size() == frame_bytes) {
+      buf = frame_pool_->acquire();
+    } else {
+      buf = std::shared_ptr<uint8_t[]>(new uint8_t[frame_bytes]);
+    }
     std::memcpy(buf.get(), rgba, frame_bytes);
     sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
@@ -1235,6 +1253,12 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
+
+  // Initialize pool on first frame with known resolution
+  if (!frame_pool_ && frame_bytes > 0) {
+    frame_pool_ = std::make_unique<FrameBufferPool>(frame_bytes, 8);
+    MLOG_INFO("mirror", "FrameBufferPool initialized: %zu bytes x 8", frame_bytes);
+  }
 
   static bool first_frame = true;
   if (first_frame) {
