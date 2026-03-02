@@ -91,7 +91,6 @@ private:
 struct MirrorFrame {
   int width = 0;
   int height = 0;
-  std::vector<uint8_t> rgba;
   uint64_t pts_us = 0;
   uint64_t frame_id = 0;
 };
