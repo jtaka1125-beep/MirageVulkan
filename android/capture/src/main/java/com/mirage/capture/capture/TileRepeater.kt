@@ -194,8 +194,10 @@ class TileRepeater(
                         continue
                     }
 
-                    // set viewport to tile output size
-                    GLES20.glViewport(0, 0, oe.out.tileW, oe.out.tileH)
+                    // set viewport to exact slice size (NOT tileH which is align16-padded)
+                    // tileH=1008 vs sliceH=1000: using tileH would stretch 1000 content rows to 1008px
+                    val sliceH = targetH / oe.out.tilesY
+                    GLES20.glViewport(0, 0, oe.out.tileW, sliceH)
 
                     // compute normalized crop rect in source space
                     // Note: OpenGL texture V coordinate is flipped (0=bottom, 1=top)
