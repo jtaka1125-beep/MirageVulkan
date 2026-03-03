@@ -132,7 +132,8 @@ public:
   bool start_tcp(uint16_t tcp_port);
 
   // Start TCP receive mode for VID0-framed RTP (MirageCapture TcpVideoSender)
-  bool start_tcp_vid0(uint16_t tcp_port);
+  // host: IP address to connect to (default "127.0.0.1" for adb forward, or device Wi-Fi IP)
+  bool start_tcp_vid0(uint16_t tcp_port, const std::string& host = "127.0.0.1");
 
   bool running() const { return running_.load(); }
 
@@ -183,6 +184,7 @@ private:
   std::atomic<bool> running_{false};
   std::atomic<uint16_t> bound_port_{0};
   uint16_t tcp_port_{0};  // TCP port for direct connection (TcpVideoSender / VID0)
+  std::string tcp_host_{"127.0.0.1"};  // TCP host for direct connection
   std::thread thread_;
 
   // Frame buffer

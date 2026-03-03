@@ -6,6 +6,7 @@
 
 #include <winsock2.h>
 #include <set>
+#include <map>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 
@@ -545,20 +546,19 @@ std::string MacroApiServer::handle_list_devices() {
     std::vector<std::string> hybrid_ids;
     if (hybrid) hybrid_ids = hybrid->get_device_ids();
 
-    // AOA matching: キャッシュのみ使用 (adbコマンド呼び出しなし→タイムアウト防止)
+    // AOA matching: resolveUsbSerialを使ってUSBシリアル→hardware_idを解決
     std::set<std::string> aoa_hw_ids;
+    std::map<std::string, std::string> hw_to_usb;  // hardware_id -> usb_serial
     for (const auto& usb_serial : hybrid_ids) {
-        // getUniqueDevices結果からusb_serialを照合
-        bool matched = false;
-        for (const auto& ud : devices) {
-            if (ud.hardware_id == usb_serial ||
-                ud.usb_serial == usb_serial) {
-                aoa_hw_ids.insert(ud.hardware_id);
-                matched = true;
-                break;
-            }
+        // resolveUsbSerialでhardware_idを取得（ro.serialnoクエリ含む）
+        std::string hw_id = mgr->resolveUsbSerial(usb_serial);
+        if (!hw_id.empty()) {
+            aoa_hw_ids.insert(hw_id);
+            hw_to_usb[hw_id] = usb_serial;
+        } else {
+            // フォールバック: usb_serial自体をキーとして使用
+            aoa_hw_ids.insert(usb_serial);
         }
-        if (!matched) aoa_hw_ids.insert(usb_serial); // raw fallback
     }
 
     json arr = json::array();
@@ -574,8 +574,13 @@ std::string MacroApiServer::handle_list_devices() {
         // Check if device is available via AOA using resolved hardware_ids
         bool has_aoa = (aoa_hw_ids.count(ud.hardware_id) > 0);
         d["aoa"] = has_aoa;
-        d["usb_serial"] = ud.usb_serial;
-        d["usb_serial"] = ud.usb_serial;
+        // usb_serialはキャッシュまたは解決済みのものを使用
+        std::string usb_ser = ud.usb_serial;
+        if (usb_ser.empty()) {
+            auto it = hw_to_usb.find(ud.hardware_id);
+            if (it != hw_to_usb.end()) usb_ser = it->second;
+        }
+        d["usb_serial"] = usb_ser;
         arr.push_back(d);
     }
 
@@ -613,12 +618,29 @@ std::string MacroApiServer::handle_device_info(const std::string& device_id) {
 // Resolve hardware_id to USB serial for AOA HybridCommandSender lookup
 static std::string resolve_to_usb_serial(const std::string& device_id) {
     auto& mgr = mirage::ctx().adb_manager;
+    if (!mgr) return device_id;
+
+    // まずキャッシュされたusb_serialを探す
     auto devs = mgr->getUniqueDevices();
     for (auto& ud : devs) {
         if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
-            return ud.usb_serial.empty() ? device_id : ud.usb_serial;
+            if (!ud.usb_serial.empty()) return ud.usb_serial;
         }
     }
+
+    // キャッシュにない場合、hybridのUSBシリアルを逆引きで探す
+    auto& hybrid = mirage::ctx().hybrid_cmd;
+    if (hybrid) {
+        auto usb_ids = hybrid->get_device_ids();
+        for (const auto& usb_serial : usb_ids) {
+            // このUSBシリアルがdevice_idに対応するか確認
+            std::string hw_id = mgr->resolveUsbSerial(usb_serial);
+            if (hw_id == device_id) {
+                return usb_serial;
+            }
+        }
+    }
+
     return device_id;
 }
 

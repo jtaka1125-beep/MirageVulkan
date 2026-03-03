@@ -65,7 +65,8 @@ class H264Encoder(
             // Conservative blacklist
             if (model.contains("t606")) return false
             if (soc.contains("mt6789")) return false
-            // Allow MT8781 (X1) even though hardware starts with mt
+            // X1 (npad): SurfaceRepeater causes timestamp backward -> frame drop
+            if (model.contains("npad")) return false
             return true
         }
 

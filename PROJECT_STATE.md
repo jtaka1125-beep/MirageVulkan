@@ -1,5 +1,5 @@
 # MirageSystem Project State
-# Updated: 2026-03-01 Session 3
+# Updated: 2026-03-03
 # Read at session start, updated at session end.
 # THIS IS THE MAIN REPOSITORY (MirageComplete is legacy/migrated)
 
@@ -86,21 +86,24 @@
 1. Ollama起動後: ai_analyze E2Eテスト (ai_pipeline_test.py)
 2. X1 APKデプロイ: wifi_adb_guard自動復旧後に再実行
 3. GUIのLearning Modeでテンプレート収集 → C++ AIEngineのLayer1/2テスト
-4. AOA full-path test [BLOCKED: physical USB]
+4. TileCompositor E2Eテスト: X1でport0/port1合成フレームの確認
+5. AOA full-path test [BLOCKED: physical USB]
 
 ## GUI File Line Counts (Updated 2026-03-03)
 - gui_ai_panel.cpp:       663
-- gui_init.cpp:           952
-- gui_threads.cpp:        633
+- gui_init.cpp:           965
+- gui_threads.cpp:        674
 - gui_device_control.cpp: 539
 - gui_command.cpp:        356
 - gui_window.cpp:         237
 - gui_main.cpp:           295
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 3686 lines
+- TOTAL:                 3740 lines
 
 ## Key Decisions Log
+- 2026-03-03: MCP二重起動防止完了。MirageMCPServerタスクをDisable化、start_all.batをMirageMCP(watchdog)経由に統一、MirageMCPGuard(1分毎ヘルスチェック)を再有効化。
+- 2026-03-03: TileCompositor実装・コミット(1d8daa3)。native_h>1440デバイス(X1)で自動タイルモード起動。
 - 2026-03-01: AIパイプライン整備完了。tool_ai_analyze(Python/Ollama)とC++ AIEngine(テンプレートマッチ)は並立。
 - 2026-03-01: wifi_adb_guard daemon化。shellゾンビをget-stateでなくecho __alive__で検出。
 - 2026-03-01: ai_receiver_service.py廃止。TCPポート51100-51104は未使用だった。
@@ -126,10 +129,4 @@
 - watchdog_ai.py: requests→urllib.request置換 (標準ライブラリのみ)
 - watchdog_ai.py: ADB二重監視削除 (wifi_adb_guardに一元化)
 - wifi_adb_guard: shellゾンビ検出・30秒監視・daemon化
-- server.py多重起動時の旧プロセス競合問題確認 (要: MCPGuard再有効化)
-
-## Next Priorities (Ordered)
-1. Ollamaが復活したらtool_ai_analyze E2Eテスト (screenshot→llava:7b→結果)
-2. MCP server多重起動防止強化 (MirageMCPGuardを再有効化)
-3. AOA full-path test [BLOCKED: physical USB]
-4. Multi-device video pipeline stress test [BLOCKED: physical USB]
+- server.py多重起動時の旧プロセス競合問題確認 → 2026-03-03 解決済み (MirageMCPGuard再有効化)

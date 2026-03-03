@@ -358,17 +358,30 @@ int success = 0;
             }
 
             bool started = false;
+            // X1 now uses TiledEncoder on APK side, so enable tiled mode for it
             if (native_h > 1440) {
                 // Tiled mode: port0=top, port1=bottom
-                uint16_t port1 = static_cast<uint16_t>(local_port + 1);
-                // ADB forward for tile 1 (port1)
-                std::string fwd1 = "forward tcp:" + std::to_string(port1) +
-                                   " tcp:" + std::to_string(REMOTE_PORT + 1);
-                g_adb_manager->adbCommand(adb_id, fwd1);
-                MLOG_INFO("gui", "Tiled mode: %s port0=%d port1=%d (native_h=%d)",
-                          dev.display_name.c_str(), local_port, port1, native_h);
+                // Wi-Fi direct: connect to device IP, no adb forward needed
+                std::string tile_host = dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address;
+                uint16_t tile_port0 = static_cast<uint16_t>(REMOTE_PORT);  // 50100 on device
+                uint16_t tile_port1 = static_cast<uint16_t>(REMOTE_PORT + 1);  // 50101 on device
+                
+                if (tile_host == "127.0.0.1") {
+                    // Fallback to adb forward if no Wi-Fi IP
+                    uint16_t port1 = static_cast<uint16_t>(local_port + 1);
+                    std::string fwd1 = "forward tcp:" + std::to_string(port1) +
+                                       " tcp:" + std::to_string(REMOTE_PORT + 1);
+                    g_adb_manager->adbCommand(adb_id, fwd1);
+                    tile_port0 = static_cast<uint16_t>(local_port);
+                    tile_port1 = port1;
+                    MLOG_INFO("gui", "Tiled mode (adb forward): %s port0=%d port1=%d (native_h=%d)",
+                              dev.display_name.c_str(), tile_port0, tile_port1, native_h);
+                } else {
+                    MLOG_INFO("gui", "Tiled mode (Wi-Fi direct): %s -> %s:%d/%d (native_h=%d)",
+                              dev.display_name.c_str(), tile_host.c_str(), tile_port0, tile_port1, native_h);
+                }
                 started = g_multi_receiver->restart_as_tcp_vid0_tiled(
-                    dev.hardware_id, static_cast<uint16_t>(local_port), port1);
+                    dev.hardware_id, tile_port0, tile_port1, tile_host);
             } else {
                 started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port);
             }

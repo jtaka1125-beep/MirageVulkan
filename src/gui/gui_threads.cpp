@@ -63,6 +63,27 @@ struct SlotInfo {
     int disc;
 };
 
+// Device index mapping for port allocation
+// Port = 50000 + (device_index * 100) + channel_index
+static std::unordered_map<std::string, int> g_device_index_map;
+static std::unordered_map<std::string, int> g_device_channel_count;
+static int g_next_device_index = 0;
+
+static uint16_t calculatePort(const std::string& serial, int channel) {
+    // Get or assign device index based on serial
+    auto it = g_device_index_map.find(serial);
+    int device_index;
+    if (it == g_device_index_map.end()) {
+        device_index = g_next_device_index++;
+        g_device_index_map[serial] = device_index;
+        g_device_channel_count[serial] = 0;
+    } else {
+        device_index = it->second;
+    }
+    // Port = base + device*100 + channel
+    return static_cast<uint16_t>(50000 + device_index * 100 + channel);
+}
+
 // Fetch slot stats from IPC (internal helper)
 static std::vector<SlotInfo> fetchSlotStats() {
     std::vector<SlotInfo> result;
@@ -477,7 +498,7 @@ void deviceUpdateThread() {
                     g_slot_active[slot.slot] = true;
 
                     // Start video receiver
-                    uint16_t port = 50000 + slot.slot;
+                    uint16_t port = calculatePort(slot.serial, g_device_channel_count[slot.serial]++);
                     g_receivers[slot.slot] = std::make_unique<::gui::MirrorReceiver>();
                     g_receivers[slot.slot]->start(port);
 
@@ -605,6 +626,26 @@ void wifiAdbWatchdogThread() {
                     "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE "
                     "-p com.mirage.capture --ei max_size 2000");
                 MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", wifi_id.c_str());
+
+                // D) TileCompositor 自動起動（X1のみ: Wi-Fi直接 or adb forward）
+                if (g_multi_receiver && !g_multi_receiver->isTiledActive(dev.hardware_id)) {
+                    std::string tile_host = dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address;
+                    if (tile_host == "127.0.0.1") {
+                        // Fallback: adb forward
+                        g_adb_manager->adbCommand(wifi_id, "forward tcp:50100 tcp:50100");
+                        g_adb_manager->adbCommand(wifi_id, "forward tcp:50101 tcp:50101");
+                        MLOG_INFO("watchdog", "Starting TileCompositor for X1 %s (adb forward) port0=50100 port1=50101",
+                                  dev.hardware_id.c_str());
+                    } else {
+                        MLOG_INFO("watchdog", "Starting TileCompositor for X1 %s (Wi-Fi direct) -> %s:50100/50101",
+                                  dev.hardware_id.c_str(), tile_host.c_str());
+                    }
+                    g_multi_receiver->restart_as_tcp_vid0_tiled(
+                        dev.hardware_id,
+                        static_cast<uint16_t>(50100),
+                        static_cast<uint16_t>(50101),
+                        tile_host);
+                }
             }
 
             // C) ScreenCaptureService 死活監視

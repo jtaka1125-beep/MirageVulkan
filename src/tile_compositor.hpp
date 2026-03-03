@@ -48,7 +48,8 @@ public:
     void setFrameCallback(FrameCallback cb) { frame_cb_ = std::move(cb); }
 
     // 2 ポートで受信開始（port0=上半分, port1=下半分）
-    bool start(uint16_t port0, uint16_t port1) {
+    // host: 接続先IPアドレス（デフォルト127.0.0.1=adb forward、Wi-Fi直接接続時はデバイスIP）
+    bool start(uint16_t port0, uint16_t port1, const std::string& host = "127.0.0.1") {
         if (running_.load()) return true;
 
         receiver_[0] = std::make_unique<MirrorReceiver>();
@@ -59,17 +60,17 @@ public:
                 receiver_[t]->setVulkanContext(vk_phys_, vk_dev_,
                     vk_gqf_, vk_gq_, vk_cqf_, vk_cq_);
             }
-            if (!receiver_[t]->start_tcp_vid0(t == 0 ? port0 : port1)) {
-                MLOG_ERROR("tile", "Failed to start tile receiver %d on port %d",
-                           t, t == 0 ? port0 : port1);
+            if (!receiver_[t]->start_tcp_vid0(t == 0 ? port0 : port1, host)) {
+                MLOG_ERROR("tile", "Failed to start tile receiver %d on port %d host %s",
+                           t, t == 0 ? port0 : port1, host.c_str());
                 return false;
             }
         }
 
         running_.store(true);
         compositor_thread_ = std::thread(&TileCompositor::compositorLoop, this);
-        MLOG_INFO("tile", "TileCompositor started: port %d (top) + port %d (bottom)",
-                  port0, port1);
+        MLOG_INFO("tile", "TileCompositor started: port %d/%d host %s (top/bottom)",
+                  port0, port1, host.c_str());
         return true;
     }
 
@@ -100,14 +101,19 @@ private:
 
     // 最新フレーム（補完用）
     std::shared_ptr<mirage::SharedFrame> last_[2];
-    // 直前の合成 pts（重複合成防止）
-    uint64_t last_emitted_pts_ = 0;
+    // 直前の合成 frame_id（重複合成防止）
+    uint32_t last_fid_top_ = 0;
+    uint32_t last_fid_bot_ = 0;
 
     // ============================================================
     // メインループ
     // ============================================================
     void compositorLoop() {
         MLOG_INFO("tile", "Compositor thread started");
+
+        // デバッグカウンター
+        int dbg_got0 = 0, dbg_got1 = 0, dbg_composed = 0, dbg_dup = 0, dbg_ptsdiff = 0;
+        auto dbg_last = std::chrono::steady_clock::now();
 
         while (running_.load()) {
             std::shared_ptr<mirage::SharedFrame> sf[2];
@@ -119,6 +125,17 @@ private:
                     got[t] = true;
                     last_[t] = sf[t];  // 補完用に保存
                 }
+            }
+            if (got[0]) dbg_got0++;
+            if (got[1]) dbg_got1++;
+
+            // デバッグ: 5秒ごとにログ
+            auto now_dbg = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now_dbg - dbg_last).count() >= 5) {
+                MLOG_INFO("tile", "TileCompositor: got0=%d got1=%d composed=%d dup=%d ptsdiff=%d",
+                    dbg_got0, dbg_got1, dbg_composed, dbg_dup, dbg_ptsdiff);
+                dbg_got0 = dbg_got1 = dbg_composed = dbg_dup = dbg_ptsdiff = 0;
+                dbg_last = now_dbg;
             }
 
             // どちらも新フレームなし → スリープして継続
@@ -143,6 +160,7 @@ private:
                     bot = sf[1];
                 } else {
                     // pts ずれ: 古い方は破棄して新しい方をキャッシュのみ
+                    dbg_ptsdiff++;
                     std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
                     continue;
                 }
@@ -169,17 +187,22 @@ private:
                 continue;
             }
 
-            // 重複合成防止
-            uint64_t emit_pts = top->pts_us;  // top の pts を代表値に使う
-            if (emit_pts == last_emitted_pts_) {
+            // 重複合成防止 - frame_idの組み合わせで判定
+            // タイル0とタイル1は同じソースフレームから同じptsを持つので、frame_idを使う
+            uint32_t fid_top = top->frame_id;
+            uint32_t fid_bot = bot->frame_id;
+            if (fid_top == last_fid_top_ && fid_bot == last_fid_bot_) {
+                dbg_dup++;
                 std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
                 continue;
             }
-            last_emitted_pts_ = emit_pts;
+            last_fid_top_ = fid_top;
+            last_fid_bot_ = fid_bot;
 
             // 上下結合
             auto combined = compose(top, bot);
             if (combined && frame_cb_) {
+                dbg_composed++;
                 frame_cb_(combined);
             }
         }

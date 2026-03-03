@@ -446,9 +446,10 @@ std::string MultiDeviceReceiver::getFirstDeviceId() const {
 }
 
 bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_id,
-                                                     uint16_t port0, uint16_t port1) {
-    MLOG_INFO("multi", "restart_as_tcp_vid0_tiled: %s port0=%d port1=%d",
-              hardware_id.c_str(), port0, port1);
+                                                     uint16_t port0, uint16_t port1,
+                                                     const std::string& host) {
+    MLOG_INFO("multi", "restart_as_tcp_vid0_tiled: %s port0=%d port1=%d host=%s",
+              hardware_id.c_str(), port0, port1, host.c_str());
 
     std::lock_guard<std::mutex> lock(receivers_mutex_);
     auto it = receivers_.find(hardware_id);
@@ -476,7 +477,7 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_
         tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
             if (frame_callback_) frame_callback_(hw_id_copy, sf);
         });
-        if (!tc->start(port0, port1)) {
+        if (!tc->start(port0, port1, host)) {
             MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
             return false;
         }
@@ -485,7 +486,7 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_
         port_to_device_[port0] = hardware_id;
         receivers_[hardware_id] = std::move(entry);
         running_ = true;
-        MLOG_INFO("multi", "TiledMode started for %s (new entry)", hardware_id.c_str());
+        MLOG_INFO("multi", "TiledMode started for %s host=%s (new entry)", hardware_id.c_str(), host.c_str());
         return true;
     }
 
@@ -505,14 +506,14 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_
     tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
         if (frame_callback_) frame_callback_(hw_id_copy, sf);
     });
-    if (!tc->start(port0, port1)) {
+    if (!tc->start(port0, port1, host)) {
         MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
         return false;
     }
     entry.tile_compositor = std::move(tc);
     entry.port = port0;
     port_to_device_[port0] = hardware_id;
-    MLOG_INFO("multi", "TiledMode restarted for %s (port0=%d,port1=%d)", hardware_id.c_str(), port0, port1);
+    MLOG_INFO("multi", "TiledMode restarted for %s (port0=%d,port1=%d,host=%s)", hardware_id.c_str(), port0, port1, host.c_str());
     return true;
 }
 

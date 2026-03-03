@@ -588,8 +588,9 @@ void MirrorReceiver::tcp_receive_thread(uint16_t tcp_port) {
 // VID0 TCP receive mode - MirageCapture TcpVideoSender (port 50100)
 // VID0 format: "VID0" (4B) + payload_length (4B big-endian) + RTP packet
 // ==============================================================================
-bool MirrorReceiver::start_tcp_vid0(uint16_t tcp_port) {
+bool MirrorReceiver::start_tcp_vid0(uint16_t tcp_port, const std::string& host) {
   tcp_port_ = tcp_port;
+  tcp_host_ = host;
   if (!init_decoder()) return false;
   running_.store(true);
   bound_port_.store(tcp_port);
@@ -599,7 +600,7 @@ bool MirrorReceiver::start_tcp_vid0(uint16_t tcp_port) {
 }
 
 void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
-  MLOG_INFO("mirror", "VID0 TCP receive thread started (port %d, auto-reconnect enabled)", tcp_port);
+  MLOG_INFO("mirror", "VID0 TCP receive thread started (port %d, host %s, auto-reconnect enabled)", tcp_port, tcp_host_.c_str());
 
 #ifdef _WIN32
   // Outer reconnection loop: reconnects indefinitely until running_ is false
@@ -620,7 +621,7 @@ void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(tcp_port);
-    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    inet_pton(AF_INET, tcp_host_.c_str(), &addr.sin_addr);
 
     // Connection retry (wait for MirageCapture to start accepting)
     bool connected = false;
@@ -642,7 +643,7 @@ void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
       continue;  // Outer loop: retry connection indefinitely
     }
 
-    MLOG_INFO("mirror", "VID0 TCP connected on port %d (MirageCapture)", tcp_port);
+    MLOG_INFO("mirror", "VID0 TCP connected on port %d host %s (MirageCapture)", tcp_port, tcp_host_.c_str());
 
     DWORD tv = 100;  // 100ms recv timeout
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));

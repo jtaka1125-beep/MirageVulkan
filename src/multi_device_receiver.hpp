@@ -83,8 +83,17 @@ public:
     // Restart a device receiver in VID0 TCP mode (MirageCapture TcpVideoSender)
     bool restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port);
     // Tiled mode: 2 ports (port0=top, port1=bottom), compositor thread merges frames
+    // host: IP address (default 127.0.0.1 for adb forward, or device Wi-Fi IP for direct)
     bool restart_as_tcp_vid0_tiled(const std::string& hardware_id,
-                                    uint16_t port0, uint16_t port1);
+                                    uint16_t port0, uint16_t port1,
+                                    const std::string& host = "127.0.0.1");
+
+    // Check if tiled mode is already active for a device
+    bool isTiledActive(const std::string& hardware_id) {
+        auto it = receivers_.find(hardware_id);
+        if (it == receivers_.end()) return false;
+        return it->second.tile_compositor != nullptr;
+    }
 
     // Feed RTP packet to the first device's receiver (for USB video)
     void feed_rtp_packet(const uint8_t* data, size_t len);
