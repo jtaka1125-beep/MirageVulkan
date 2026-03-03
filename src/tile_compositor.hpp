@@ -105,6 +105,10 @@ private:
     uint32_t last_fid_top_ = 0;
     uint32_t last_fid_bot_ = 0;
 
+    // compose() double buffer (avoid malloc + prevent data race)
+    std::vector<uint8_t> compose_buf_[2];
+    int compose_buf_idx_ = 0;
+
     // ============================================================
     // メインループ
     // ============================================================
@@ -213,7 +217,7 @@ private:
     // ============================================================
     // RGBA 上下結合
     // ============================================================
-    static std::shared_ptr<mirage::SharedFrame>
+    std::shared_ptr<mirage::SharedFrame>
     compose(const std::shared_ptr<mirage::SharedFrame>& top,
             const std::shared_ptr<mirage::SharedFrame>& bot) {
         const int W      = top->width;
@@ -223,14 +227,20 @@ private:
         const size_t row_bytes = static_cast<size_t>(W) * 4;
         const size_t total_bytes = row_bytes * static_cast<size_t>(Htotal);
 
-        auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[total_bytes]);
+        // Reuse pool buffer - avoid per-frame ~9.5MB malloc
+        // Alternate between two buffers to avoid race when previous frame
+        // is still being uploaded to GPU by the GUI thread.
+        compose_buf_idx_ ^= 1;
+        auto& cur_buf = compose_buf_[compose_buf_idx_];
+        if (cur_buf.size() < total_bytes) cur_buf.resize(total_bytes);
+        uint8_t* buf_ptr = cur_buf.data();
 
         // 上半分コピー
-        std::memcpy(buf.get(),
+        std::memcpy(buf_ptr,
                     top->rgba.get(),
                     row_bytes * static_cast<size_t>(Htop));
         // 下半分コピー
-        std::memcpy(buf.get() + row_bytes * static_cast<size_t>(Htop),
+        std::memcpy(buf_ptr + row_bytes * static_cast<size_t>(Htop),
                     bot->rgba.get(),
                     row_bytes * static_cast<size_t>(Hbot));
 
@@ -239,7 +249,7 @@ private:
         sf->height   = Htotal;
         sf->pts_us   = top->pts_us;
         sf->frame_id = top->frame_id;
-        sf->rgba     = std::shared_ptr<const uint8_t[]>(buf, buf.get());
+        sf->rgba     = std::shared_ptr<const uint8_t[]>(buf_ptr, [](const uint8_t*){});
 
         return sf;
     }

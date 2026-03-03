@@ -117,7 +117,8 @@ bool H264Decoder::init(bool use_hevc) {
 
   if (!hw_enabled_) {
     MLOG_INFO("h264", "No HW acceleration available, using CPU decode");
-    codec_ctx_->thread_count = 4;  // 60fps: increased for sub-device CPU decode
+    codec_ctx_->thread_count = 8;  // タイルデコード: スレッド数増でFPS向上
+    codec_ctx_->thread_type = FF_THREAD_FRAME;  // フレーム並列（低遅延向け）
   }
 
   AVDictionary* opts = nullptr;
@@ -298,7 +299,7 @@ void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
     sws_ctx_ = sws_getContext(
       width, height, (AVPixelFormat)frame->format,
       out_width_, out_height_, AV_PIX_FMT_RGBA,
-      SWS_FAST_BILINEAR, nullptr, nullptr, nullptr
+      SWS_POINT, nullptr, nullptr, nullptr
     );
 
     if (!sws_ctx_) {
