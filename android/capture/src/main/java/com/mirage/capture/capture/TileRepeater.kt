@@ -179,13 +179,12 @@ class TileRepeater(
                     surfaceTexture?.updateTexImage()
                     surfaceTexture?.getTransformMatrix(texMatrix)
                     val newPts = surfaceTexture?.timestamp ?: 0L
-                    // Only render if timestamp advanced (avoid backward-in-time)
-                    if (newPts <= lastPtsNs) {
-                        continue
-                    }
-                    lastPtsNs = newPts
+                    // Use actual pts if available, else current time (draw even if no new frame)
+                    // Always use monotonically increasing timestamp to avoid backward-time drops
+                    val candidatePts = if (newPts > lastPtsNs) newPts else System.nanoTime()
+                    lastPtsNs = if (candidatePts > lastPtsNs) candidatePts else lastPtsNs + 33_333_333L
                 } catch (_: Exception) {
-                    continue
+                    lastPtsNs = System.nanoTime()
                 }
 
                 // Draw same frame into each tile surface

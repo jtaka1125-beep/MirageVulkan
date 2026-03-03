@@ -284,7 +284,7 @@ class ScreenCaptureService : Service() {
         val dpi = metrics.densityDpi
 
         // X1 with TCP mode and tall screen: use TiledEncoder for split-tile transmission
-        if (isX1 && mirrorMode == MIRROR_MODE_TCP && screenH >= 2000) {
+        if (isX1 && mirrorMode == MIRROR_MODE_TCP && screenH >= 1900) {
             Log.i(TAG, "X1 device detected with height=$screenH, using TiledEncoder on port $tcpPort")
             tiledEncoder = TiledEncoder(
                 projection = projection!!,
@@ -377,6 +377,7 @@ class ScreenCaptureService : Service() {
     }
 
     fun attachUsbStream(outputStream: OutputStream) {
+        if (mirrorMode == MIRROR_MODE_TCP) { Log.i(TAG, "attachUsbStream: TCP mode active, ignoring USB attach"); return }
         if (videoSender is UsbVideoSender) return
         if (encoder != null && projection != null) {
             Log.i(TAG, "Switching to USB mode")
