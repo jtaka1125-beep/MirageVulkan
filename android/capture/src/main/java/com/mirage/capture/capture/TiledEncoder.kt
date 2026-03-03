@@ -1,4 +1,4 @@
-﻿package com.mirage.capture.capture
+package com.mirage.capture.capture
 
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -41,7 +41,7 @@ class TiledEncoder(
             return n.contains("c2.android") || n.contains("omx.google")
         }
 
-        private fun align16(x: Int): Int = (x / 16) * 16
+        private fun align16(x: Int): Int = ((x + 15) / 16) * 16  // ceil-align
 
         data class TilePlan(
             val mime: String,

@@ -47,6 +47,15 @@ public:
     // フレーム合成完了時のコールバック設定
     void setFrameCallback(FrameCallback cb) { frame_cb_ = std::move(cb); }
 
+    // ネイティブ解像度を設定（start()前に呼ぶ）
+    // native_w/h: デバイス物理解像度（例: 1200x2000）
+    // tiles_y   : 垂直タイル分割数（通常 2）
+    void set_native_size(int native_w, int native_h, int tiles_y = 2) {
+        native_w_  = native_w;
+        native_h_  = native_h;
+        tiles_y_   = tiles_y;
+    }
+
     // 2 ポートで受信開始（port0=上半分, port1=下半分）
     // host: 接続先IPアドレス（デフォルト127.0.0.1=adb forward、Wi-Fi直接接続時はデバイスIP）
     bool start(uint16_t port0, uint16_t port1, const std::string& host = "127.0.0.1") {
@@ -98,6 +107,12 @@ private:
     VkDevice         vk_dev_  = VK_NULL_HANDLE;
     uint32_t vk_gqf_ = 0; VkQueue vk_gq_ = VK_NULL_HANDLE;
     uint32_t vk_cqf_ = 0; VkQueue vk_cq_ = VK_NULL_HANDLE;
+
+    // ネイティブ解像度（合成出力サイズ）
+    // start()前にset_native_size()で設定。0なら tile * tilesY そのまま。
+    int native_w_ = 0;
+    int native_h_ = 0;
+    int tiles_y_   = 2;  // TiledEncoder が送ってくるタイル分割数
 
     // 最新フレーム（補完用）
     std::shared_ptr<mirage::SharedFrame> last_[2];
@@ -220,10 +235,15 @@ private:
     std::shared_ptr<mirage::SharedFrame>
     compose(const std::shared_ptr<mirage::SharedFrame>& top,
             const std::shared_ptr<mirage::SharedFrame>& bot) {
-        const int W      = top->width;
-        const int Htop   = top->height;
-        const int Hbot   = bot->height;
-        const int Htotal = Htop + Hbot;
+        const int W = top->width;
+
+        // native_h が設定されている場合は各タイルを slice_h 行にクロップして native_h に合成
+        // これによりエンコーダの16px ceil-align パディング行を除去し、
+        // 出力が常にデバイスネイティブ解像度になる
+        const int slice_h = (native_h_ > 0) ? (native_h_ / tiles_y_) : 0;
+        const int Htop    = (slice_h > 0 && slice_h <= top->height) ? slice_h : top->height;
+        const int Hbot    = (slice_h > 0 && slice_h <= bot->height) ? slice_h : bot->height;
+        const int Htotal  = (native_h_ > 0) ? native_h_ : (Htop + Hbot);
         const size_t row_bytes = static_cast<size_t>(W) * 4;
         const size_t total_bytes = row_bytes * static_cast<size_t>(Htotal);
 

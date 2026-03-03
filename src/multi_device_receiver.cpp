@@ -1,6 +1,7 @@
 #include "multi_device_receiver.hpp"
 #include <cstdio>
 #include "mirage_log.hpp"
+#include "config_loader.hpp"  // ExpectedSizeRegistry
 
 namespace gui {
 
@@ -475,8 +476,35 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_
         auto cb = frame_callback_;
         auto hw_id_copy = hardware_id;
         tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
+            // Update frame count and FPS for tiled mode
+            {
+                std::lock_guard<std::mutex> lock(receivers_mutex_);
+                auto it = receivers_.find(hw_id_copy);
+                if (it != receivers_.end()) {
+                    auto& e = it->second;
+                    e.frames++;
+                    e.last_frame_time = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        e.last_frame_time - e.last_stats_time).count();
+                    if (elapsed >= 1000) {
+                        float elapsed_sec = elapsed / 1000.0f;
+                        e.fps = (e.frames - e.prev_frames) / elapsed_sec;
+                        e.prev_frames = e.frames;
+                        e.last_stats_time = e.last_frame_time;
+                    }
+                }
+            }
             if (frame_callback_) frame_callback_(hw_id_copy, sf);
         });
+        // デバイスのネイティブ解像度を設定 → compose()がnative_hで出力
+        {
+            int native_w = 0, native_h = 0;
+            if (mirage::config::ExpectedSizeRegistry::instance()
+                    .getExpectedSize(hardware_id, native_w, native_h) && native_h > 0) {
+                tc->set_native_size(native_w, native_h, 2);  // tilesY=2 (1x2 split)
+                MLOG_INFO("multi", "TileCompositor native size: %dx%d", native_w, native_h);
+            }
+        }
         if (!tc->start(port0, port1, host)) {
             MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
             return false;
@@ -504,8 +532,35 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_
     }
     auto hw_id_copy = hardware_id;
     tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
+        // Update frame count and FPS for tiled mode
+        {
+            std::lock_guard<std::mutex> lock(receivers_mutex_);
+            auto it = receivers_.find(hw_id_copy);
+            if (it != receivers_.end()) {
+                auto& e = it->second;
+                e.frames++;
+                e.last_frame_time = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    e.last_frame_time - e.last_stats_time).count();
+                if (elapsed >= 1000) {
+                    float elapsed_sec = elapsed / 1000.0f;
+                    e.fps = (e.frames - e.prev_frames) / elapsed_sec;
+                    e.prev_frames = e.frames;
+                    e.last_stats_time = e.last_frame_time;
+                }
+            }
+        }
         if (frame_callback_) frame_callback_(hw_id_copy, sf);
     });
+    // デバイスのネイティブ解像度を設定 → compose()がnative_hで出力（既存エントリ再起動パス）
+    {
+        int native_w = 0, native_h = 0;
+        if (mirage::config::ExpectedSizeRegistry::instance()
+                .getExpectedSize(hardware_id, native_w, native_h) && native_h > 0) {
+            tc->set_native_size(native_w, native_h, 2);  // tilesY=2 (1x2 split)
+            MLOG_INFO("multi", "TileCompositor native size (restart): %dx%d", native_w, native_h);
+        }
+    }
     if (!tc->start(port0, port1, host)) {
         MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
         return false;
