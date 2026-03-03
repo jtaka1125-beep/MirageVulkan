@@ -445,4 +445,75 @@ std::string MultiDeviceReceiver::getFirstDeviceId() const {
     return "";
 }
 
+bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_id,
+                                                     uint16_t port0, uint16_t port1) {
+    MLOG_INFO("multi", "restart_as_tcp_vid0_tiled: %s port0=%d port1=%d",
+              hardware_id.c_str(), port0, port1);
+
+    std::lock_guard<std::mutex> lock(receivers_mutex_);
+    auto it = receivers_.find(hardware_id);
+    if (it == receivers_.end()) {
+        // 新規エントリ作成
+        ReceiverEntry entry;
+        entry.hardware_id = hardware_id;
+        entry.display_name = hardware_id;
+        if (adb_manager_) {
+            AdbDeviceManager::UniqueDevice dev_info;
+            if (adb_manager_->getUniqueDevice(hardware_id, dev_info))
+                entry.display_name = dev_info.display_name;
+        }
+        entry.last_stats_time = std::chrono::steady_clock::now();
+        // TileCompositor を起動（receiver は compositor 内部で管理）
+        auto tc = std::make_unique<TileCompositor>();
+        if (vk_device_ != VK_NULL_HANDLE) {
+            tc->setVulkanContext(vk_physical_device_, vk_device_,
+                vk_graphics_queue_family_, vk_graphics_queue_,
+                vk_compute_queue_family_, vk_compute_queue_);
+        }
+        // 合成済みフレームをフレームコールバックへ転送
+        auto cb = frame_callback_;
+        auto hw_id_copy = hardware_id;
+        tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
+            if (frame_callback_) frame_callback_(hw_id_copy, sf);
+        });
+        if (!tc->start(port0, port1)) {
+            MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
+            return false;
+        }
+        entry.tile_compositor = std::move(tc);
+        entry.port = port0;
+        port_to_device_[port0] = hardware_id;
+        receivers_[hardware_id] = std::move(entry);
+        running_ = true;
+        MLOG_INFO("multi", "TiledMode started for %s (new entry)", hardware_id.c_str());
+        return true;
+    }
+
+    auto& entry = it->second;
+    // 既存 receiver/compositor を停止
+    if (entry.receiver)        { entry.receiver->stop(); entry.receiver.reset(); }
+    if (entry.tile_compositor) { entry.tile_compositor->stop(); entry.tile_compositor.reset(); }
+    port_to_device_.erase(entry.port);
+
+    auto tc = std::make_unique<TileCompositor>();
+    if (vk_device_ != VK_NULL_HANDLE) {
+        tc->setVulkanContext(vk_physical_device_, vk_device_,
+            vk_graphics_queue_family_, vk_graphics_queue_,
+            vk_compute_queue_family_, vk_compute_queue_);
+    }
+    auto hw_id_copy = hardware_id;
+    tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
+        if (frame_callback_) frame_callback_(hw_id_copy, sf);
+    });
+    if (!tc->start(port0, port1)) {
+        MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
+        return false;
+    }
+    entry.tile_compositor = std::move(tc);
+    entry.port = port0;
+    port_to_device_[port0] = hardware_id;
+    MLOG_INFO("multi", "TiledMode restarted for %s (port0=%d,port1=%d)", hardware_id.c_str(), port0, port1);
+    return true;
+}
+
 } // namespace gui

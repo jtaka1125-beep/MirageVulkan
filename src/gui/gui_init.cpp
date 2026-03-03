@@ -344,12 +344,36 @@ int success = 0;
         MLOG_INFO("gui", "adb forward: %s -> %s (result: %s)",
                   adb_id.c_str(), fwd_cmd.c_str(), fwd_result.c_str());
 
-        // VID0 TCP蜿嶺ｿ｡髢句ｧ・(譌｢蟄倥せ繝ｭ繝・ヨ繧探CP繝｢繝ｼ繝峨↓蛻・崛縲√↑縺代ｌ縺ｰ譁ｰ隕丈ｽ懈・)
-        if (g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port)) {
-            MLOG_INFO("gui", "VID0 TCP蜿嶺ｿ｡髢句ｧ・ %s port=%d", dev.display_name.c_str(), local_port);
-            success++;
-        } else {
-            MLOG_ERROR("gui", "VID0 TCP蜿嶺ｿ｡螟ｱ謨・ %s port=%d", dev.display_name.c_str(), local_port);
+        // VID0 TCP start - tiled mode for devices with native height > 1440px (e.g. X1 1200x2000)
+        {
+            // Check if this device needs tiled encoding (native height > HW encoder limit)
+            // Prefer devices.json (reliable at startup) over ADB scan result (may be 0)
+            int native_h = 0;
+            {
+                int ew = 0, eh = 0;
+                if (mirage::config::ExpectedSizeRegistry::instance().getExpectedSize(dev.hardware_id, ew, eh))
+                    native_h = eh;
+                else
+                    native_h = dev.screen_height;  // fallback to ADB scan
+            }
+
+            bool started = false;
+            if (native_h > 1440) {
+                // Tiled mode: port0=top, port1=bottom
+                uint16_t port1 = static_cast<uint16_t>(local_port + 1);
+                // ADB forward for tile 1 (port1)
+                std::string fwd1 = "forward tcp:" + std::to_string(port1) +
+                                   " tcp:" + std::to_string(REMOTE_PORT + 1);
+                g_adb_manager->adbCommand(adb_id, fwd1);
+                MLOG_INFO("gui", "Tiled mode: %s port0=%d port1=%d (native_h=%d)",
+                          dev.display_name.c_str(), local_port, port1, native_h);
+                started = g_multi_receiver->restart_as_tcp_vid0_tiled(
+                    dev.hardware_id, static_cast<uint16_t>(local_port), port1);
+            } else {
+                started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port);
+            }
+            if (started) success++;
+            else MLOG_ERROR("gui", "VID0 TCP start failed: %s port=%d", dev.display_name.c_str(), local_port);
         }
     }
 

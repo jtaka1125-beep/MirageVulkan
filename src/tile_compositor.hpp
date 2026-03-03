@@ -1,0 +1,225 @@
+
+// =============================================================================
+// TileCompositor - 上下分割タイルを RTP タイムスタンプで同期合成
+// =============================================================================
+// APK (TiledEncoder 1x2) が 2つのポートに分割送信したフレームを受信し、
+// pts_us が一致したペアを上下結合して 1枚の SharedFrame にして返す。
+//
+// 同期方式:
+//   - tile0 (port0): 上半分  tile1 (port1): 下半分
+//   - 両タイルの pts_us が一致 → 即座に合成・コールバック
+//   - 片側が TIMEOUT_MS 内に来なければ前フレームで補完
+//
+// スレッドモデル:
+//   - compositor_thread_ がポーリング + 合成
+//   - コールバックは compositor_thread_ から呼ばれる
+// =============================================================================
+#pragma once
+
+#include "mirror_receiver.hpp"
+#include "event_bus.hpp"
+
+#include <memory>
+#include <functional>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <cstring>  // memcpy
+
+namespace gui {
+
+class TileCompositor {
+public:
+    using FrameCallback = std::function<void(std::shared_ptr<mirage::SharedFrame>)>;
+
+    TileCompositor() = default;
+    ~TileCompositor() { stop(); }
+
+    // Vulkan コンテキストを設定（デコーダ初期化用）
+    void setVulkanContext(VkPhysicalDevice phys, VkDevice dev,
+                          uint32_t gqf, VkQueue gq,
+                          uint32_t cqf, VkQueue cq) {
+        vk_phys_ = phys; vk_dev_ = dev;
+        vk_gqf_ = gqf;  vk_gq_  = gq;
+        vk_cqf_ = cqf;  vk_cq_  = cq;
+    }
+
+    // フレーム合成完了時のコールバック設定
+    void setFrameCallback(FrameCallback cb) { frame_cb_ = std::move(cb); }
+
+    // 2 ポートで受信開始（port0=上半分, port1=下半分）
+    bool start(uint16_t port0, uint16_t port1) {
+        if (running_.load()) return true;
+
+        receiver_[0] = std::make_unique<MirrorReceiver>();
+        receiver_[1] = std::make_unique<MirrorReceiver>();
+
+        for (int t = 0; t < 2; ++t) {
+            if (vk_dev_ != VK_NULL_HANDLE) {
+                receiver_[t]->setVulkanContext(vk_phys_, vk_dev_,
+                    vk_gqf_, vk_gq_, vk_cqf_, vk_cq_);
+            }
+            if (!receiver_[t]->start_tcp_vid0(t == 0 ? port0 : port1)) {
+                MLOG_ERROR("tile", "Failed to start tile receiver %d on port %d",
+                           t, t == 0 ? port0 : port1);
+                return false;
+            }
+        }
+
+        running_.store(true);
+        compositor_thread_ = std::thread(&TileCompositor::compositorLoop, this);
+        MLOG_INFO("tile", "TileCompositor started: port %d (top) + port %d (bottom)",
+                  port0, port1);
+        return true;
+    }
+
+    void stop() {
+        if (!running_.exchange(false)) return;
+        if (compositor_thread_.joinable()) compositor_thread_.join();
+        receiver_[0].reset();
+        receiver_[1].reset();
+        MLOG_INFO("tile", "TileCompositor stopped");
+    }
+
+    bool running() const { return running_.load(); }
+
+private:
+    static constexpr int64_t TIMEOUT_US = 33000;  // 33ms = 2フレーム @60fps
+    static constexpr int     POLL_MS    = 1;       // ポーリング間隔
+
+    std::unique_ptr<MirrorReceiver> receiver_[2];
+    FrameCallback frame_cb_;
+    std::atomic<bool> running_{false};
+    std::thread compositor_thread_;
+
+    // Vulkan context
+    VkPhysicalDevice vk_phys_ = VK_NULL_HANDLE;
+    VkDevice         vk_dev_  = VK_NULL_HANDLE;
+    uint32_t vk_gqf_ = 0; VkQueue vk_gq_ = VK_NULL_HANDLE;
+    uint32_t vk_cqf_ = 0; VkQueue vk_cq_ = VK_NULL_HANDLE;
+
+    // 最新フレーム（補完用）
+    std::shared_ptr<mirage::SharedFrame> last_[2];
+    // 直前の合成 pts（重複合成防止）
+    uint64_t last_emitted_pts_ = 0;
+
+    // ============================================================
+    // メインループ
+    // ============================================================
+    void compositorLoop() {
+        MLOG_INFO("tile", "Compositor thread started");
+
+        while (running_.load()) {
+            std::shared_ptr<mirage::SharedFrame> sf[2];
+            bool got[2] = {false, false};
+
+            // 両タイルの最新フレームを取得
+            for (int t = 0; t < 2; ++t) {
+                if (receiver_[t]->get_latest_shared_frame(sf[t])) {
+                    got[t] = true;
+                    last_[t] = sf[t];  // 補完用に保存
+                }
+            }
+
+            // どちらも新フレームなし → スリープして継続
+            if (!got[0] && !got[1]) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
+                continue;
+            }
+
+            // pts が揃っている場合は即合成
+            // 片側だけの場合はもう片側が last_ にあれば補完
+            std::shared_ptr<mirage::SharedFrame> top;
+            std::shared_ptr<mirage::SharedFrame> bot;
+
+            if (got[0] && got[1]) {
+                // 両方届いた: pts が近ければ合成 (差 < TIMEOUT_US)
+                int64_t diff = static_cast<int64_t>(sf[0]->pts_us) -
+                               static_cast<int64_t>(sf[1]->pts_us);
+                if (diff < 0) diff = -diff;
+
+                if (diff < TIMEOUT_US) {
+                    top = sf[0];
+                    bot = sf[1];
+                } else {
+                    // pts ずれ: 古い方は破棄して新しい方をキャッシュのみ
+                    std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
+                    continue;
+                }
+            } else if (got[0] && last_[1]) {
+                top = sf[0];
+                bot = last_[1];  // 前フレームで補完
+            } else if (got[1] && last_[0]) {
+                top = last_[0];
+                bot = sf[1];
+            } else {
+                // 補完用フレームもなし
+                std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
+                continue;
+            }
+
+            // 解像度チェック
+            if (!top || !top->rgba || !bot || !bot->rgba) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
+                continue;
+            }
+            if (top->width != bot->width) {
+                MLOG_WARN("tile", "Width mismatch: top=%d bot=%d, skip", top->width, bot->width);
+                std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
+                continue;
+            }
+
+            // 重複合成防止
+            uint64_t emit_pts = top->pts_us;  // top の pts を代表値に使う
+            if (emit_pts == last_emitted_pts_) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
+                continue;
+            }
+            last_emitted_pts_ = emit_pts;
+
+            // 上下結合
+            auto combined = compose(top, bot);
+            if (combined && frame_cb_) {
+                frame_cb_(combined);
+            }
+        }
+
+        MLOG_INFO("tile", "Compositor thread ended");
+    }
+
+    // ============================================================
+    // RGBA 上下結合
+    // ============================================================
+    static std::shared_ptr<mirage::SharedFrame>
+    compose(const std::shared_ptr<mirage::SharedFrame>& top,
+            const std::shared_ptr<mirage::SharedFrame>& bot) {
+        const int W      = top->width;
+        const int Htop   = top->height;
+        const int Hbot   = bot->height;
+        const int Htotal = Htop + Hbot;
+        const size_t row_bytes = static_cast<size_t>(W) * 4;
+        const size_t total_bytes = row_bytes * static_cast<size_t>(Htotal);
+
+        auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[total_bytes]);
+
+        // 上半分コピー
+        std::memcpy(buf.get(),
+                    top->rgba.get(),
+                    row_bytes * static_cast<size_t>(Htop));
+        // 下半分コピー
+        std::memcpy(buf.get() + row_bytes * static_cast<size_t>(Htop),
+                    bot->rgba.get(),
+                    row_bytes * static_cast<size_t>(Hbot));
+
+        auto sf = std::make_shared<mirage::SharedFrame>();
+        sf->width    = W;
+        sf->height   = Htotal;
+        sf->pts_us   = top->pts_us;
+        sf->frame_id = top->frame_id;
+        sf->rgba     = std::shared_ptr<const uint8_t[]>(buf, buf.get());
+
+        return sf;
+    }
+};
+
+} // namespace gui
