@@ -89,7 +89,9 @@ bool VulkanSwapchain::createSwapchain(int w, int h) {
         extent_.height = (std::clamp)((uint32_t)h, caps.minImageExtent.height, caps.maxImageExtent.height);
     }
 
-    uint32_t ic = caps.minImageCount + 1;
+    // Triple-buffer: minImageCount+2 reduces GPU pipeline stalls and lastTexAge spikes.
+    // With IMMEDIATE present mode, extra images don't add latency.
+    uint32_t ic = caps.minImageCount + 2;
     if (caps.maxImageCount > 0 && ic > caps.maxImageCount) ic = caps.maxImageCount;
 
     VkSwapchainCreateInfoKHR si{}; si.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;

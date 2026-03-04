@@ -232,6 +232,41 @@ void GuiApplication::updateDeviceStatus(const std::string& id, DeviceStatus stat
     }
 }
 
+void GuiApplication::stageTiledFrame(const std::string& id,
+                                      const uint8_t* top_rgba, const uint8_t* bot_rgba,
+                                      int w, int full_h, int slice_h,
+                                      uint64_t /*pts_us*/, uint64_t /*frame_id*/) {
+    // Phase 1: acquire mutex only to get/create the texture pointer (sub-millisecond)
+    std::shared_ptr<mirage::vk::VulkanTexture> tex;
+    {
+        std::lock_guard<std::mutex> lock(devices_mutex_);
+        auto it = devices_.find(id);
+        if (it == devices_.end()) return;
+        auto& device = it->second;
+
+        // Recreate texture if size changed
+        if (!device.vk_texture || device.texture_width != w || device.texture_height != full_h) {
+            device.vk_texture = std::make_shared<mirage::vk::VulkanTexture>();
+            if (!device.vk_texture->create(*vk_context_, vk_descriptor_pool_, w, full_h)) {
+                MLOG_ERROR("VkTex", "stageTiledFrame: create failed %s %dx%d", id.c_str(), w, full_h);
+                device.vk_texture.reset();
+                return;
+            }
+            device.vk_texture_ds = device.vk_texture->imguiDescriptorSet();
+            device.texture_width = w;
+            device.texture_height = full_h;
+        }
+        tex = device.vk_texture;  // shared_ptr copy: O(1), no data copy
+        device.last_texture_update_ms.store(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+    // Phase 2: 9.6MB memcpy OUTSIDE the mutex — GUI thread never blocked during copy
+    if (tex) {
+        tex->stageTiled(top_rgba, bot_rgba, w, full_h, slice_h);
+    }
+}
+
 void GuiApplication::updateDeviceFrame(const std::string& id,
                                         const uint8_t* rgba_data,
                                         int width, int height) {

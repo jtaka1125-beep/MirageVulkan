@@ -134,7 +134,28 @@ class TiledEncoder(
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 999)  // 999s: IDR on connect only, no periodic bandwidth spikes
+                // Baseline Profile: disable B-frames → no frame reorder delay, 1-2 frame latency gain
+                if (p.mime == MediaFormat.MIMETYPE_VIDEO_AVC) {
+                    setInteger(MediaFormat.KEY_PROFILE,
+                        android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+                    setInteger(MediaFormat.KEY_LEVEL,
+                        android.media.MediaCodecInfo.CodecProfileLevel.AVCLevel41)
+                }
+                setInteger(MediaFormat.KEY_BITRATE_MODE,
+                    android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                // Realtime priority: lower encode latency
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    setInteger(MediaFormat.KEY_PRIORITY, 0)  // 0=realtime
+                    setInteger(MediaFormat.KEY_OPERATING_RATE, fps)  // hint encoder clock
+                }
+                // Low-latency mode: disable encoder-internal frame reordering
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+                }
+                // Keep encoder fed even when VirtualDisplay supply is capped at 30fps
+                val repeatUs = (1_000_000L / fps.toLong()).coerceAtLeast(10_000L)
+                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, repeatUs)
             }
             codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             val surf = codec.createInputSurface()
@@ -202,6 +223,24 @@ class TiledEncoder(
         }
 
         return true
+    }
+
+    /** Request IDR (sync frame) on all codecs — call when a new client connects */
+    fun requestIdr() {
+        val bundle = android.os.Bundle()
+        bundle.putInt(android.media.MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+        codecs.forEach { runCatching { it.setParameters(bundle) } }
+        Log.i(TAG, "IDR requested on ${codecs.size} codec(s)")
+    }
+
+    /** Dynamically update frame rate (no restart needed - TileRepeater handles it) */
+    fun updateFps(newFps: Int) {
+        tileRepeater?.updateFps(newFps)
+        // Also update each codec's operating rate hint
+        val bundle = android.os.Bundle()
+        bundle.putInt(android.media.MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+        codecs.forEach { runCatching { it.setParameters(bundle) } }
+        Log.i(TAG, "FPS updated to $newFps")
     }
 
     fun stop() {

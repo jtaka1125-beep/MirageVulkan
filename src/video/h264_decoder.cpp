@@ -1,6 +1,7 @@
 #include "h264_decoder.hpp"
 
 #include "../mirage_log.hpp"
+#include <mutex>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -8,6 +9,11 @@ extern "C" {
 #include <libswscale/swscale.h>
 #include <libavutil/hwcontext.h>
 }
+
+// Static mutex for D3D11VA readback serialization
+// D3D11 immediate context is not thread-safe; only transfer_data needs serialization.
+// avcodec_send_packet/receive_frame run fully parallel.
+static std::mutex s_d3d11_readback_mutex;
 
 // Static callback for hardware pixel format selection
 static enum AVPixelFormat hw_get_format(AVCodecContext* ctx, const enum AVPixelFormat* pix_fmts) {
@@ -89,14 +95,14 @@ bool H264Decoder::init(bool use_hevc) {
     { AV_HWDEVICE_TYPE_VULKAN,  AV_PIX_FMT_VULKAN, "Vulkan" },
   };
 
-  // Only the primary (first) decoder instance uses hardware acceleration.
-  // With multiple simultaneous instances, D3D11VA readbacks compete for GPU
-  // scheduler resources and cause multi-second stalls on the decode threads.
-  if (instance_index_ > 0) {
-    MLOG_INFO("h264", "Instance %d: forcing CPU decode (multi-instance D3D11VA contention prevention)", instance_index_);
-  } else {
+  // AMD iGPU: D3D11VA readback is slower than CPU decode for 1200x1008 tiles.
+  // Disable HW accel and use FF_THREAD_SLICE CPU decode for both tile instances.
+  if (false) {  // HW disabled
     for (const auto& opt : hw_options) {
       AVBufferRef* hw_device_ctx = nullptr;
+      // Create a new HW device for each instance.
+      // flags=0: FFmpeg may reuse cached device internally, but each call
+      // with D3D11VA on Windows creates separate command queues in practice.
       int hw_ret = av_hwdevice_ctx_create(&hw_device_ctx, opt.type, nullptr, nullptr, 0);
       if (hw_ret >= 0 && hw_device_ctx) {
         codec_ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx);
@@ -117,8 +123,8 @@ bool H264Decoder::init(bool use_hevc) {
 
   if (!hw_enabled_) {
     MLOG_INFO("h264", "No HW acceleration available, using CPU decode");
-    codec_ctx_->thread_count = 8;  // タイルデコード: スレッド数増でFPS向上
-    codec_ctx_->thread_type = FF_THREAD_FRAME;  // フレーム並列（低遅延向け）
+    codec_ctx_->thread_count = 4;  // CPU decode: 4スレッド × 2タイル = 8スレッド使用
+    codec_ctx_->thread_type = FF_THREAD_SLICE;  // スライス並列（低遅延・フレーム遅延なし）
   }
 
   AVDictionary* opts = nullptr;
@@ -198,6 +204,7 @@ int H264Decoder::decode_packet(AVPacket* pkt) {
       MLOG_INFO("h264", "DECODED FRAME #%llu: %dx%d", (unsigned long long)(frames_decoded_ + 1), frame_->width, frame_->height);
     }
     // If HW frame, transfer to CPU first
+    // Serialize only the D3D11VA readback; decode runs fully parallel.
     AVFrame* sw_frame = frame_;
     if (hw_enabled_ && frame_->format == hw_pix_fmt_) {
       av_frame_unref(sw_frame_);

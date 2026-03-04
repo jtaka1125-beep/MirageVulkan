@@ -290,6 +290,14 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
         struct linger lin = {1, 0};
         setsockopt(sock, SOL_SOCKET, SO_LINGER, (const char*)&lin, sizeof(lin));
 
+        // Enlarge socket buffers: 4MB each → absorb WiFi jitter, reduce frame loss
+        // 12Mbps tile = 1.5MB/s; 4MB buffer = ~2.7s headroom for burst absorption
+        {
+            int buf_size = 4 * 1024 * 1024;  // 4MB
+            setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char*)&buf_size, sizeof(buf_size));
+            setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (const char*)&buf_size, sizeof(buf_size));
+        }
+
 #ifdef _WIN32
         DWORD tv = 5000;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));

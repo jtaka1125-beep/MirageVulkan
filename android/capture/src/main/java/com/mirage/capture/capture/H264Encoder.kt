@@ -78,7 +78,7 @@ class H264Encoder(
         private const val BITRATE_CAP = 32_000_000
         private const val LOG_INTERVAL_MS = 5000L
         private const val SPS_PPS_RESEND_INTERVAL_MS = 5000L
-        private const val I_FRAME_INTERVAL = 1
+        private const val I_FRAME_INTERVAL = 999  // IDR on connect only
     }
 
     private var codec: MediaCodec? = null
