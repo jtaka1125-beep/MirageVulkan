@@ -337,6 +337,20 @@ bool VulkanTexture::stageUpdate(const uint8_t* rgba, int w, int h) {
     return true;
 }
 
+bool VulkanTexture::stageTiled(const uint8_t* top_rgba, const uint8_t* bot_rgba,
+                               int w, int full_h, int slice_h) {
+    if (!ctx_ || !image_ || w != width_ || full_h != height_ || !staging_mapped_) return false;
+    const size_t row_bytes  = static_cast<size_t>(w) * 4;
+    const size_t top_bytes  = row_bytes * static_cast<size_t>(slice_h);
+    const size_t bot_bytes  = row_bytes * static_cast<size_t>(full_h - slice_h);
+    // Direct two-shot copy into persistent staging: avoids one intermediate 9.6MB buffer
+    memcpy(staging_mapped_,             top_rgba, top_bytes);
+    memcpy(static_cast<uint8_t*>(staging_mapped_) + top_bytes, bot_rgba, bot_bytes);
+    has_pending_upload_ = true;
+    update_count_++;
+    return true;
+}
+
 bool VulkanTexture::recordUpdate(VkCommandBuffer cmd) {
     if (!has_pending_upload_ || !ctx_ || !image_ || !staging_) return false;
     has_pending_upload_ = false;

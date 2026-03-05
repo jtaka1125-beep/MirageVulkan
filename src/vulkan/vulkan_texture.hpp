@@ -17,6 +17,10 @@ public:
     // Integrated path: stageUpdate() copies to staging (CPU only).
     // recordUpdate() records upload commands into external VkCommandBuffer (no separate submit).
     bool stageUpdate(const uint8_t* rgba, int w, int h);
+    // Zero-copy tiled upload: top and bottom halves copied directly into staging
+    // without an intermediate compose buffer. slice_h = rows per tile (e.g. 1000).
+    bool stageTiled(const uint8_t* top_rgba, const uint8_t* bot_rgba,
+                    int w, int full_h, int slice_h);
     bool recordUpdate(VkCommandBuffer cmd);
     // Initialize/clear texture to a known color (prevents showing uninitialized VRAM)
     void clear(VkCommandPool cmd_pool, VkQueue queue, uint32_t rgba = 0xFF000000u);

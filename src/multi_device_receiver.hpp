@@ -38,6 +38,11 @@ public:
     };
 
     using FrameCallback = std::function<void(const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame)>;
+    using TiledCallback = std::function<void(
+        const std::string& hardware_id,
+        const std::shared_ptr<mirage::SharedFrame>& top,
+        const std::shared_ptr<mirage::SharedFrame>& bot,
+        int slice_h)>;
 
     MultiDeviceReceiver();
     ~MultiDeviceReceiver();
@@ -72,6 +77,7 @@ public:
     // Frame callback (called when new frame received for any device)
     // コールバック設定時にフレームポーリングスレッドを開始
     void setFrameCallback(FrameCallback cb);
+    void setTiledCallback(TiledCallback cb);
 
     // Get all hardware IDs of managed devices
     std::vector<std::string> getDeviceIds() const;
@@ -137,6 +143,7 @@ private:
     std::map<int, std::string> port_to_device_;       // port -> hardware_id
 
     FrameCallback frame_callback_;
+    TiledCallback tiled_callback_;
 
     // フレームポーリングスレッド（各デバイスのget_latest_frame()を定期呼び出し）
     std::thread frame_poll_thread_;

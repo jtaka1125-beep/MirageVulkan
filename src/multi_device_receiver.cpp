@@ -207,6 +207,10 @@ void MultiDeviceReceiver::setVulkanContext(VkPhysicalDevice physical_device, VkD
     MLOG_INFO("multi", "Vulkanコンテキスト設定完了");
 }
 
+void MultiDeviceReceiver::setTiledCallback(TiledCallback cb) {
+    tiled_callback_ = std::move(cb);
+}
+
 void MultiDeviceReceiver::setFrameCallback(FrameCallback cb) {
     frame_callback_ = std::move(cb);
 
@@ -475,6 +479,36 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_
         // 合成済みフレームをフレームコールバックへ転送
         auto cb = frame_callback_;
         auto hw_id_copy = hardware_id;
+        // Zero-copy tiled callback (preferred path)
+        if (tiled_callback_) {
+            auto tiled_cb_copy = tiled_callback_;
+            auto hw_tiled = hardware_id;
+            tc->setTiledCallback([this, hw_tiled, tiled_cb_copy](
+                const std::shared_ptr<mirage::SharedFrame>& top,
+                const std::shared_ptr<mirage::SharedFrame>& bot,
+                int slice_h) {
+                // FPS accounting
+                {
+                    std::lock_guard<std::mutex> lock(receivers_mutex_);
+                    auto it = receivers_.find(hw_tiled);
+                    if (it != receivers_.end()) {
+                        auto& e = it->second;
+                        e.frames++;
+                        e.last_frame_time = std::chrono::steady_clock::now();
+                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            e.last_frame_time - e.last_stats_time).count();
+                        if (elapsed >= 1000) {
+                            float elapsed_sec = elapsed / 1000.0f;
+                            e.fps = (e.frames - e.prev_frames) / elapsed_sec;
+                            e.prev_frames = e.frames;
+                            e.last_stats_time = e.last_frame_time;
+                        }
+                    }
+                }
+                tiled_cb_copy(hw_tiled, top, bot, slice_h);
+            });
+        }
+
         tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
             // Update frame count and FPS for tiled mode
             {

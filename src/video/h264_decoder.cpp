@@ -1,4 +1,4 @@
-#include "h264_decoder.hpp"
+﻿#include "h264_decoder.hpp"
 
 #include "../mirage_log.hpp"
 #include <mutex>
@@ -81,7 +81,7 @@ bool H264Decoder::init(bool use_hevc) {
   codec_ctx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
   codec_ctx_->delay = 0;
 
-  // Try HW acceleration: D3D11VA → Vulkan → CPU
+  // Try HW acceleration: D3D11VA 竊・Vulkan 竊・CPU
   hw_enabled_ = false;
   hw_pix_fmt_ = -1;
 
@@ -123,8 +123,8 @@ bool H264Decoder::init(bool use_hevc) {
 
   if (!hw_enabled_) {
     MLOG_INFO("h264", "No HW acceleration available, using CPU decode");
-    codec_ctx_->thread_count = 4;  // CPU decode: 4スレッド × 2タイル = 8スレッド使用
-    codec_ctx_->thread_type = FF_THREAD_SLICE;  // スライス並列（低遅延・フレーム遅延なし）
+    codec_ctx_->thread_count = 4;  // CPU decode: 4繧ｹ繝ｬ繝・ラ ﾃ・2繧ｿ繧､繝ｫ = 8繧ｹ繝ｬ繝・ラ菴ｿ逕ｨ
+    codec_ctx_->thread_type = FF_THREAD_SLICE;  // 繧ｹ繝ｩ繧､繧ｹ荳ｦ蛻暦ｼ井ｽ朱≦蟒ｶ繝ｻ繝輔Ξ繝ｼ繝驕・ｻｶ縺ｪ縺暦ｼ・
   }
 
   AVDictionary* opts = nullptr;

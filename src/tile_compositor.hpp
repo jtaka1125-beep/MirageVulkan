@@ -31,6 +31,11 @@ namespace gui {
 class TileCompositor {
 public:
     using FrameCallback = std::function<void(std::shared_ptr<mirage::SharedFrame>)>;
+    // Zero-copy callback: receives top/bottom tiles directly, skipping intermediate compose buffer
+    using TiledCallback = std::function<void(
+        const std::shared_ptr<mirage::SharedFrame>& top,
+        const std::shared_ptr<mirage::SharedFrame>& bot,
+        int slice_h)>;
 
     TileCompositor() = default;
     ~TileCompositor() { stop(); }
@@ -46,6 +51,8 @@ public:
 
     // フレーム合成完了時のコールバック設定
     void setFrameCallback(FrameCallback cb) { frame_cb_ = std::move(cb); }
+    // Preferred: zero-copy path that bypasses compose() intermediate buffer
+    void setTiledCallback(TiledCallback cb) { tiled_cb_ = std::move(cb); }
 
     // ネイティブ解像度を設定（start()前に呼ぶ）
     // native_w/h: デバイス物理解像度（例: 1200x2000）
@@ -94,11 +101,14 @@ public:
     bool running() const { return running_.load(); }
 
 private:
-    static constexpr int64_t TIMEOUT_US = 33000;  // 33ms = 2フレーム @60fps
-    static constexpr int     POLL_MS    = 1;       // ポーリング間隔
+    static constexpr int64_t TIMEOUT_US      = 20000;  // 20ms = 1.25フレーム @60fps
+    static constexpr int64_t INTERP_LIMIT_US =  9000;  //  9ms: 補完許容PTS差 (half frame @60fps)
+    static constexpr int     PAIR_WAIT_MS    =    5;   //  5ms: 片側到着後、もう片側を最大5ms待つ @60fps
+    static constexpr int     POLL_MS         = 1;      // ポーリング間隔
 
     std::unique_ptr<MirrorReceiver> receiver_[2];
     FrameCallback frame_cb_;
+    TiledCallback tiled_cb_;
     std::atomic<bool> running_{false};
     std::thread compositor_thread_;
 
@@ -183,12 +193,41 @@ private:
                     std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
                     continue;
                 }
-            } else if (got[0] && last_[1]) {
-                top = sf[0];
-                bot = last_[1];  // 前フレームで補完
-            } else if (got[1] && last_[0]) {
-                top = last_[0];
-                bot = sf[1];
+            } else if (got[0] || got[1]) {
+                // 片側だけ到着: もう片側を最大 PAIR_WAIT_MS 待ってからペアリング試行
+                int t_new = got[0] ? 0 : 1;
+                int t_old = 1 - t_new;
+                int waited = 0;
+                while (waited < PAIR_WAIT_MS) {
+                    std::shared_ptr<mirage::SharedFrame> sf2;
+                    if (receiver_[t_old]->get_latest_shared_frame(sf2)) {
+                        last_[t_old] = sf2;
+                        // ペア到着: PTS 差チェック
+                        int64_t diff = (int64_t)sf[t_new]->pts_us - (int64_t)sf2->pts_us;
+                        if (diff < 0) diff = -diff;
+                        if (diff < TIMEOUT_US) {
+                            top = (t_new == 0) ? sf[t_new] : sf2;
+                            bot = (t_new == 0) ? sf2 : sf[t_new];
+                        }
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    waited++;
+                }
+                // ペア見つからない場合 → 補完 (PTS 差が1フレーム以内のみ)
+                if (!top && last_[t_old]) {
+                    int64_t pts_gap = (int64_t)sf[t_new]->pts_us - (int64_t)last_[t_old]->pts_us;
+                    if (pts_gap < 0) pts_gap = -pts_gap;
+                    if (pts_gap <= INTERP_LIMIT_US) {
+                        top = (t_new == 0) ? sf[t_new] : last_[t_old];
+                        bot = (t_new == 0) ? last_[t_old] : sf[t_new];
+                    }
+                }
+                if (!top) {
+                    // ペアも補完も不可 → スキップ
+                    std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
+                    continue;
+                }
             } else {
                 // 補完用フレームもなし
                 std::this_thread::sleep_for(std::chrono::milliseconds(POLL_MS));
@@ -218,11 +257,18 @@ private:
             last_fid_top_ = fid_top;
             last_fid_bot_ = fid_bot;
 
-            // 上下結合
-            auto combined = compose(top, bot);
-            if (combined && frame_cb_) {
+            // 上下結合 or ゼロコピーコールバック
+            if (tiled_cb_) {
+                // Zero-copy path: skip 9.6MB intermediate compose buffer
+                const int slice_h = (native_h_ > 0) ? (native_h_ / tiles_y_) : top->height;
                 dbg_composed++;
-                frame_cb_(combined);
+                tiled_cb_(top, bot, slice_h);
+            } else {
+                auto combined = compose(top, bot);
+                if (combined && frame_cb_) {
+                    dbg_composed++;
+                    frame_cb_(combined);
+                }
             }
         }
 
