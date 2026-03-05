@@ -185,29 +185,13 @@ class TiledEncoder(
         }
 
         // MediaTek c2.mtk.avc.encoder stalls when 2 instances start simultaneously.
-        // Fix: start codec[0] first, drain until IDR is produced (VCodecV4L2
-        // resource is fully allocated), then start codec[1].
+        // Root cause: VCodecV4L2 cannot allocate HW resources for 2 instances at once.
+        // Fix: start codec[0] first, wait 500ms for VCodecV4L2 to fully initialize,
+        // then start codec[1]. 500ms chosen as conservative but not user-visible.
         codecs[0].start()
-        run {
-            val info = android.media.MediaCodec.BufferInfo()
-            var waited = 0
-            var idrSeen = false
-            while (waited < 3000 && !idrSeen) {
-                val idx = codecs[0].dequeueOutputBuffer(info, 50_000)
-                when {
-                    idx >= 0 -> {
-                        val flags = info.flags
-                        android.util.Log.i("TiledEncoder", "codec[0] drain buf size=${info.size} flags=$flags")
-                        codecs[0].releaseOutputBuffer(idx, false)
-                        if (flags and android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) idrSeen = true
-                    }
-                    idx == android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
-                        android.util.Log.i("TiledEncoder", "codec[0] format changed")
-                }
-                waited += 50
-            }
-            android.util.Log.i("TiledEncoder", "codec[0] drain done idrSeen=$idrSeen waited=${waited}ms, starting codec[1]")
-        }
+        android.util.Log.i("TiledEncoder", "codec[0] started, waiting 500ms for VCodecV4L2 init...")
+        Thread.sleep(500)
+        android.util.Log.i("TiledEncoder", "Starting codec[1]")
         for (i in 1 until codecs.size) codecs[i].start()
 
         // Start TileRepeater (crops into tile surfaces)
