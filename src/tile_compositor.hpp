@@ -24,6 +24,8 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
+#include <queue>
 #include <cstring>  // memcpy
 
 namespace gui {
@@ -83,6 +85,8 @@ public:
             }
         }
 
+        stitch_running_.store(true);
+        stitch_thread_ = std::thread(&TileCompositor::stitchLoop, this);
         running_.store(true);
         compositor_thread_ = std::thread(&TileCompositor::compositorLoop, this);
         MLOG_INFO("tile", "TileCompositor started: port %d/%d host %s (top/bottom)",
@@ -93,6 +97,13 @@ public:
     void stop() {
         if (!running_.exchange(false)) return;
         if (compositor_thread_.joinable()) compositor_thread_.join();
+        // Stop stitch thread after compositor (no more jobs will be enqueued)
+        {
+            std::lock_guard<std::mutex> lk(stitch_mtx_);
+            stitch_running_.store(false);
+        }
+        stitch_cv_.notify_all();
+        if (stitch_thread_.joinable()) stitch_thread_.join();
         receiver_[0].reset();
         receiver_[1].reset();
         MLOG_INFO("tile", "TileCompositor stopped");
@@ -133,6 +144,20 @@ private:
     // compose() double buffer (avoid malloc + prevent data race)
     std::vector<uint8_t> compose_buf_[2];
     int compose_buf_idx_ = 0;
+
+    // Async stitch thread: compositor posts top/bot here and returns immediately.
+    // stitch_thread_ does the memcpy + frame_cb_ call, decoupling compositor from
+    // downstream latency (dispatchSharedFrame / AI engine).
+    struct StitchJob {
+        std::shared_ptr<mirage::SharedFrame> top, bot;
+        int slice_h;
+    };
+    std::queue<StitchJob>   stitch_queue_;
+    std::mutex              stitch_mtx_;
+    std::condition_variable stitch_cv_;
+    std::thread             stitch_thread_;
+    std::atomic<bool>       stitch_running_{false};
+    static constexpr int    STITCH_QUEUE_MAX = 4;  // drop oldest if AI/GUI can't keep up
 
     // ============================================================
     // メインループ
@@ -263,16 +288,44 @@ private:
                 const int slice_h = (native_h_ > 0) ? (native_h_ / tiles_y_) : top->height;
                 dbg_composed++;
                 tiled_cb_(top, bot, slice_h);
-            } else {
-                auto combined = compose(top, bot);
-                if (combined && frame_cb_) {
-                    dbg_composed++;
-                    frame_cb_(combined);
+            } else if (frame_cb_) {
+                // Async stitch: enqueue top/bot and return immediately.
+                // stitch_thread_ does the memcpy + frame_cb_ without blocking compositor.
+                const int slice_h = (native_h_ > 0) ? (native_h_ / tiles_y_) : top->height;
+                {
+                    std::lock_guard<std::mutex> lk(stitch_mtx_);
+                    if ((int)stitch_queue_.size() >= STITCH_QUEUE_MAX) {
+                        stitch_queue_.pop();  // drop oldest to keep latency low
+                    }
+                    stitch_queue_.push({top, bot, slice_h});
                 }
+                stitch_cv_.notify_one();
+                dbg_composed++;
             }
         }
 
         MLOG_INFO("tile", "Compositor thread ended");
+    }
+
+    // ============================================================
+    // Async stitch worker
+    // ============================================================
+    void stitchLoop() {
+        while (true) {
+            StitchJob job;
+            {
+                std::unique_lock<std::mutex> lk(stitch_mtx_);
+                stitch_cv_.wait(lk, [this]{
+                    return !stitch_queue_.empty() || !stitch_running_.load();
+                });
+                if (!stitch_running_.load() && stitch_queue_.empty()) break;
+                if (stitch_queue_.empty()) continue;
+                job = std::move(stitch_queue_.front());
+                stitch_queue_.pop();
+            }
+            auto combined = compose(job.top, job.bot);
+            if (combined && frame_cb_) frame_cb_(combined);
+        }
     }
 
     // ============================================================
