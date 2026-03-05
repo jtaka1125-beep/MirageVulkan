@@ -85,7 +85,7 @@ class ScreenCaptureService : Service() {
     private var lastHost: String = "192.168.0.2"
     private var lastPort: Int = 50000
 
-    @Volatile private var desiredFps: Int = 30
+    @Volatile private var desiredFps: Int = 60
     @Volatile private var fpsRestartPending: Boolean = false
 
     private var aiStream: AiStream? = null

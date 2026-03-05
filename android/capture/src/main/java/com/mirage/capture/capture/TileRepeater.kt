@@ -159,9 +159,10 @@ class TileRepeater(
             var lastLogTime = System.currentTimeMillis()
 
             var nextNs = System.nanoTime()
-            val intervalNs = 1_000_000_000L / targetFps.toLong()
 
             while (running) {
+                // Re-read targetFps every iteration so updateFps() takes effect immediately
+                val intervalNs = 1_000_000_000L / targetFps.toLong()
                 val nowNs = System.nanoTime()
                 val sleepNs = nextNs - nowNs
                 if (sleepNs > 1_000_000L) {
@@ -178,11 +179,10 @@ class TileRepeater(
                 try {
                     surfaceTexture?.updateTexImage()
                     surfaceTexture?.getTransformMatrix(texMatrix)
-                    val newPts = surfaceTexture?.timestamp ?: 0L
-                    // Use actual pts if available, else current time (draw even if no new frame)
-                    // Always use monotonically increasing timestamp to avoid backward-time drops
-                    val candidatePts = if (newPts > lastPtsNs) newPts else System.nanoTime()
-                    lastPtsNs = if (candidatePts > lastPtsNs) candidatePts else lastPtsNs + 33_333_333L
+                    // NOTE: SurfaceTexture.timestamp may use a different clock than System.nanoTime(),
+                    // causing backward-time drops in GraphicBufferSource. Use System.nanoTime() only.
+                    val nowNanos = System.nanoTime()
+                    lastPtsNs = if (nowNanos > lastPtsNs) nowNanos else lastPtsNs + (1_000_000_000L / targetFps.toLong())
                 } catch (_: Exception) {
                     lastPtsNs = System.nanoTime()
                 }
@@ -194,10 +194,14 @@ class TileRepeater(
                         continue
                     }
 
-                    // set viewport to exact slice size (NOT tileH which is align16-padded)
-                    // tileH=1008 vs sliceH=1000: using tileH would stretch 1000 content rows to 1008px
+                    // Use tileH (16-aligned) NOT sliceH for viewport.
+                    // glViewport with sliceH leaves rows 0..7 of the EGL surface unrendered (black),
+                    // which encode as black and appear as a dark seam at the tile boundary in the
+                    // composed image (tile-1 rows 0-7 map to final image y=1000-1007).
+                    // Using tileH fills all 1008 rows with real content (0.8% vertical stretch,
+                    // imperceptible). compose() still crops to sliceH rows on the PC side.
                     val sliceH = targetH / oe.out.tilesY
-                    GLES20.glViewport(0, 0, oe.out.tileW, sliceH)
+                    GLES20.glViewport(0, 0, oe.out.tileW, oe.out.tileH)
 
                     // compute normalized crop rect in source space
                     // Note: OpenGL texture V coordinate is flipped (0=bottom, 1=top)
@@ -214,13 +218,8 @@ class TileRepeater(
 
                     drawFrame()
 
-                    // Set same timestamp for all tiles (sync)
-                    try {
-                        EGLExt.eglPresentationTimeANDROID(eglDisplay, oe.eglSurface, lastPtsNs)
-                    } catch (_: Throwable) {
-                        // ignore if extension missing
-                    }
-
+                    // NOTE: eglPresentationTimeANDROID removed - caused "backward in time" drops
+                    // in GraphicBufferSource. Let the encoder use its own internal timestamps.
                     EGL14.eglSwapBuffers(eglDisplay, oe.eglSurface)
                 }
 

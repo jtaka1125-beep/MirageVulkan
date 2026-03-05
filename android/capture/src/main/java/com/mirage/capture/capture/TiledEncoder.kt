@@ -129,18 +129,34 @@ class TiledEncoder(
 
         val tileCount = p.tilesX * p.tilesY
         for (i in 0 until tileCount) {
-            val codec = MediaCodec.createByCodecName(p.codecName)
-            val fmt = MediaFormat.createVideoFormat(p.mime, p.tileW, p.tileH).apply {
+            // Use HEVC encoder for tile[0] and AVC for tile[1+].
+            // MediaTek has separate HW units for HEVC and AVC,
+            // so they do not compete for the same VCodecV4L2 instance.
+            val (chosenCodecName, chosenMime) = if (i == 0) {
+                Pair("c2.mtk.hevc.encoder", android.media.MediaFormat.MIMETYPE_VIDEO_HEVC)
+            } else {
+                Pair(p.codecName, p.mime)
+            }
+            android.util.Log.i("TiledEncoder", "tile[$i] using $chosenCodecName ($chosenMime)")
+            val codec = MediaCodec.createByCodecName(chosenCodecName)
+            val fmt = MediaFormat.createVideoFormat(chosenMime, p.tileW, p.tileH).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, fps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 999)  // 999s: IDR on connect only, no periodic bandwidth spikes
-                // Baseline Profile: disable B-frames → no frame reorder delay, 1-2 frame latency gain
-                if (p.mime == MediaFormat.MIMETYPE_VIDEO_AVC) {
+                // Profile selection per codec
+                if (chosenMime == MediaFormat.MIMETYPE_VIDEO_AVC) {
+                    // Baseline Profile: no B-frames, 1-2 frame latency gain
                     setInteger(MediaFormat.KEY_PROFILE,
                         android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
                     setInteger(MediaFormat.KEY_LEVEL,
                         android.media.MediaCodecInfo.CodecProfileLevel.AVCLevel41)
+                } else if (chosenMime == MediaFormat.MIMETYPE_VIDEO_HEVC) {
+                    // HEVC Main Profile - required for standard FFmpeg compatibility
+                    setInteger(MediaFormat.KEY_PROFILE,
+                        android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
+                    setInteger(MediaFormat.KEY_LEVEL,
+                        android.media.MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41)
                 }
                 setInteger(MediaFormat.KEY_BITRATE_MODE,
                     android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
@@ -153,9 +169,9 @@ class TiledEncoder(
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                     setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
                 }
-                // Keep encoder fed even when VirtualDisplay supply is capped at 30fps
-                val repeatUs = (1_000_000L / fps.toLong()).coerceAtLeast(10_000L)
-                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, repeatUs)
+                // NOTE: KEY_REPEAT_PREVIOUS_FRAME_AFTER removed - caused VCodecV4L2
+                // input buffer stall (availableInputSlotSize=0) on MediaTek hardware.
+                // TileRepeater already repeats frames at 60fps via eglSwapBuffers.
             }
             codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             val surf = codec.createInputSurface()
@@ -171,7 +187,6 @@ class TiledEncoder(
             packetizers.add(RtpH264Packetizer(ssrc = 0x12345678 + i))
         }
 
-        // Start codecs
         for (c in codecs) c.start()
 
         // Start TileRepeater (crops into tile surfaces)
@@ -201,7 +216,11 @@ class TiledEncoder(
             stop()
             return false
         }
-
+        // Android 11+: hint SurfaceFlinger to deliver frames at fps (lifts 30fps VirtualDisplay cap)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            inSurf.setFrameRate(fps.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+            Log.i(TAG, "setFrameRate(${fps}f) applied to VirtualDisplay input surface")
+        }
         Log.i(TAG, "Creating VirtualDisplay: ${targetW}x${targetH} dpi=${densityDpi} surface=${inSurf}")
         virtualDisplay = projection.createVirtualDisplay(
             "MirageCapture",
