@@ -1099,9 +1099,11 @@ void MirrorReceiver::decode_nal(const uint8_t* data, size_t len) {
 
   // Auto-detect HEVC by NAL unit type (VPS/SPS/PPS are 32/33/34 in HEVC)
   // HEVC nal_type = (byte0 >> 1) & 0x3f
+  // Guard: if H.264 SPS already cached the stream is AVC - skip HEVC detection.
   {
     int hevc_nal_type = (len >= 2) ? ((data[0] >> 1) & 0x3f) : -1;
-    if (!stream_is_hevc_ && (hevc_nal_type == 32 || hevc_nal_type == 33 || hevc_nal_type == 34)) {
+    bool avc_sps_seen = !cached_sps_.empty();
+    if (!stream_is_hevc_ && !avc_sps_seen && (hevc_nal_type == 32 || hevc_nal_type == 33 || hevc_nal_type == 34)) {
       stream_is_hevc_ = true;
       MLOG_INFO("mirror", "HEVC VPS/SPS detected (nal_type=%d) - switching decoder to HEVC", hevc_nal_type);
       unified_decoder_.reset();
