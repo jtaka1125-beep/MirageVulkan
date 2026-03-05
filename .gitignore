@@ -95,3 +95,7 @@ RESULTS.txt
 /tmp_*.py
 /tmp_*.txt
 /tmp_check/
+.claude/  
+handoff.md  
+thread_count  
+"android.os.Build.VERSION_CODES.R)"  
