@@ -64,6 +64,7 @@
 
 #include "ai/vision_decision_engine.hpp"
 #include "ai/ollama_vision.hpp"
+#include "ai/lfm_classifier.hpp"
 #include "ai/template_manifest.hpp"
 #include "ai/template_writer.hpp"
 #include "ai/template_capture.hpp"
@@ -636,6 +637,8 @@ public:
         vision_engine_ = std::make_unique<VisionDecisionEngine>(vde_config);
         // Layer 3: OllamaVision 生成 & VDE に注入
         ollama_vision_ = std::make_shared<mirage::ai::OllamaVision>();
+        lfm_classifier_ = std::make_shared<mirage::ai::LfmClassifier>();
+        MLOG_INFO("ai", "LfmClassifier初期化完了 (Layer 2.5)");
         vision_engine_->setOllamaVision(ollama_vision_);
 
 
@@ -1773,7 +1776,40 @@ if (decision.should_act && can_send) {
                             MLOG_DEBUG("ai", "改善T: VisionEngine経路OCRフォールバック成功: slot=%d", slot);
                         }
                     }
-#endif
+                    // Layer 2.5: LFM テキスト分類 (llava前の高速判断)
+                    if (lfm_classifier_ && action.type == AIAction::Type::NONE
+                        && frame_analyzer_ && frame_analyzer_->isInitialized()) {
+                        auto ocr_result = frame_analyzer_->analyzeText(device_id);
+                        std::string ocr_text = ocr_result.fullText();
+                        if (!ocr_text.empty()) {
+                            // まず軽量モデル(350M)で分類
+                            auto lfm_r = lfm_classifier_->classify(ocr_text);
+                            if (!lfm_r.success || lfm_r.action == mirage::ai::UiAction::Unknown) {
+                                // unknownなら高精度モデル(1.2B)で再試行
+                                lfm_r = lfm_classifier_->classifySmart(ocr_text);
+                            }
+                            if (lfm_r.success && lfm_r.action != mirage::ai::UiAction::Unknown) {
+                                MLOG_INFO("ai", "Layer2.5 LFM: '%s' -> %s (%dms)",
+                                          ocr_text.substr(0,40).c_str(),
+                                          lfm_r.action_str.c_str(), lfm_r.elapsed_ms);
+                                if (lfm_r.action == mirage::ai::UiAction::Close ||
+                                    lfm_r.action == mirage::ai::UiAction::Tap) {
+                                    // ポップアップ中心付近をタップ
+                                    action.type   = AIAction::Type::TAP;
+                                    action.x      = width / 2;
+                                    action.y      = height / 2;
+                                    action.reason = "Layer2.5: " + lfm_r.action_str;
+                                    idle_frames_ = 0;
+                                    stats_.idle_frames = 0;
+                                    stats_.actions_executed++;
+                                } else if (lfm_r.action == mirage::ai::UiAction::Ignore) {
+                                    action.type   = AIAction::Type::WAIT;
+                                    action.reason = "Layer2.5: ignore";
+                                }
+                            }
+                        }
+                    }
+#endif // MIRAGE_OCR_ENABLED
                     // Layer 3 トリガー判定
                     if (action.type == AIAction::Type::NONE && vision_engine_) {
                         if (vision_engine_->shouldTriggerLayer3(device_id)) {
@@ -4384,6 +4420,7 @@ private:
 
     std::unique_ptr<VisionDecisionEngine> vision_engine_;
     std::shared_ptr<mirage::ai::OllamaVision> ollama_vision_;  // Layer 3
+    std::shared_ptr<mirage::ai::LfmClassifier> lfm_classifier_;  // Layer 2.5
 
 
 
@@ -5248,7 +5285,3 @@ std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() co
 
 
 #endif // USE_AI
-
-
-
-
