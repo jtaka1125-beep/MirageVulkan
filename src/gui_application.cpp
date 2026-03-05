@@ -1,4 +1,4 @@
-﻿// =============================================================================
+// =============================================================================
 // MirageSystem v2 - GUI Implementation Part 1
 // =============================================================================
 // Vulkan initialization, ImGui setup, resource management
@@ -264,6 +264,31 @@ void GuiApplication::stageTiledFrame(const std::string& id,
     // Phase 2: 9.6MB memcpy OUTSIDE the mutex — GUI thread never blocked during copy
     if (tex) {
         tex->stageTiled(top_rgba, bot_rgba, w, full_h, slice_h);
+
+        // Track fps from tiled path (primary display path)
+        auto now_tp = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> lock(pending_frames_mutex_);
+            auto& tracker = frame_fps_trackers_[id];
+            tracker.frame_count++;
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now_tp - tracker.last_reset).count();
+            if (elapsed >= 1000) {
+                tracker.measured_fps = tracker.frame_count * 1000.0f / static_cast<float>(elapsed);
+                tracker.frame_count = 0;
+                tracker.last_reset = now_tp;
+            }
+        }
+        {
+            std::lock_guard<std::mutex> dlock(devices_mutex_);
+            auto dit = devices_.find(id);
+            if (dit != devices_.end()) {
+                std::lock_guard<std::mutex> plock(pending_frames_mutex_);
+                auto tit = frame_fps_trackers_.find(id);
+                if (tit != frame_fps_trackers_.end() && tit->second.measured_fps > 0.0f)
+                    dit->second.fps = tit->second.measured_fps;
+            }
+        }
     }
 }
 

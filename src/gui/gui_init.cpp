@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem - GUI Initialization Helpers
 // =============================================================================
 // Split from gui_main.cpp for maintainability
@@ -325,6 +325,61 @@ bool initializeMultiReceiver() {
         }
     } catch (...) {}
 int success = 0;
+    // Zero-copy tiled callback: writes top/bot tiles directly into Vulkan staging.
+    // Saves one 9.6MB memcpy per frame vs compose() intermediate buffer.
+    g_multi_receiver->setTiledCallback([](const std::string& hardware_id,
+        const std::shared_ptr<mirage::SharedFrame>& top,
+        const std::shared_ptr<mirage::SharedFrame>& bot,
+        int slice_h) {
+        if (!top || !top->rgba || !bot || !bot->rgba) return;
+        if (g_gui) {
+            const int full_h = slice_h * 2;  // native_h (e.g. 2000)
+            g_gui->stageTiledFrame(hardware_id,
+                top->rgba.get(), bot->rgba.get(),
+                top->width, full_h, slice_h,
+                top->pts_us, top->frame_id);
+        }
+    });
+
+    g_multi_receiver->setFrameCallback([](const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame) {
+        // Convert hardware_id to slot_N format for AI engine
+        static std::unordered_map<std::string, int> s_hw_slot;
+        static std::mutex s_hw_mutex;
+        static bool s_async_started = false;
+        int slot = 0;
+        {
+            std::lock_guard<std::mutex> lk(s_hw_mutex);
+            auto it = s_hw_slot.find(hardware_id);
+            if (it == s_hw_slot.end()) {
+                slot = (int)s_hw_slot.size();
+                s_hw_slot[hardware_id] = slot;
+            } else {
+                slot = it->second;
+            }
+            if (!s_async_started && g_ai_engine && g_ai_enabled) {
+                g_ai_engine->setAsyncMode(true);
+                s_async_started = true;
+            }
+        }
+
+        // Use dispatcher for unified SharedFrame delivery
+        // device_id uses hardware_id for mainview matching; slot index for AI engine
+        std::string device_id = hardware_id;
+        int source_port = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_hwport_m);
+            auto it = g_hw_to_port.find(hardware_id);
+            if (it != g_hw_to_port.end()) source_port = it->second;
+        }
+
+        // SharedFrame direct dispatch (no MirrorFrame::rgba copy)
+        {
+            frame->device_id   = device_id;
+            frame->source_port = source_port;
+            mirage::dispatcher().dispatchSharedFrame(frame);
+        }
+    });
+
     for (size_t i = 0; i < devices.size(); ++i) {
         const auto& dev = devices[i];
         const std::string& adb_id = dev.preferred_adb_id;
@@ -415,60 +470,6 @@ int success = 0;
 
     // 繝輔Ξ繝ｼ繝繧ｳ繝ｼ繝ｫ繝舌ャ繧ｯ險ｭ螳・ 繝・さ繝ｼ繝画ｸ医∩繝輔Ξ繝ｼ繝繧脱ventBus邨檎罰縺ｧGUI縺ｫ驟堺ｿ｡
     // Frame callback: decoded frames -> EventBus for GUI/AI/Macro (unified path)
-    // Zero-copy tiled callback: writes top/bot tiles directly into Vulkan staging.
-    // Saves one 9.6MB memcpy per frame vs compose() intermediate buffer.
-    g_multi_receiver->setTiledCallback([](const std::string& hardware_id,
-        const std::shared_ptr<mirage::SharedFrame>& top,
-        const std::shared_ptr<mirage::SharedFrame>& bot,
-        int slice_h) {
-        if (!top || !top->rgba || !bot || !bot->rgba) return;
-        if (g_gui) {
-            const int full_h = slice_h * 2;  // native_h (e.g. 2000)
-            g_gui->stageTiledFrame(hardware_id,
-                top->rgba.get(), bot->rgba.get(),
-                top->width, full_h, slice_h,
-                top->pts_us, top->frame_id);
-        }
-    });
-
-    g_multi_receiver->setFrameCallback([](const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame) {
-        // Convert hardware_id to slot_N format for AI engine
-        static std::unordered_map<std::string, int> s_hw_slot;
-        static std::mutex s_hw_mutex;
-        static bool s_async_started = false;
-        int slot = 0;
-        {
-            std::lock_guard<std::mutex> lk(s_hw_mutex);
-            auto it = s_hw_slot.find(hardware_id);
-            if (it == s_hw_slot.end()) {
-                slot = (int)s_hw_slot.size();
-                s_hw_slot[hardware_id] = slot;
-            } else {
-                slot = it->second;
-            }
-            if (!s_async_started && g_ai_engine && g_ai_enabled) {
-                g_ai_engine->setAsyncMode(true);
-                s_async_started = true;
-            }
-        }
-
-        // Use dispatcher for unified SharedFrame delivery
-        // device_id uses hardware_id for mainview matching; slot index for AI engine
-        std::string device_id = hardware_id;
-        int source_port = 0;
-        {
-            std::lock_guard<std::mutex> lk(g_hwport_m);
-            auto it = g_hw_to_port.find(hardware_id);
-            if (it != g_hw_to_port.end()) source_port = it->second;
-        }
-
-        // SharedFrame direct dispatch (no MirrorFrame::rgba copy)
-        {
-            frame->device_id   = device_id;
-            frame->source_port = source_port;
-            mirage::dispatcher().dispatchSharedFrame(frame);
-        }
-    });
 
     return success > 0;
 }
@@ -573,28 +574,50 @@ static void startRouteEvalThread() {
 // FPS Command Callback
 // =============================================================================
 static void onFpsCommand(const std::string& device_id, int fps) {
-    if (g_route_controller && g_route_controller->isTcpOnlyMode() && g_adb_manager) {
+    // X1 always uses ADB broadcast (WiFi direct video, serial "93020523431940")
+    const bool deviceIsX1 = (device_id.find("93020523431940") != std::string::npos);
+    const bool useTcpOnly = g_route_controller && g_route_controller->isTcpOnlyMode();
+    bool sent_via_adb = false;
+    if ((useTcpOnly || deviceIsX1) && g_adb_manager) {
         auto devices = g_adb_manager->getUniqueDevices();
-        for (const auto& dev : devices) {
-            if (dev.hardware_id == device_id) {
-                std::string adb_id = dev.preferred_adb_id;
-                const bool isX1 = (dev.display_name.find("Npad X1") != std::string::npos) ||
-                                   (dev.display_name.find("N-one Npad X1") != std::string::npos) ||
-                                   (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos) ||
-                                   (dev.preferred_adb_id.find("93020523431940") != std::string::npos);
-                int send_fps = fps;
-                if (isX1 && send_fps < 60) send_fps = 60;
-                std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps " + std::to_string(send_fps) + " --ei fps " + std::to_string(send_fps);
-                std::string cmd2 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000" : "";
-                std::string cmd3 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture" : "";
-                std::thread([adb_id, cmd, cmd2, cmd3, device_id, send_fps]() {
-                    if (g_adb_manager) { g_adb_manager->adbCommand(adb_id, cmd); if(!cmd2.empty()) g_adb_manager->adbCommand(adb_id, cmd2); if(!cmd3.empty()) g_adb_manager->adbCommand(adb_id, cmd3); }
-                    MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)", send_fps, device_id.c_str(), adb_id.c_str());
-                }).detach();
-                break;
+        std::string adb_id;
+        bool isX1 = deviceIsX1;
+        if (useTcpOnly) {
+            // tcp_only_mode: match by hardware_id
+            for (const auto& dev : devices) {
+                if (dev.hardware_id == device_id) {
+                    adb_id = dev.preferred_adb_id;
+                    isX1 = isX1 || (dev.display_name.find("Npad X1") != std::string::npos) ||
+                                   (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos);
+                    break;
+                }
             }
+        } else {
+            // X1 WiFi direct: find by serial in wifi_connections or preferred_adb_id
+            for (const auto& dev : devices) {
+                if (dev.display_name.find("Npad X1") != std::string::npos ||
+                    dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos ||
+                    dev.preferred_adb_id.find("93020523431940") != std::string::npos) {
+                    adb_id = dev.preferred_adb_id;
+                    break;
+                }
+            }
+            if (adb_id.empty()) adb_id = "192.168.0.3:5555";  // fallback
         }
-    } else if (g_hybrid_cmd) {
+        if (!adb_id.empty()) {
+            int send_fps = fps;
+            if (isX1 && send_fps < 90) send_fps = 90;
+            std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps " + std::to_string(send_fps) + " --ei fps " + std::to_string(send_fps);
+            std::string cmd2 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000" : "";
+            std::string cmd3 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture" : "";
+            std::thread([adb_id, cmd, cmd2, cmd3, device_id, send_fps]() {
+                if (g_adb_manager) { g_adb_manager->adbCommand(adb_id, cmd); if(!cmd2.empty()) g_adb_manager->adbCommand(adb_id, cmd2); if(!cmd3.empty()) g_adb_manager->adbCommand(adb_id, cmd3); }
+                MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)", send_fps, device_id.c_str(), adb_id.c_str());
+            }).detach();
+            sent_via_adb = true;
+        }
+    }
+    if (!sent_via_adb && g_hybrid_cmd) {
         g_hybrid_cmd->send_video_fps(device_id, fps);
         MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s (USB)", fps, device_id.c_str());
     }
@@ -622,12 +645,21 @@ static void registerDevicesForRouteController() {
     const int base_port = mirage::config::getConfig().network.video_base_port;
 
     if (!g_route_controller->isTcpOnlyMode() && g_hybrid_cmd) {
-        // USB AOA mode: register by USB serial
+        // USB AOA mode: register by USB serial, X1 (93020523431940) always main
         auto device_ids = g_hybrid_cmd->get_device_ids();
+        // Find X1 serial among registered USB devices
+        const std::string X1_SERIAL = "93020523431940";
+        bool hasX1 = false;
+        for (const auto& id : device_ids) {
+            if (id.find(X1_SERIAL) != std::string::npos) { hasX1 = true; break; }
+        }
         int wifi_port = base_port;
         bool first = true;
         for (const auto& id : device_ids) {
-            g_route_controller->registerDevice(id, first, wifi_port);
+            const bool isX1 = (id.find(X1_SERIAL) != std::string::npos);
+            const bool mainFlag = hasX1 ? isX1 : first;
+            g_route_controller->registerDevice(id, mainFlag, wifi_port);
+            MLOG_INFO("gui", "RouteController USB AOA: registered %s main=%d", id.c_str(), (int)mainFlag);
             wifi_port++;
             first = false;
         }
@@ -810,8 +842,25 @@ static void onDeviceSelected(const std::string& device_id) {
     if (gui) gui->logInfo(u8"Selected: " + device_id);
 
     // Update RouteController main device
+    // RouteController may be registered by USB serial (AOA mode), not hardware_id.
+    // Resolve hardware_id -> USB serial if needed.
     if (g_route_controller) {
-        g_route_controller->setMainDevice(device_id);
+        std::string rc_device_id = device_id;
+        if (!g_route_controller->isRegistered(device_id) && g_adb_manager) {
+            // Try to find USB serial for this hardware_id
+            ::gui::AdbDeviceManager::UniqueDevice ud;
+            if (g_adb_manager->getUniqueDevice(device_id, ud) && !ud.usb_serial.empty()) {
+                rc_device_id = ud.usb_serial;
+                MLOG_INFO("gui", "setMainDevice: resolved %s -> %s (USB serial)", device_id.c_str(), rc_device_id.c_str());
+            } else {
+                // Last resort: X1 known serial
+                if (device_id.find("f1925da3") != std::string::npos) {
+                    rc_device_id = "93020523431940";
+                    MLOG_INFO("gui", "setMainDevice: X1 hardcoded serial fallback -> %s", rc_device_id.c_str());
+                }
+            }
+        }
+        g_route_controller->setMainDevice(rc_device_id);
     }
 
     // Update FPS: main=60fps, sub=30fps
@@ -821,7 +870,8 @@ static void onDeviceSelected(const std::string& device_id) {
         std::string sel_id = device_id;
         std::thread([devices, sel_id]() {
             for (const auto& dev : devices) {
-                int target_fps = (dev.hardware_id == sel_id) ? 60 : 30;
+                const bool isX1sel = (dev.hardware_id.find("f1925da3") != std::string::npos);
+                int target_fps = (dev.hardware_id == sel_id) ? (isX1sel ? 90 : 60) : 30;
                 std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps "
                                   + std::to_string(target_fps) + " --ei fps " + std::to_string(target_fps);
                 if (g_adb_manager) g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
@@ -857,7 +907,8 @@ static void onDeviceSelected(const std::string& device_id) {
             auto adb_devices = g_adb_manager->getUniqueDevices();
             std::thread([adb_devices, device_id]() {
                 for (const auto& dev : adb_devices) {
-                    int target_fps = (dev.hardware_id == device_id) ? 60 : 30;
+                    const bool isX1dev = (dev.hardware_id.find("f1925da3") != std::string::npos);
+                    int target_fps = (dev.hardware_id == device_id) ? (isX1dev ? 90 : 60) : 30;
                     std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS"
                         " -p com.mirage.capture --ei target_fps " + std::to_string(target_fps)
                         + " --ei fps " + std::to_string(target_fps);
@@ -952,6 +1003,16 @@ void initializeAI() {
     ai_config.vde_layer3_stuck_frames    = ai_cfg.vde_layer3_stuck_frames;
     ai_config.vde_layer3_no_match_ms     = ai_cfg.vde_layer3_no_match_ms;
     ai_config.vde_layer3_cooldown_ms     = ai_cfg.vde_layer3_cooldown_ms;
+
+    // OllamaVision 設定 (config.json の ollama ブロック)
+    {
+        auto& oc = cfg.ollama;
+        if (!oc.host.empty())   ai_config.ollama_host       = oc.host;
+        if (oc.port > 0)        ai_config.ollama_port       = oc.port;
+        if (!oc.model.empty())  ai_config.ollama_model      = oc.model;
+        if (oc.timeout_ms > 0)  ai_config.ollama_timeout_ms = oc.timeout_ms;
+        if (oc.max_tokens > 0)  ai_config.ollama_max_tokens = oc.max_tokens;
+    }
 
     // Pass VulkanContext for GPU compute backend
     mirage::vk::VulkanContext* vk_ctx = gui ? gui->vulkanContext() : nullptr;

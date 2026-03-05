@@ -586,6 +586,17 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_
         }
         if (frame_callback_) frame_callback_(hw_id_copy, sf);
     });
+    // 既存エントリ再起動パス: tiled_callback_ も登録する
+    if (tiled_callback_) {
+        auto tiled_cb_copy2 = tiled_callback_;
+        auto hw_tiled2 = hardware_id;
+        tc->setTiledCallback([this, hw_tiled2, tiled_cb_copy2](
+            const std::shared_ptr<mirage::SharedFrame>& top,
+            const std::shared_ptr<mirage::SharedFrame>& bot,
+            int slice_h) {
+            tiled_cb_copy2(hw_tiled2, top, bot, slice_h);
+        });
+    }
     // デバイスのネイティブ解像度を設定 → compose()がnative_hで出力（既存エントリ再起動パス）
     {
         int native_w = 0, native_h = 0;

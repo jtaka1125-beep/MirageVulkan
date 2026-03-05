@@ -1,4 +1,4 @@
-﻿#include "multi_usb_command_sender.hpp"
+#include "multi_usb_command_sender.hpp"
 #include <system_error>
 #include <cstdio>
 #include <cstring>
@@ -558,24 +558,23 @@ void MultiUsbCommandSender::device_receive_thread(const std::string& device_id) 
             }
             break;
         } else if (ret == LIBUSB_ERROR_IO || ret == LIBUSB_ERROR_PIPE) {
-            error_state.record_error();
-            MLOG_ERROR("multicmd", "[%s] USB I/O error: %s (consecutive: %d)", device_id.c_str(), libusb_error_name(ret), error_state.consecutive_errors.load());
-
-            if (error_state.consecutive_errors.load() >= DeviceErrorState::MAX_CONSECUTIVE_ERRORS) {
-                MLOG_ERROR("multicmd", "[%s] Too many I/O errors, marking disconnected", device_id.c_str());
-                {
-                    std::lock_guard<std::mutex> lock(devices_mutex_);
-                    auto it = devices_.find(device_id);
-                    if (it != devices_.end()) {
-                        it->second->info.connected = false;
-                    }
-                }
-                // Notify listeners (e.g. HID unregister)
-                if (device_closed_callback_) {
-                    device_closed_callback_(device_id);
-                }
-                break;
+            // IN endpoint errors: APK may not use the IN endpoint at all.
+            // Do NOT disconnect - send direction still works fine.
+            // Try clear_halt on PIPE, then back off and keep looping.
+            if (ret == LIBUSB_ERROR_PIPE && ep_in != 0) {
+                libusb_device_handle* h = nullptr;
+                { std::lock_guard<std::mutex> lock(devices_mutex_);
+                  auto it = devices_.find(device_id);
+                  if (it != devices_.end()) h = it->second->handle; }
+                if (h) { int cr = libusb_clear_halt(h, ep_in);
+                    MLOG_INFO("multicmd", "[%s] clear_halt(ep_in=0x%02x)->%d", device_id.c_str(), ep_in, cr); }
             }
+            static thread_local int in_err_count = 0;
+            if (++in_err_count <= 5 || in_err_count % 100 == 0) {
+                MLOG_WARN("multicmd", "[%s] IN endpoint error %s #%d (non-fatal, ignoring)", device_id.c_str(), libusb_error_name(ret), in_err_count);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            consecutive_timeouts = 0;
         } else if (ret != LIBUSB_SUCCESS) {
             // Other errors - log but don't immediately disconnect
             error_state.record_error();
