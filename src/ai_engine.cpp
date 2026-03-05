@@ -2644,7 +2644,8 @@ if (decision.should_act && can_send) {
 
 
 
-                    const uint8_t* rgba_ptr = job.frame ? job.frame->data() : job.rgba.data();
+                    if (!job.frame) { continue; }  // SharedFrame必須 (legacy rgba path removed)
+                    const uint8_t* rgba_ptr = job.frame->data();
                     auto action = processFrame(job.slot, rgba_ptr, job.width, job.height, job.can_send);
 
 
@@ -2765,64 +2766,12 @@ if (decision.should_act && can_send) {
 
 
     void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send) {
-
-
-
-        if (slot < 0 || slot >= kMaxAsyncSlots || !rgba) return;
-
-
-
-        AsyncFrameJob job;
-
-
-
-        job.slot = slot;
-
-
-
-        job.width = width; job.height = height;
-
-
-
-        job.can_send = can_send;
-
-
-
-        job.rgba.assign(rgba, rgba + (size_t)width * height * 4);
-
-
-
-        {
-
-
-
-            std::lock_guard<std::mutex> lk(async_q_mutexes_[slot]);
-
-
-
-            // Drop oldest if queue too deep (prevent unbounded memory)
-
-
-
-            while (async_queues_[slot].size() >= 2) async_queues_[slot].pop();
-
-
-
-            async_queues_[slot].push(std::move(job));
-
-
-
-        }
-
-
-
-        async_q_cvs_[slot].notify_one();
-
-
-
+        // DEPRECATED: legacy rgba copy path removed. Use enqueueAsyncFrameShared.
+        MLOG_WARN("ai", "enqueueAsyncFrame: legacy path called (slot=%d) - ignored", slot);
+        (void)rgba; (void)width; (void)height; (void)can_send;
     }
 
-    void enqueueAsyncFrameShared(int slot, std::shared_ptr<mirage::SharedFrame> frm, bool can_send) {
+        void enqueueAsyncFrameShared(int slot, std::shared_ptr<mirage::SharedFrame> frm, bool can_send) {
         if (slot < 0 || slot >= kMaxAsyncSlots || !frm) return;
         AsyncFrameJob job;
         job.slot = slot;
@@ -2990,7 +2939,6 @@ private:
 
     struct AsyncFrameJob {
         int slot = 0;
-        std::vector<uint8_t> rgba;                    // legacy path
         std::shared_ptr<mirage::SharedFrame> frame;   // zero-copy path (preferred)
         int width = 0, height = 0;
         bool can_send = false;
