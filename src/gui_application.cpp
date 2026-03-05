@@ -259,7 +259,7 @@ void GuiApplication::stageTiledFrame(const std::string& id,
         tex = device.vk_texture;  // shared_ptr copy: O(1), no data copy
         device.last_texture_update_ms.store(
             std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
+                std::chrono::system_clock::now().time_since_epoch()).count());
     }
     // Phase 2: 9.6MB memcpy OUTSIDE the mutex — GUI thread never blocked during copy
     if (tex) {
@@ -273,7 +273,7 @@ void GuiApplication::stageTiledFrame(const std::string& id,
             tracker.frame_count++;
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now_tp - tracker.last_reset).count();
-            if (elapsed >= 1000) {
+            if (elapsed >= 3000) {
                 tracker.measured_fps = tracker.frame_count * 1000.0f / static_cast<float>(elapsed);
                 tracker.frame_count = 0;
                 tracker.last_reset = now_tp;
@@ -516,15 +516,20 @@ void GuiApplication::queueFrame(const std::string& id,
     }
 
     // 計測FPSでdevice statsを更新
+    // Note: if stageTiledFrame (zero-copy path) is active, it owns device.fps.
+    // queueFrame only updates fps when tiled path is inactive (measured_fps == 0).
     float measured = 0.0f;
+    bool tiled_active = false;
     {
         std::lock_guard<std::mutex> lock(pending_frames_mutex_);
         auto tit = frame_fps_trackers_.find(id);
         if (tit != frame_fps_trackers_.end()) {
             measured = tit->second.measured_fps;
+            tiled_active = (tit->second.measured_fps > 0.0f);
         }
     }
-    if (measured > 0.0f) {
+    if (measured > 0.0f && !tiled_active) {
+        // Only update fps from queueFrame when stageTiledFrame is not providing measurements
         std::lock_guard<std::mutex> dlock(devices_mutex_);
         auto dit = devices_.find(id);
         if (dit != devices_.end()) {

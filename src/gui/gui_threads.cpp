@@ -1,4 +1,4 @@
-﻿// =============================================================================
+// =============================================================================
 // MirageSystem v2 GUI - Background Threads
 // =============================================================================
 #include "mirage_log.hpp"
@@ -628,7 +628,19 @@ void wifiAdbWatchdogThread() {
                 MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", wifi_id.c_str());
 
                 // D) TileCompositor 自動起動（X1のみ: Wi-Fi直接 or adb forward）
-                if (g_multi_receiver && !g_multi_receiver->isTiledActive(dev.hardware_id)) {
+                // Cooldown: don't restart within 60 seconds of last start to avoid TCP churn
+                static std::unordered_map<std::string, std::chrono::steady_clock::time_point> s_tile_last_start;
+                auto now_tp = std::chrono::steady_clock::now();
+                bool tiled_cooldown = false;
+                {
+                    auto it = s_tile_last_start.find(dev.hardware_id);
+                    if (it != s_tile_last_start.end()) {
+                        tiled_cooldown = std::chrono::duration_cast<std::chrono::seconds>(
+                            now_tp - it->second).count() < 60;
+                    }
+                }
+                if (g_multi_receiver && !g_multi_receiver->isTiledActive(dev.hardware_id) && !tiled_cooldown) {
+                    s_tile_last_start[dev.hardware_id] = now_tp;
                     std::string tile_host = dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address;
                     if (tile_host == "127.0.0.1") {
                         // Fallback: adb forward
@@ -659,6 +671,8 @@ void wifiAdbWatchdogThread() {
                     g_adb_manager->adbCommand(wifi_id,
                         "shell am start -n com.mirage.capture/.ui.CaptureActivity "
                         "--ez auto_mirror true --es mirror_mode tcp --ei tcp_port " + std::to_string(dev.assigned_tcp_port > 0 ? dev.assigned_tcp_port : 50100));
+                    // Force FPS re-send after service restart
+                    if (g_route_controller) g_route_controller->resetDeviceFps(dev.hardware_id);
                 }
             }
         }

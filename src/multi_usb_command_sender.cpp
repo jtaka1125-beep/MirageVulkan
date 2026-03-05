@@ -570,10 +570,18 @@ void MultiUsbCommandSender::device_receive_thread(const std::string& device_id) 
                     MLOG_INFO("multicmd", "[%s] clear_halt(ep_in=0x%02x)->%d", device_id.c_str(), ep_in, cr); }
             }
             static thread_local int in_err_count = 0;
-            if (++in_err_count <= 5 || in_err_count % 100 == 0) {
-                MLOG_WARN("multicmd", "[%s] IN endpoint error %s #%d (non-fatal, ignoring)", device_id.c_str(), libusb_error_name(ret), in_err_count);
+            ++in_err_count;
+            if (in_err_count <= 5 || in_err_count % 500 == 0) {
+                MLOG_WARN("multicmd", "[%s] IN endpoint error %s #%d (non-fatal)", device_id.c_str(), libusb_error_name(ret), in_err_count);
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            // Exponential backoff: 200ms->1s->5s->30s cap after 100 consecutive
+            {
+                int bk = (in_err_count < 5) ? 200
+                       : (in_err_count < 20) ? 1000
+                       : (in_err_count < 100) ? 5000
+                       : 30000;
+                std::this_thread::sleep_for(std::chrono::milliseconds(bk));
+            }
             consecutive_timeouts = 0;
         } else if (ret != LIBUSB_SUCCESS) {
             // Other errors - log but don't immediately disconnect

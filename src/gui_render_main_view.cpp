@@ -74,7 +74,7 @@ void GuiApplication::renderCenterPanel() {
                       main_id.c_str(), main_device.name.c_str(),
                       main_device.texture_width, main_device.texture_height,
                       (void*)main_device.vk_texture_ds,
-                      (unsigned long long)(now - last_tex),
+                      (unsigned long long)(last_tex > 0 ? (now - last_tex) : 0),
                       main_device.fps, main_device.latency_ms);
         }
 

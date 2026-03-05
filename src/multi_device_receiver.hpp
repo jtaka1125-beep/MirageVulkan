@@ -96,9 +96,11 @@ public:
 
     // Check if tiled mode is already active for a device
     bool isTiledActive(const std::string& hardware_id) {
+        std::lock_guard<std::mutex> lock(receivers_mutex_);
         auto it = receivers_.find(hardware_id);
         if (it == receivers_.end()) return false;
-        return it->second.tile_compositor != nullptr;
+        return it->second.tile_compositor != nullptr
+            && it->second.tile_compositor->running();
     }
 
     // Feed RTP packet to the first device's receiver (for USB video)

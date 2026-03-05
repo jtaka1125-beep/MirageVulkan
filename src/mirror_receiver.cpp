@@ -772,12 +772,12 @@ void MirrorReceiver::process_raw_h264(const uint8_t* data, size_t len) {
         MLOG_WARN("mirror", "Raw H.264 buffer overflow (%zu bytes), flushing + requesting IDR", raw_h264_buf_.size());
         raw_h264_buf_.clear();
         need_idr_.store(true);
-        // IDRリクエストスロットル: 最低3000ms間隔
+        // IDRリクエストスロットル: 最低1500ms間隔
         {
           auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
               std::chrono::steady_clock::now().time_since_epoch()).count();
           auto last = last_idr_request_ms_.load();
-          if (now_ms - last >= 3000 && last_idr_request_ms_.compare_exchange_strong(last, now_ms)) {
+          if (now_ms - last >= 1500 && last_idr_request_ms_.compare_exchange_strong(last, now_ms)) {
             if (on_idr_needed_) on_idr_needed_();
           }
         }

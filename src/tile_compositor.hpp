@@ -112,9 +112,9 @@ public:
     bool running() const { return running_.load(); }
 
 private:
-    static constexpr int64_t TIMEOUT_US      = 20000;  // 20ms = 1.25フレーム @60fps
-    static constexpr int64_t INTERP_LIMIT_US =  9000;  //  9ms: 補完許容PTS差 (half frame @60fps)
-    static constexpr int     PAIR_WAIT_MS    =    5;   //  5ms: 片側到着後、もう片側を最大5ms待つ @60fps
+    static constexpr int64_t TIMEOUT_US      = 22000;  // 22ms = 2フレーム @90fps
+    static constexpr int64_t INTERP_LIMIT_US = 50000;  // 50ms: ~4.5 frames @90fps (tolerate disc recovery)
+    static constexpr int     PAIR_WAIT_MS    =   17;   // 17ms: 片側到着後、もう片側を最大17ms待つ @90fps
     static constexpr int     POLL_MS         = 1;      // ポーリング間隔
 
     std::unique_ptr<MirrorReceiver> receiver_[2];
@@ -288,7 +288,8 @@ private:
                 const int slice_h = (native_h_ > 0) ? (native_h_ / tiles_y_) : top->height;
                 dbg_composed++;
                 tiled_cb_(top, bot, slice_h);
-            } else if (frame_cb_) {
+            }
+            if (frame_cb_) {
                 // Async stitch: enqueue top/bot and return immediately.
                 // stitch_thread_ does the memcpy + frame_cb_ without blocking compositor.
                 const int slice_h = (native_h_ > 0) ? (native_h_ / tiles_y_) : top->height;
