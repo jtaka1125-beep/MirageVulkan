@@ -133,6 +133,10 @@ bool H264Decoder::init(bool use_hevc) {
     av_dict_set(&opts, "preset", "ultrafast", 0);
   }
 
+  // Relax error recognition for MediaTek HEVC VPS non-conformance.
+  // c2.mtk.hevc.encoder emits VPS with base_layer flags that strict parsers reject.
+  codec_ctx_->err_recognition = 0;
+
   if (avcodec_open2(codec_ctx_, codec, &opts) < 0) {
     av_dict_free(&opts);
     if (hw_device_ctx_) { av_buffer_unref(&hw_device_ctx_); hw_device_ctx_ = nullptr; }

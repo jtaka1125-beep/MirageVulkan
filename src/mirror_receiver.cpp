@@ -252,8 +252,10 @@ void MirrorReceiver::setVulkanContext(VkPhysicalDevice physical_device, VkDevice
 }
 
 bool MirrorReceiver::init_decoder() {
-  // Try UnifiedDecoder first (Vulkan Video with FFmpeg fallback)
-  if (vk_device_ != VK_NULL_HANDLE) {
+  // Try UnifiedDecoder first (Vulkan Video with FFmpeg fallback).
+  // For HEVC streams, always use UnifiedDecoder because legacy H264Decoder
+  // cannot handle HEVC. For H.264, prefer UnifiedDecoder when Vulkan is available.
+  if (vk_device_ != VK_NULL_HANDLE || stream_is_hevc_) {
     unified_decoder_ = std::make_unique<mirage::video::UnifiedDecoder>();
 
     mirage::video::UnifiedDecoderConfig config;
