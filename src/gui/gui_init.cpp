@@ -333,11 +333,8 @@ int success = 0;
         int slice_h) {
         if (!top || !top->rgba || !bot || !bot->rgba) return;
         if (g_gui) {
-            const int full_h = slice_h * 2;  // native_h (e.g. 2000)
-            g_gui->stageTiledFrame(hardware_id,
-                top->rgba.get(), bot->rgba.get(),
-                top->width, full_h, slice_h,
-                top->pts_us, top->frame_id);
+            // Pass SharedFrame refs to keep buffers alive during memcpy
+            g_gui->stageTiledFrame(hardware_id, top, bot, slice_h);
         }
     });
 
@@ -434,7 +431,7 @@ int success = 0;
 
             bool started = false;
             // X1 now uses TiledEncoder on APK side, so enable tiled mode for it
-            if (native_h > 1440) {
+            if (native_h > 2000) {
                 // Tiled mode: port0=top, port1=bottom
                 // Wi-Fi direct: connect to device IP, no adb forward needed
                 std::string tile_host = dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address;
@@ -458,7 +455,8 @@ int success = 0;
                 started = g_multi_receiver->restart_as_tcp_vid0_tiled(
                     dev.hardware_id, tile_port0, tile_port1, tile_host);
             } else {
-                started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port);
+                started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port,
+                    dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address);
             }
             if (started) success++;
             else MLOG_ERROR("gui", "VID0 TCP start failed: %s port=%d", dev.display_name.c_str(), local_port);

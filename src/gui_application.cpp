@@ -233,9 +233,18 @@ void GuiApplication::updateDeviceStatus(const std::string& id, DeviceStatus stat
 }
 
 void GuiApplication::stageTiledFrame(const std::string& id,
-                                      const uint8_t* top_rgba, const uint8_t* bot_rgba,
-                                      int w, int full_h, int slice_h,
-                                      uint64_t /*pts_us*/, uint64_t /*frame_id*/) {
+                                      const std::shared_ptr<mirage::SharedFrame>& top,
+                                      const std::shared_ptr<mirage::SharedFrame>& bot,
+                                      int slice_h) {
+    // Validate input
+    if (!top || !bot || !top->rgba || !bot->rgba) return;
+    if (top->width != bot->width) return;
+
+    const int w = top->width;
+    const int full_h = slice_h * 2;  // native_h (e.g. 2000)
+    const uint8_t* top_rgba = top->rgba.get();
+    const uint8_t* bot_rgba = bot->rgba.get();
+
     // Phase 1: acquire mutex only to get/create the texture pointer (sub-millisecond)
     std::shared_ptr<mirage::vk::VulkanTexture> tex;
     {
@@ -262,31 +271,36 @@ void GuiApplication::stageTiledFrame(const std::string& id,
                 std::chrono::system_clock::now().time_since_epoch()).count());
     }
     // Phase 2: 9.6MB memcpy OUTSIDE the mutex — GUI thread never blocked during copy
+    // NOTE: top/bot SharedFrame refs are kept alive by caller, preventing buffer reuse race
     if (tex) {
         tex->stageTiled(top_rgba, bot_rgba, w, full_h, slice_h);
 
         // Track fps from tiled path (primary display path)
         auto now_tp = std::chrono::steady_clock::now();
+        float measured_fps = 0.0f;
         {
             std::lock_guard<std::mutex> lock(pending_frames_mutex_);
             auto& tracker = frame_fps_trackers_[id];
+            if (tracker.frame_count == 0) {
+                tracker.last_reset = now_tp;
+            }
             tracker.frame_count++;
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now_tp - tracker.last_reset).count();
-            if (elapsed >= 3000) {
-                tracker.measured_fps = tracker.frame_count * 1000.0f / static_cast<float>(elapsed);
+            if (elapsed >= 1000) {
+                measured_fps = tracker.frame_count * 1000.0f / static_cast<float>(elapsed);
+                tracker.measured_fps = measured_fps;
                 tracker.frame_count = 0;
                 tracker.last_reset = now_tp;
+            } else {
+                measured_fps = tracker.measured_fps;
             }
         }
-        {
+        if (measured_fps > 0.0f) {
             std::lock_guard<std::mutex> dlock(devices_mutex_);
             auto dit = devices_.find(id);
             if (dit != devices_.end()) {
-                std::lock_guard<std::mutex> plock(pending_frames_mutex_);
-                auto tit = frame_fps_trackers_.find(id);
-                if (tit != frame_fps_trackers_.end() && tit->second.measured_fps > 0.0f)
-                    dit->second.fps = tit->second.measured_fps;
+                dit->second.fps = measured_fps;
             }
         }
     }
@@ -505,6 +519,9 @@ void GuiApplication::queueFrame(const std::string& id,
         // 実際の受信FPSを計測
         auto now = std::chrono::steady_clock::now();
         auto& tracker = frame_fps_trackers_[id];
+        if (tracker.frame_count == 0) {
+            tracker.last_reset = now;
+        }
         tracker.frame_count++;
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - tracker.last_reset).count();
@@ -516,20 +533,15 @@ void GuiApplication::queueFrame(const std::string& id,
     }
 
     // 計測FPSでdevice statsを更新
-    // Note: if stageTiledFrame (zero-copy path) is active, it owns device.fps.
-    // queueFrame only updates fps when tiled path is inactive (measured_fps == 0).
     float measured = 0.0f;
-    bool tiled_active = false;
     {
         std::lock_guard<std::mutex> lock(pending_frames_mutex_);
         auto tit = frame_fps_trackers_.find(id);
         if (tit != frame_fps_trackers_.end()) {
             measured = tit->second.measured_fps;
-            tiled_active = (tit->second.measured_fps > 0.0f);
         }
     }
-    if (measured > 0.0f && !tiled_active) {
-        // Only update fps from queueFrame when stageTiledFrame is not providing measurements
+    if (measured > 0.0f) {
         std::lock_guard<std::mutex> dlock(devices_mutex_);
         auto dit = devices_.find(id);
         if (dit != devices_.end()) {
@@ -589,7 +601,7 @@ void GuiApplication::updateDeviceStats(const std::string& id,
     
     auto it = devices_.find(id);
     if (it != devices_.end()) {
-        it->second.fps = fps;
+        if (fps > 0.0f) it->second.fps = fps;
         it->second.latency_ms = latency_ms;
         it->second.bandwidth_mbps = bandwidth_mbps;
     }

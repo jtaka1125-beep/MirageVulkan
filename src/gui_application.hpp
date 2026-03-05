@@ -100,6 +100,7 @@ struct DeviceInfo {
     std::atomic<uint64_t> queued_count{0};      // queueFrame() calls
     std::atomic<uint64_t> processed_count{0};   // processPendingFrames() applied
     std::atomic<uint64_t> last_texture_update_ms{0}; // updateDeviceFrame() texture update time
+    std::atomic<uint64_t> last_tiled_update_ms{0}; // stageTiledFrame() last write time (ms since epoch)
 
 
     
@@ -136,6 +137,7 @@ struct DeviceInfo {
         queued_count.store(o.queued_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
         processed_count.store(o.processed_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
         last_texture_update_ms.store(o.last_texture_update_ms.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        last_tiled_update_ms.store(o.last_tiled_update_ms.load(std::memory_order_relaxed), std::memory_order_relaxed);
         return *this;
     }
 
@@ -282,10 +284,11 @@ public:
     // Device updates
     void updateDeviceStatus(const std::string& id, DeviceStatus status);
     // Zero-copy tiled upload: top/bot tiles -> staging directly
+    // SharedFrame refs kept alive during memcpy to prevent buffer reuse race
     void stageTiledFrame(const std::string& id,
-                         const uint8_t* top_rgba, const uint8_t* bot_rgba,
-                         int w, int full_h, int slice_h,
-                         uint64_t pts_us, uint64_t frame_id);
+                         const std::shared_ptr<mirage::SharedFrame>& top,
+                         const std::shared_ptr<mirage::SharedFrame>& bot,
+                         int slice_h);
     void updateDeviceFrame(const std::string& id, 
                            const uint8_t* rgba_data, int width, int height);
     void updateDeviceOverlays(const std::string& id,
