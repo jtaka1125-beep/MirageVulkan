@@ -184,31 +184,29 @@ class TiledEncoder(
             packetizers.add(RtpH264Packetizer(ssrc = 0x12345678 + i))
         }
 
-        // MediaTek c2.mtk.avc.encoder stalls when 2 instances start simultaneously
-        // (second instance gets no output after IDR).
-        // Fix: start codec[0] first, wait for it to produce the IDR frame,
-        // then start codec[1]. This serializes VCodecV4L2 resource allocation.
+        // MediaTek c2.mtk.avc.encoder stalls when 2 instances start simultaneously.
+        // Fix: start codec[0] first, drain until IDR is produced (VCodecV4L2
+        // resource is fully allocated), then start codec[1].
         codecs[0].start()
-        // Drain codec[0] IDR before starting codec[1]
         run {
             val info = android.media.MediaCodec.BufferInfo()
             var waited = 0
-            while (waited < 3000) {  // wait up to 3 seconds for IDR
-                val idx = codecs[0].dequeueOutputBuffer(info, 50_000)  // 50ms
-                if (idx >= 0) {
-                    val buf = codecs[0].getOutputBuffer(idx)
-                    if (buf != null && info.size > 0) {
-                        android.util.Log.i("TiledEncoder", "codec[0] IDR drain: ${info.size} bytes, flags=${info.flags}")
-                        senders[0].sendDirect(buf, info.offset, info.size)
+            var idrSeen = false
+            while (waited < 3000 && !idrSeen) {
+                val idx = codecs[0].dequeueOutputBuffer(info, 50_000)
+                when {
+                    idx >= 0 -> {
+                        val flags = info.flags
+                        android.util.Log.i("TiledEncoder", "codec[0] drain buf size=${info.size} flags=$flags")
+                        codecs[0].releaseOutputBuffer(idx, false)
+                        if (flags and android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) idrSeen = true
                     }
-                    codecs[0].releaseOutputBuffer(idx, false)
-                    if (info.flags and android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) break
-                } else if (idx == android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    android.util.Log.i("TiledEncoder", "codec[0] format changed before IDR")
+                    idx == android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
+                        android.util.Log.i("TiledEncoder", "codec[0] format changed")
                 }
                 waited += 50
             }
-            android.util.Log.i("TiledEncoder", "codec[0] drain done (${waited}ms), starting codec[1]")
+            android.util.Log.i("TiledEncoder", "codec[0] drain done idrSeen=$idrSeen waited=${waited}ms, starting codec[1]")
         }
         for (i in 1 until codecs.size) codecs[i].start()
 
