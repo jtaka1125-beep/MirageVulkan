@@ -184,15 +184,7 @@ class TiledEncoder(
             packetizers.add(RtpH264Packetizer(ssrc = 0x12345678 + i))
         }
 
-        // MediaTek c2.mtk.avc.encoder stalls when 2 instances start simultaneously.
-        // Root cause: VCodecV4L2 cannot allocate HW resources for 2 instances at once.
-        // Fix: start codec[0] first, wait 500ms for VCodecV4L2 to fully initialize,
-        // then start codec[1]. 500ms chosen as conservative but not user-visible.
-        codecs[0].start()
-        android.util.Log.i("TiledEncoder", "codec[0] started, waiting 500ms for VCodecV4L2 init...")
-        Thread.sleep(500)
-        android.util.Log.i("TiledEncoder", "Starting codec[1]")
-        for (i in 1 until codecs.size) codecs[i].start()
+        codecs[0].start()  // Only codec[0] for now; codec[1] started after IDR
 
         // Start TileRepeater (crops into tile surfaces)
         val outs = ArrayList<TileRepeater.TileOutput>(tileCount)
@@ -240,11 +232,30 @@ class TiledEncoder(
         Log.i(TAG, "VirtualDisplay created: ${virtualDisplay}")
 
         running = true
-        for (i in codecs.indices) {
-            val th = Thread({ drainLoop(i) }, "TileDrain-$i")
-            drainThreads.add(th)
-            th.start()
+        // Start drain for codec[0] only. codec[1] will be started after
+        // codec[0] produces its first IDR (guarantees VCodecV4L2 is ready).
+        // AtomicBoolean guard: onFirstIdr fires exactly once even if multiple
+        // IDR NALs appear in the same output buffer.
+        var onFirstIdrCb: (() -> Unit)? = {
+            android.util.Log.i("TiledEncoder", "codec[0] IDR produced, starting codec[1]")
+            for (i in 1 until codecs.size) {
+                codecs[i].start()
+                val th = Thread({ drainLoop(i) }, "TileDrain-$i")
+                drainThreads.add(th)
+                th.start()
+            }
         }
+        val th0 = Thread({
+            drainLoop(0, onFirstIdr = {
+                val cb = onFirstIdrCb
+                if (cb != null) {
+                    onFirstIdrCb = null  // one-shot: clear before invoke
+                    cb()
+                }
+            })
+        }, "TileDrain-0")
+        drainThreads.add(th0)
+        th0.start()
 
         return true
     }
@@ -295,7 +306,7 @@ class TiledEncoder(
         packetizers.clear()
     }
 
-    private fun drainLoop(tileIndex: Int) {
+    private fun drainLoop(tileIndex: Int, onFirstIdr: (() -> Unit)? = null) {
         val codec = codecs[tileIndex]
         val sender = senders[tileIndex]
         val packetizer = packetizers[tileIndex]
@@ -323,6 +334,10 @@ class TiledEncoder(
                         val marker = (idx == nals.lastIndex)
                         packetizer.packetizeNalPayload(nal, marker) { pkt -> sender.send(pkt) }
                     }
+                    // Fire onFirstIdr once per IDR buffer (outside the NAL loop
+                    // so codec[1].start() is not called mid-loop).
+                    // onFirstIdrCb is nulled by the caller after first invocation.
+                    if (nals.any { packetizer.isIdr(it) }) onFirstIdr?.invoke()
                 }
                 codec.releaseOutputBuffer(outIndex, false)
             }
