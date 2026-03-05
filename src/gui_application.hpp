@@ -281,6 +281,11 @@ public:
     
     // Device updates
     void updateDeviceStatus(const std::string& id, DeviceStatus status);
+    // Zero-copy tiled upload: top/bot tiles -> staging directly
+    void stageTiledFrame(const std::string& id,
+                         const uint8_t* top_rgba, const uint8_t* bot_rgba,
+                         int w, int full_h, int slice_h,
+                         uint64_t pts_us, uint64_t frame_id);
     void updateDeviceFrame(const std::string& id, 
                            const uint8_t* rgba_data, int width, int height);
     void updateDeviceOverlays(const std::string& id,

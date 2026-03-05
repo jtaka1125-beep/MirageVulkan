@@ -89,9 +89,9 @@
 4. TileCompositor E2Eテスト: X1でport0/port1合成フレームの確認
 5. AOA full-path test [BLOCKED: physical USB]
 
-## GUI File Line Counts (Updated 2026-03-03)
+## GUI File Line Counts (Updated 2026-03-05)
 - gui_ai_panel.cpp:       663
-- gui_init.cpp:           965
+- gui_init.cpp:          1019
 - gui_threads.cpp:        674
 - gui_device_control.cpp: 539
 - gui_command.cpp:        356
@@ -99,7 +99,7 @@
 - gui_main.cpp:           295
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 3740 lines
+- TOTAL:                 3794 lines
 
 ## Key Decisions Log
 - 2026-03-03: MCP二重起動防止完了。MirageMCPServerタスクをDisable化、start_all.batをMirageMCP(watchdog)経由に統一、MirageMCPGuard(1分毎ヘルスチェック)を再有効化。

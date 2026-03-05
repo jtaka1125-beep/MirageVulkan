@@ -242,6 +242,20 @@ void setupUsbVideoCallback() {
             for (const auto& pkt : rtp_packets) {
                 it->second->feed_rtp_packet(pkt.data(), pkt.size());
             }
+            // Dispatch latest decoded frame to GUI via EventBus (same path as MultiDeviceReceiver)
+            std::shared_ptr<mirage::SharedFrame> sf;
+            if (it->second->get_latest_shared_frame(sf) && sf) {
+                // Resolve source port for the device
+                int src_port = 0;
+                {
+                    std::lock_guard<std::mutex> lk(g_hwport_m);
+                    auto pit = g_hw_to_port.find(resolved_id);
+                    if (pit != g_hw_to_port.end()) src_port = pit->second;
+                }
+                sf->device_id   = resolved_id;
+                sf->source_port = src_port;
+                mirage::dispatcher().dispatchSharedFrame(sf);
+            }
         }
     });
 }
@@ -337,13 +351,19 @@ int success = 0;
         }
 
 
-        // adb forward險ｭ螳・
-        std::string fwd_cmd = "forward tcp:" + std::to_string(local_port) +
-                              " tcp:" + std::to_string(REMOTE_PORT);
-        std::string fwd_result = g_adb_manager->adbCommand(adb_id, fwd_cmd);
-        MLOG_INFO("gui", "adb forward: %s -> %s (result: %s)",
-                  adb_id.c_str(), fwd_cmd.c_str(), fwd_result.c_str());
-
+        // adb forward: Wi-Fi direct接続の場合はforward不要（127.0.0.1経由を避ける）
+        if (dev.ip_address.empty()) {
+            std::string fwd_cmd = "forward tcp:" + std::to_string(local_port) +
+                                  " tcp:" + std::to_string(REMOTE_PORT);
+            std::string fwd_result = g_adb_manager->adbCommand(adb_id, fwd_cmd);
+            MLOG_INFO("gui", "adb forward: %s -> %s (result: %s)",
+                      adb_id.c_str(), fwd_cmd.c_str(), fwd_result.c_str());
+        } else {
+            // Wi-Fi direct: 古い adb forward が残っていれば削除する
+            g_adb_manager->adbCommand(adb_id, "forward --remove tcp:" + std::to_string(local_port));
+            MLOG_INFO("gui", "adb forward removed+skipped (Wi-Fi direct): %s ip=%s port=%d",
+                      adb_id.c_str(), dev.ip_address.c_str(), local_port);
+        }
         // VID0 TCP start - tiled mode for devices with native height > 1440px (e.g. X1 1200x2000)
         {
             // Check if this device needs tiled encoding (native height > HW encoder limit)
@@ -395,6 +415,22 @@ int success = 0;
 
     // 繝輔Ξ繝ｼ繝繧ｳ繝ｼ繝ｫ繝舌ャ繧ｯ險ｭ螳・ 繝・さ繝ｼ繝画ｸ医∩繝輔Ξ繝ｼ繝繧脱ventBus邨檎罰縺ｧGUI縺ｫ驟堺ｿ｡
     // Frame callback: decoded frames -> EventBus for GUI/AI/Macro (unified path)
+    // Zero-copy tiled callback: writes top/bot tiles directly into Vulkan staging.
+    // Saves one 9.6MB memcpy per frame vs compose() intermediate buffer.
+    g_multi_receiver->setTiledCallback([](const std::string& hardware_id,
+        const std::shared_ptr<mirage::SharedFrame>& top,
+        const std::shared_ptr<mirage::SharedFrame>& bot,
+        int slice_h) {
+        if (!top || !top->rgba || !bot || !bot->rgba) return;
+        if (g_gui) {
+            const int full_h = slice_h * 2;  // native_h (e.g. 2000)
+            g_gui->stageTiledFrame(hardware_id,
+                top->rgba.get(), bot->rgba.get(),
+                top->width, full_h, slice_h,
+                top->pts_us, top->frame_id);
+        }
+    });
+
     g_multi_receiver->setFrameCallback([](const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame) {
         // Convert hardware_id to slot_N format for AI engine
         static std::unordered_map<std::string, int> s_hw_slot;
@@ -814,6 +850,24 @@ static void onDeviceSelected(const std::string& device_id) {
             MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
                       uid.c_str(), target_fps,
                       (hw_id == device_id) ? "MAIN" : "sub");
+        }
+        // ADB broadcast fallback: covers WiFi-only devices (e.g. X1 in TiledEncoder/TCP mode)
+        // that have no USB AOA connection but are reachable via ADB.
+        if (g_adb_manager) {
+            auto adb_devices = g_adb_manager->getUniqueDevices();
+            std::thread([adb_devices, device_id]() {
+                for (const auto& dev : adb_devices) {
+                    int target_fps = (dev.hardware_id == device_id) ? 60 : 30;
+                    std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS"
+                        " -p com.mirage.capture --ei target_fps " + std::to_string(target_fps)
+                        + " --ei fps " + std::to_string(target_fps);
+                    if (g_adb_manager) {
+                        g_adb_manager->adbCommand(dev.preferred_adb_id, cmd);
+                        MLOG_INFO("gui", "FPS update (ADB fallback): %s -> %d fps",
+                                  dev.hardware_id.c_str(), target_fps);
+                    }
+                }
+            }).detach();
         }
     }
 }
