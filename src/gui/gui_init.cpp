@@ -1006,7 +1006,7 @@ void initializeAI() {
 
     // OllamaVision 設定 (config.json の ollama ブロック)
     {
-        auto& oc = cfg.ollama;
+        const auto& oc = mirage::config::getConfig().ollama;
         if (!oc.host.empty())   ai_config.ollama_host       = oc.host;
         if (oc.port > 0)        ai_config.ollama_port       = oc.port;
         if (!oc.model.empty())  ai_config.ollama_model      = oc.model;
