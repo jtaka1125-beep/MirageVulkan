@@ -66,7 +66,7 @@ void GuiApplication::renderCenterPanel() {
         // MAINVIEW diag (periodic): verify main selection + texture descriptor + recency
         static std::atomic<uint32_t> s_mainview_diag{0};
         uint32_t dn = s_mainview_diag.fetch_add(1);
-        if ((dn % 300) == 0) {
+        if (false && (dn % 300) == 0) {  // DISABLED: causes log mutex contention on main thread
             uint64_t now = getCurrentTimeMs();
             uint64_t last_tex = main_device.last_texture_update_ms.load(std::memory_order_relaxed);
             MLOG_INFO("ui",

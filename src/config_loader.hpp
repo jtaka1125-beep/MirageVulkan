@@ -65,6 +65,14 @@ struct LogConfig {
     std::string log_path = "mirage_gui.log";
 };
 
+struct OllamaConfig {
+    std::string host       = "127.0.0.1";
+    int         port       = 11434;
+    std::string model      = "llava:7b";
+    int         timeout_ms = 120000; // WinHTTP タイムアウト (ms)
+    int         max_tokens = 64;     // num_predict: JSON出力なので少なく
+};
+
 struct AppConfig {
     NetworkConfig network;
     UsbTetherConfig usb_tether;
@@ -72,6 +80,7 @@ struct AppConfig {
     AiConfig ai;
     OcrConfig ocr;
     LogConfig log;
+    OllamaConfig ollama;
 };
 
 #if MIRAGE_HAS_JSON
@@ -186,6 +195,12 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ai.vde_layer3_stuck_frames = jsonGet<int>(j, "ai", "vde_layer3_stuck_frames", 300);
         config.ai.vde_layer3_no_match_ms  = jsonGet<int>(j, "ai", "vde_layer3_no_match_ms", 5000);
         config.ai.vde_layer3_cooldown_ms  = jsonGet<int>(j, "ai", "vde_layer3_cooldown_ms", 30000);
+
+        config.ollama.host       = jsonGet<std::string>(j, "ollama", "host",       "127.0.0.1");
+        config.ollama.port       = jsonGet<int>        (j, "ollama", "port",       11434);
+        config.ollama.model      = jsonGet<std::string>(j, "ollama", "model",      "llava:7b");
+        config.ollama.timeout_ms = jsonGet<int>        (j, "ollama", "timeout_ms", 120000);
+        config.ollama.max_tokens = jsonGet<int>        (j, "ollama", "max_tokens", 64);
 
         config.ocr.enabled = jsonGet<bool>(j, "ocr", "enabled", false);
         config.ocr.language = jsonGet<std::string>(j, "ocr", "language", "eng+jpn");

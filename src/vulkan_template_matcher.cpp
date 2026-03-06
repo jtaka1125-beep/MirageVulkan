@@ -453,7 +453,7 @@ mirage::Result<void> VulkanTemplateMatcher::buildPyramid(GpuTemplate& tpl) {
         submitInfo.pCommandBuffers = &cmd_buf_;
 
         vkResetFences(ctx_->device(), 1, &fence_);
-        vkQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
+        ctx_->safeQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
         vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, UINT64_MAX);
 
         tpl.pyramid.push_back(std::move(downImg));
@@ -537,7 +537,7 @@ bool VulkanTemplateMatcher::buildSourcePyramid(VulkanImage* src, int width, int 
         submitInfo.pCommandBuffers = &cmd_buf_;
 
         vkResetFences(ctx_->device(), 1, &fence_);
-        vkQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
+        ctx_->safeQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
         vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, UINT64_MAX);
 
         prev = downImg.get();
@@ -653,7 +653,7 @@ bool VulkanTemplateMatcher::buildSAT(VulkanImage* gray_image, int width, int hei
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd_buf_;
     vkResetFences(ctx_->device(), 1, &fence_);
-    vkQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
+    ctx_->safeQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
     vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, UINT64_MAX);
 
     sat_built_ = true;
@@ -870,7 +870,7 @@ mirage::Result<std::vector<VkMatchResult>> VulkanTemplateMatcher::matchGpu(
         submitInfo.pCommandBuffers = &cmd_buf_;
 
         vkResetFences(ctx_->device(), 1, &fence_);
-        vkQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
+        ctx_->safeQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
         vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, UINT64_MAX);
 
         std::vector<VkMatchResult> coarse_results;
@@ -925,7 +925,7 @@ mirage::Result<std::vector<VkMatchResult>> VulkanTemplateMatcher::matchGpu(
 
         vkEndCommandBuffer(cmd_buf_);
         vkResetFences(ctx_->device(), 1, &fence_);
-        vkQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
+        ctx_->safeQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_);
         vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, UINT64_MAX);
 
         readResults(results);
@@ -976,7 +976,7 @@ direct_match:
         submitInfo.pCommandBuffers = &cmd_buf_;
 
         vkResetFences(ctx_->device(), 1, &fence_);
-        if (vkQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_) != VK_SUCCESS) {
+        if (ctx_->safeQueueSubmit(ctx_->computeQueue(), 1, &submitInfo, fence_) != VK_SUCCESS) {
             return mirage::Err<std::vector<VkMatchResult>>("Failed to submit NCC compute");
         }
 

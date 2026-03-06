@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // =============================================================================
 // OllamaVision - Layer 3 Popup Detection via Local LLM
 // =============================================================================
@@ -30,7 +30,7 @@ struct OllamaVisionResult {
 struct OllamaVisionConfig {
     std::string host = "127.0.0.1";
     int port = 11434;
-    std::string model = "llava:7b";
+    std::string model = "llava:7b";     // qwen3.5:4b has no vision projector in Ollama
     int timeout_sec = 120;           // LLM応答タイムアウト
     float temperature = 0.1f;        // 低いほど決定論的
     int max_tokens = 200;            // 応答トークン上限

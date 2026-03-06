@@ -57,6 +57,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     auto& sys_config = mirage::config::getSystemConfig();
     mirage::config::applyEnvironmentOverrides(sys_config);
     std::string log_path = sys_config.log_directory + "\\" + sys_config.log_filename;
+    mirage::log::startAsyncLogger();  // Start async log writer before any MLOG calls
     mirage::log::openLogFile(log_path.c_str());
 
     try {
@@ -173,6 +174,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     // Always show normal: schtasks passes nCmdShow=SW_HIDE which hides the window
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
+    // Force window to foreground and process messages so DWM registers it
+    SetForegroundWindow(hwnd);
+    SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    { MSG msg; for(int i=0;i<20;i++){ while(PeekMessage(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessage(&msg);} Sleep(50); } }
+    MLOG_INFO("gui", "Window visible, DWM notified, proceeding to Vulkan init");
 
     // Initialize GUI
     initializeGUI(hwnd);
@@ -209,9 +215,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     std::thread updateThread(deviceUpdateThread);
     UpdateWindow(hwnd);
     
-    // Main loop
+    // Main loop - capped at TARGET_FPS to prevent CPU spinning
+    static constexpr int TARGET_FPS = 60;  // Cap render loop at 60 FPS
+    static constexpr auto FRAME_BUDGET = std::chrono::microseconds(1000000 / TARGET_FPS);
+
     MSG msg = {};
     while (g_running && g_gui->isRunning()) {
+        auto frame_start = std::chrono::steady_clock::now();
+
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
@@ -222,8 +233,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
 
         if (!g_running) break;
 
+        auto t0 = std::chrono::steady_clock::now();
         g_gui->processPendingFrames();
+        auto t1 = std::chrono::steady_clock::now();
         g_gui->beginFrame();
+        auto t2 = std::chrono::steady_clock::now();
         
         // Render device control panel (NEW - AOA/ADB buttons)
         renderDeviceControlPanel();
@@ -233,7 +247,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
 #endif
 
         g_gui->render();
+        auto t3 = std::chrono::steady_clock::now();
         g_gui->endFrame();
+        auto t4 = std::chrono::steady_clock::now();
+
+        // Frame cap: sleep remaining budget to limit CPU usage
+        auto elapsed = std::chrono::steady_clock::now() - frame_start;
+        if (elapsed < FRAME_BUDGET) {
+            std::this_thread::sleep_for(FRAME_BUDGET - elapsed);
+        }
+        auto t5 = std::chrono::steady_clock::now();
+        static std::atomic<int> ml_cnt{0};
+        int ml = ml_cnt.fetch_add(1);
+        if (ml < 20 || ml % 300 == 0) {
+            auto us = [](auto a, auto b){ return (long long)std::chrono::duration_cast<std::chrono::microseconds>(b-a).count(); };
+            MLOG_INFO("mainloop", "#%d ppf=%lld beginF=%lld render=%lld endF=%lld sleep=%lld total=%lld us",
+                ml, us(t0,t1), us(t1,t2), us(t2,t3), us(t3,t4), us(t4,t5), us(frame_start,t5));
+        }
     }
     
     // Cleanup

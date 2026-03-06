@@ -626,38 +626,6 @@ void wifiAdbWatchdogThread() {
                     "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE "
                     "-p com.mirage.capture --ei max_size 2000");
                 MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", wifi_id.c_str());
-
-                // D) TileCompositor 自動起動（X1のみ: Wi-Fi直接 or adb forward）
-                // Cooldown: don't restart within 60 seconds of last start to avoid TCP churn
-                static std::unordered_map<std::string, std::chrono::steady_clock::time_point> s_tile_last_start;
-                auto now_tp = std::chrono::steady_clock::now();
-                bool tiled_cooldown = false;
-                {
-                    auto it = s_tile_last_start.find(dev.hardware_id);
-                    if (it != s_tile_last_start.end()) {
-                        tiled_cooldown = std::chrono::duration_cast<std::chrono::seconds>(
-                            now_tp - it->second).count() < 60;
-                    }
-                }
-                if (g_multi_receiver && !g_multi_receiver->isTiledActive(dev.hardware_id) && !tiled_cooldown) {
-                    s_tile_last_start[dev.hardware_id] = now_tp;
-                    std::string tile_host = dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address;
-                    if (tile_host == "127.0.0.1") {
-                        // Fallback: adb forward
-                        g_adb_manager->adbCommand(wifi_id, "forward tcp:50100 tcp:50100");
-                        g_adb_manager->adbCommand(wifi_id, "forward tcp:50101 tcp:50101");
-                        MLOG_INFO("watchdog", "Starting TileCompositor for X1 %s (adb forward) port0=50100 port1=50101",
-                                  dev.hardware_id.c_str());
-                    } else {
-                        MLOG_INFO("watchdog", "Starting TileCompositor for X1 %s (Wi-Fi direct) -> %s:50100/50101",
-                                  dev.hardware_id.c_str(), tile_host.c_str());
-                    }
-                    g_multi_receiver->restart_as_tcp_vid0_tiled(
-                        dev.hardware_id,
-                        static_cast<uint16_t>(50100),
-                        static_cast<uint16_t>(50101),
-                        tile_host);
-                }
             }
 
             // C) ScreenCaptureService 死活監視

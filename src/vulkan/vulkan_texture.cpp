@@ -189,7 +189,7 @@ void VulkanTexture::clear(VkCommandPool cmd_pool, VkQueue queue, uint32_t rgba) 
 
     VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1; si.pCommandBuffers = &cb;
-    vkQueueSubmit(queue, 1, &si, upload_fence_);
+    ctx_->safeQueueSubmit(queue, 1, &si, upload_fence_);
     // Wait briefly for clear to complete so the first frame never shows stale VRAM
     vkWaitForFences(dev, 1, &upload_fence_, VK_TRUE, 200'000'000ULL);
 
@@ -309,10 +309,10 @@ void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
     last_submit_ms_ = now_ms();
     skipped_updates_ = 0;
 
-    VkResult submit_result = vkQueueSubmit(queue, 1, &si, upload_fence_);
+    VkResult submit_result = ctx_->safeQueueSubmit(queue, 1, &si, upload_fence_);
     if (submit_result != VK_SUCCESS) {
         MLOG_ERROR("VkTex", "vkQueueSubmit FAILED result=%d update#%u", (int)submit_result, update_count_);
-        vkQueueWaitIdle(queue);
+        ctx_->safeQueueWaitIdle(queue);
         return;
     }
     if (update_count_ <= 5 || update_count_ % 300 == 0) {
@@ -328,6 +328,7 @@ void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
 
 bool VulkanTexture::stageUpdate(const uint8_t* rgba, int w, int h) {
     if (!ctx_ || !image_ || w != width_ || h != height_ || !staging_mapped_) return false;
+    std::lock_guard<std::mutex> lk(staging_mutex_);
     memcpy(staging_mapped_, rgba, (size_t)w * h * 4);
     has_pending_upload_ = true;
     update_count_++;
@@ -340,6 +341,7 @@ bool VulkanTexture::stageUpdate(const uint8_t* rgba, int w, int h) {
 bool VulkanTexture::stageTiled(const uint8_t* top_rgba, const uint8_t* bot_rgba,
                                int w, int full_h, int slice_h) {
     if (!ctx_ || !image_ || w != width_ || full_h != height_ || !staging_mapped_) return false;
+    std::lock_guard<std::mutex> lk(staging_mutex_);
     const size_t row_bytes  = static_cast<size_t>(w) * 4;
     const size_t top_bytes  = row_bytes * static_cast<size_t>(slice_h);
     const size_t bot_bytes  = row_bytes * static_cast<size_t>(full_h - slice_h);

@@ -771,19 +771,30 @@ bool GuiApplication::createVulkanResources(HWND hwnd) {
     MLOG_INFO("app", "Creating Vulkan swapchain (%dx%d)...", window_width_, window_height_);
     vk_swapchain_ = std::make_unique<mirage::vk::VulkanSwapchain>();
     bool swap_ok = false;
-    // Some drivers return transient errors if swapchain is created too early (window not fully ready).
-    for (int attempt = 0; attempt < 50; ++attempt) {
+    // Retry indefinitely: display may be sleeping at launch (Surface Lost = -13 on AMD iGPU).
+    // VK_ERROR_SURFACE_LOST_KHR requires destroying and recreating the VkSurfaceKHR itself,
+    // not just the swapchain. The loop handles both cases.
+    for (int attempt = 0; ; ++attempt) {
         if (vk_swapchain_->create(*vk_context_, surface, window_width_, window_height_)) {
             swap_ok = true;
             break;
         }
-        // Pump messages and wait a bit before retry
+        if (attempt == 0) {
+            MLOG_WARN("app", "Swapchain init failed (display may be sleeping), retrying indefinitely...");
+        }
+        if (attempt % 10 == 9) {
+            MLOG_INFO("app", "Still waiting for display... attempt #%d. Recreating surface.", attempt+1);
+            // Recreate VkSurface: Surface Lost makes the old surface permanently invalid.
+            vkDestroySurfaceKHR(vk_context_->instance(), surface, nullptr);
+            surface = vk_context_->createSurface(hwnd);
+            if (surface == VK_NULL_HANDLE) {
+                MLOG_ERROR("app", "Surface recreate failed");
+                return false;
+            }
+        }
+        // Pump messages so window stays responsive
         MSG msg; while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); }
-        Sleep(200);
-    }
-    if (!swap_ok) {
-        MLOG_ERROR("app", "Vulkan swapchain creation failed (after retries)");
-        return false;
+        Sleep(300);
     }
     MLOG_INFO("app", "Vulkan swapchain created (%u images)", vk_swapchain_->imageCount());
 
@@ -938,7 +949,18 @@ void GuiApplication::vulkanBeginFrame() {
     uint32_t fi = vk_current_frame_;
 
     // Use 3-second timeout instead of UINT64_MAX to prevent permanent freeze
+    // TIMING: measure vkWaitForFences latency to diagnose GPU bottleneck
+    static std::atomic<int> fence_log_cnt{0};
+    auto fence_t0 = std::chrono::steady_clock::now();
     VkResult fence_r = vkWaitForFences(dev, 1, &vk_in_flight_[fi], VK_TRUE, 3000000000ULL);
+    auto fence_wait_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - fence_t0).count();
+    {
+        int cnt = fence_log_cnt.fetch_add(1);
+        if (cnt < 20 || cnt % 300 == 0) {
+            MLOG_INFO("vkfence", "fence_wait=%lldus fi=%u", (long long)fence_wait_us, fi);
+        }
+    }
     if (fence_r == VK_TIMEOUT) {
         MLOG_WARN("vkframe", "Fence timeout (3s), recovering...");
         vkDeviceWaitIdle(dev);
@@ -960,8 +982,18 @@ void GuiApplication::vulkanBeginFrame() {
     // UNSIGNALED and the next vkWaitForFences blocks for 3 seconds.
 
     uint32_t imageIndex;
+    auto acquire_t0 = std::chrono::steady_clock::now();
     VkResult r = vkAcquireNextImageKHR(dev, vk_swapchain_->swapchain(),
         1000000000ULL, vk_image_available_[fi], VK_NULL_HANDLE, &imageIndex);
+    {
+        static std::atomic<int> acq_cnt{0};
+        int ac = acq_cnt.fetch_add(1);
+        auto acq_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - acquire_t0).count();
+        if (ac < 20 || ac % 300 == 0) {
+            MLOG_INFO("vkacquire", "acquire_wait=%lldus fi=%u", (long long)acq_us, fi);
+        }
+    }
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
         MLOG_INFO("vkframe", "acquire OUT_OF_DATE/SUBOPTIMAL (%d), recreating", (int)r);
         vkDeviceWaitIdle(dev);
@@ -984,25 +1016,41 @@ void GuiApplication::vulkanBeginFrame() {
     vk_current_image_index_ = imageIndex;
 
     VkCommandBuffer cmd = vk_command_buffers_[fi];
+    auto reset_t0 = std::chrono::steady_clock::now();
     vkResetCommandBuffer(cmd, 0);
-
+    auto reset_t1 = std::chrono::steady_clock::now();
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &bi);
+    auto begin_t2 = std::chrono::steady_clock::now();
+    {
+        static std::atomic<int> bcb_cnt{0};
+        int bc = bcb_cnt.fetch_add(1);
+        if (bc < 20 || bc % 300 == 0) {
+            auto us = [](auto a, auto b){ return (long long)std::chrono::duration_cast<std::chrono::microseconds>(b-a).count(); };
+            MLOG_INFO("vkcb", "reset=%lldus beginCB=%lldus", us(reset_t0,reset_t1), us(reset_t1,begin_t2));
+        }
+    }
 
     // Record all pending texture uploads into this frame's command buffer
     // BEFORE the render pass. Eliminates separate vkQueueSubmit contention.
     {
+        auto rec_t0 = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> dlock(devices_mutex_);
+        auto rec_t1 = std::chrono::steady_clock::now();
         int uploads_recorded = 0;
         for (auto& [dev_id, dev_info] : devices_) {
             if (dev_info.vk_texture && dev_info.vk_texture->valid()) {
                 if (dev_info.vk_texture->recordUpdate(cmd)) { uploads_recorded++; }
             }
         }
-        static int tex_upload_log = 0;
-        if (uploads_recorded > 0 && tex_upload_log++ < 10) {
-            MLOG_INFO("vkframe", "Recorded %d texture uploads in frame cmd buffer", uploads_recorded);
+        auto rec_t2 = std::chrono::steady_clock::now();
+        static std::atomic<int> rec_cnt{0};
+        int rc = rec_cnt.fetch_add(1);
+        if (rc < 20 || rc % 300 == 0) {
+            auto us = [](auto a, auto b){ return (long long)std::chrono::duration_cast<std::chrono::microseconds>(b-a).count(); };
+            MLOG_INFO("vkframe", "recordUpdate: lock=%lldus record=%lldus uploads=%d",
+                      us(rec_t0,rec_t1), us(rec_t1,rec_t2), uploads_recorded);
         }
     }
 
@@ -1058,7 +1106,17 @@ void GuiApplication::vulkanEndFrame() {
     si.pSignalSemaphores = &vk_render_finished_[fi];
     // Reset fence HERE (correct Vulkan pattern: reset only right before submit)
     vkResetFences(dev, 1, &vk_in_flight_[fi]);
+    auto submit_t0 = std::chrono::steady_clock::now();
     VkResult sr = vkQueueSubmit(vk_context_->graphicsQueue(), 1, &si, vk_in_flight_[fi]);
+    {
+        static std::atomic<int> sub_cnt{0};
+        int sc = sub_cnt.fetch_add(1);
+        auto submit_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - submit_t0).count();
+        if (sc < 20 || sc % 300 == 0) {
+            MLOG_INFO("vksubmit", "submit_wait=%lldus", (long long)submit_us);
+        }
+    }
 
     // If submit failed, don't try to present - it would use invalid semaphores
     if (sr != VK_SUCCESS) {

@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 
 
 
@@ -202,6 +202,13 @@ struct AIConfig {
     int  vde_layer3_stuck_frames    = 300;   // 同一テンプレート継続フレーム数トリガー (~10秒@30fps)
     int  vde_layer3_no_match_ms     = 5000;  // 時間ベーストリガー (ms)
     int  vde_layer3_cooldown_ms     = 30000; // Layer 3 呼び出し後の冷却時間 (ms)
+
+    // OllamaVision 直接設定 (config.json の ollama ブロックから)
+    std::string ollama_host       = "127.0.0.1";
+    int         ollama_port       = 11434;
+    std::string ollama_model      = "llava:7b";
+    int         ollama_timeout_ms = 120000; // ms (WinHTTP タイムアウト)
+    int         ollama_max_tokens = 64;     // JSON レスポンス用。少なく設定して高速化
 
 };
 

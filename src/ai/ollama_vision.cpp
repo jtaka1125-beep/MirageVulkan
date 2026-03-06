@@ -45,22 +45,9 @@ static std::string base64Encode(const uint8_t* data, size_t len) {
 }
 
 // ポップアップ検出プロンプト
-static const char* POPUP_DETECTION_PROMPT = R"(Look at this Android screenshot carefully.
-
-Task: Find any popup dialog, modal, alert, or overlay that blocks the main content.
-
-If you find a popup/dialog:
-1. Describe what kind of popup it is (ad, permission request, error, notification, etc.)
-2. Find the close/dismiss button (usually: X, 閉じる, OK, Cancel, キャンセル, 後で, Skip, etc.)
-3. Return the button's approximate position as percentage of screen (x%, y%)
-
-Output ONLY valid JSON in this exact format:
-{"found": true, "type": "ad/permission/error/notification/other", "button_text": "X", "x_percent": 85, "y_percent": 15}
-
-If NO popup/dialog found:
-{"found": false}
-
-IMPORTANT: Output ONLY the JSON, no explanation.)";
+static const char* POPUP_DETECTION_PROMPT = R"(Android screenshot. Is there a popup/dialog/overlay blocking the screen?
+Reply JSON only. If yes: {"found":true,"type":"ad","button_text":"CLOSE","x_percent":50,"y_percent":50}
+If no popup: {"found":false})";
 
 // =============================================================================
 // Simple PNG encoder (minimal, no compression)
@@ -217,8 +204,54 @@ OllamaVision::OllamaVision(const OllamaVisionConfig& config)
 OllamaVisionResult OllamaVision::detectPopup(const uint8_t* rgba, int width, int height) {
     auto start = std::chrono::steady_clock::now();
 
+    // ダウンスケール: 長辺512pxに縮小してPNGサイズを削減
+    // llava/qwen3.5の認識精度はUI検出用途では512px以上で変わらない
+    // 1200x2000 -> 307x512: ~9.6MB -> ~0.6MB (Base64: ~0.8MB)
+    // 座標は x_percent/y_percent で返るため元解像度との変換不要
+    // 224px: qwen2.5vl patch=14px -> 16x16=256 tokens (vs 336->24x24=576); ~55% fewer tokens
+    constexpr int MAX_SIDE = 224;
+    std::vector<uint8_t> scaled_buf;
+    int enc_w = width, enc_h = height;
+    const uint8_t* enc_rgba = rgba;
+
+    if (width > MAX_SIDE || height > MAX_SIDE) {
+        const float scale = static_cast<float>(MAX_SIDE) / static_cast<float>(std::max(width, height));
+        enc_w = static_cast<int>(width  * scale) & ~1;  // 偶数に揃える
+        enc_h = static_cast<int>(height * scale) & ~1;
+        scaled_buf.resize(enc_w * enc_h * 4);
+
+        // バイリニアリサンプリング
+        const float x_ratio = static_cast<float>(width)  / enc_w;
+        const float y_ratio = static_cast<float>(height) / enc_h;
+        for (int dy = 0; dy < enc_h; dy++) {
+            const float fy  = dy * y_ratio;
+            const int   sy0 = static_cast<int>(fy);
+            const int   sy1 = std::min(sy0 + 1, height - 1);
+            const float wy  = fy - sy0;
+            for (int dx = 0; dx < enc_w; dx++) {
+                const float fx  = dx * x_ratio;
+                const int   sx0 = static_cast<int>(fx);
+                const int   sx1 = std::min(sx0 + 1, width - 1);
+                const float wx  = fx - sx0;
+                for (int c = 0; c < 4; c++) {
+                    const float tl = rgba[(sy0 * width + sx0) * 4 + c];
+                    const float tr = rgba[(sy0 * width + sx1) * 4 + c];
+                    const float bl = rgba[(sy1 * width + sx0) * 4 + c];
+                    const float br = rgba[(sy1 * width + sx1) * 4 + c];
+                    const float v  = tl * (1-wx)*(1-wy) + tr * wx*(1-wy)
+                                   + bl * (1-wx)*wy     + br * wx*wy;
+                    scaled_buf[(dy * enc_w + dx) * 4 + c] = static_cast<uint8_t>(v + 0.5f);
+                }
+            }
+        }
+        enc_rgba = scaled_buf.data();
+        MLOG_DEBUG("ollama", "downscale: %dx%d -> %dx%d (scale=%.3f)",
+                   width, height, enc_w, enc_h, scale);
+    }
+
     // RGBAをPNG Base64に変換
-    std::string image_b64 = encodeRgbaToPngBase64(rgba, width, height);
+    MLOG_INFO("ollama", "encode: input=%dx%d -> encode=%dx%d (MAX_SIDE=%d)", width, height, enc_w, enc_h, MAX_SIDE);
+    std::string image_b64 = encodeRgbaToPngBase64(enc_rgba, enc_w, enc_h);
     if (image_b64.empty()) {
         OllamaVisionResult result;
         result.error = "PNG encoding failed";
@@ -369,8 +402,10 @@ std::optional<std::string> OllamaVision::callOllamaApi(const std::string& prompt
     req_json["stream"] = false;
     req_json["options"] = {
         {"temperature", config_.temperature},
-        {"num_predict", config_.max_tokens}
+        {"num_predict", config_.max_tokens},
+        {"num_ctx", 512}
     };
+    req_json["keep_alive"] = 300;  // 5分アイドルでモデルをアンロード（SSDスワップ軽減）
 
     std::string body = req_json.dump();
 
@@ -421,7 +456,14 @@ std::optional<std::string> OllamaVision::callOllamaApi(const std::string& prompt
     try {
         auto resp_json = nlohmann::json::parse(response_body);
         std::string response = resp_json.value("response", "");
-        MLOG_INFO("ollama", "API応答: %s", response.substr(0, 100).c_str());
+        // timing breakdown (Ollama returns nanoseconds)
+        long long load_ms   = resp_json.value("load_duration",        0LL) / 1000000;
+        long long prompt_ms = resp_json.value("prompt_eval_duration", 0LL) / 1000000;
+        long long eval_ms   = resp_json.value("eval_duration",        0LL) / 1000000;
+        long long total_ms  = resp_json.value("total_duration",       0LL) / 1000000;
+        int eval_count      = resp_json.value("eval_count", 0);
+        MLOG_INFO("ollama", "API応答 (total=%lldms): load=%lldms prompt=%lldms eval=%lldms tokens=%d | %.100s",
+                  total_ms, load_ms, prompt_ms, eval_ms, eval_count, response.c_str());
         return response;
     } catch (const std::exception& e) {
         MLOG_ERROR("ollama", "JSON parse error: %s", e.what());
@@ -439,7 +481,7 @@ OllamaVisionResult OllamaVision::parseResponse(const std::string& response, int 
     size_t json_end = response.rfind('}');
 
     if (json_start == std::string::npos || json_end == std::string::npos || json_end <= json_start) {
-        MLOG_WARN("ollama", "JSONが見つからない: %s", response.substr(0, 100).c_str());
+        MLOG_WARN("ollama", "JSONが見つからない (full=%zu bytes): %.300s", response.size(), response.c_str());
         return result;
     }
 
@@ -452,8 +494,8 @@ OllamaVisionResult OllamaVision::parseResponse(const std::string& response, int 
         if (result.found) {
             result.type = j.value("type", "");
             result.button_text = j.value("button_text", "");
-            result.x_percent = j.value("x_percent", 0);
-            result.y_percent = j.value("y_percent", 0);
+            result.x_percent = j.contains("x_pct") ? j.value("x_pct", 0) : j.value("x_percent", 0);
+            result.y_percent = j.contains("y_pct") ? j.value("y_pct", 0) : j.value("y_percent", 0);
 
             MLOG_INFO("ollama", "ポップアップ検出: type=%s button=%s pos=(%d%%, %d%%) elapsed=%dms",
                       result.type.c_str(), result.button_text.c_str(),

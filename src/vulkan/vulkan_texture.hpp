@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vulkan_context.hpp"
+#include <mutex>
 
 namespace mirage::vk {
 
@@ -45,6 +46,7 @@ private:
     VkDeviceMemory staging_mem_ = VK_NULL_HANDLE;
     VkDeviceSize staging_size_ = 0;
     void* staging_mapped_ = nullptr; // persistently mapped (HOST_COHERENT)
+    mutable std::mutex staging_mutex_; // Guards concurrent stageUpdate/stageTiled
 
     int width_ = 0, height_ = 0;
     bool layout_initialized_ = false;

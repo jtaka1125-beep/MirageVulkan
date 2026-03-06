@@ -1,4 +1,5 @@
 #pragma once
+#include <mutex>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -44,6 +45,28 @@ public:
     VkDevice         device()         const { return device_; }
     VkQueue          graphicsQueue()  const { return graphics_queue_; }
     VkQueue          computeQueue()   const { return compute_queue_; }
+
+    // Queue mutex: must be held during vkQueueSubmit / vkQueuePresentKHR.
+    // AMD integrated GPU shares graphics+compute queue handle; concurrent
+    // submissions from different threads violate the Vulkan spec and cause
+    // driver-internal memcpy crashes (msvcrt.dll Access Violation).
+    std::mutex& queueMutex() { return queue_mutex_; }
+
+    // Thread-safe wrappers: these acquire queue_mutex_ before calling Vulkan.
+    // Always use these instead of raw vkQueueSubmit/vkQueuePresentKHR.
+    VkResult safeQueueSubmit(VkQueue queue, uint32_t submitCount,
+                              const VkSubmitInfo* pSubmits, VkFence fence) {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        return vkQueueSubmit(queue, submitCount, pSubmits, fence);
+    }
+    VkResult safeQueuePresent(const VkPresentInfoKHR* pPresentInfo) {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        return vkQueuePresentKHR(graphics_queue_, pPresentInfo);
+    }
+    VkResult safeQueueWaitIdle(VkQueue queue) {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        return vkQueueWaitIdle(queue);
+    }
     VkQueue          videoDecodeQueue() const { return video_decode_queue_; }
     const QueueFamilyIndices& queueFamilies() const { return queue_families_; }
 
@@ -59,6 +82,7 @@ private:
     VkQueue                  video_decode_queue_  = VK_NULL_HANDLE;
     QueueFamilyIndices       queue_families_      = {};
     VkDebugUtilsMessengerEXT debug_messenger_     = VK_NULL_HANDLE;
+    mutable std::mutex       queue_mutex_;          // Serializes vkQueueSubmit (shared gfx+compute queue on AMD iGPU)
 };
 
 } // namespace mirage::vk

@@ -97,9 +97,28 @@ void GuiApplication::render() {
     if (resizing_.load()) return;
 
     // Render panels
-    renderLeftPanel();
-    renderCenterPanel();
-    renderRightPanel();
+    {
+        static std::atomic<int> rnd_cnt{0};
+        int rc = rnd_cnt.fetch_add(1);
+        auto t0 = std::chrono::steady_clock::now();
+        renderLeftPanel();
+        auto t1 = std::chrono::steady_clock::now();
+        renderCenterPanel();
+        auto t2 = std::chrono::steady_clock::now();
+        renderRightPanel();
+        auto t3 = std::chrono::steady_clock::now();
+        auto left_us  = std::chrono::duration_cast<std::chrono::microseconds>(t1-t0).count();
+        auto ctr_us   = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count();
+        auto right_us = std::chrono::duration_cast<std::chrono::microseconds>(t3-t2).count();
+        if (rc < 20 || rc % 300 == 0) {
+            MLOG_INFO("timing", "render#%d left=%lldus center=%lldus right=%lldus",
+                      rc, (long long)left_us, (long long)ctr_us, (long long)right_us);
+        }
+        if (left_us > 5000 || ctr_us > 5000 || right_us > 5000) {
+            MLOG_WARN("timing", "render SLOW#%d left=%lldus center=%lldus right=%lldus",
+                      rc, (long long)left_us, (long long)ctr_us, (long long)right_us);
+        }
+    }
 
     // Render screenshot popup if active
     if (show_screenshot_popup_) {

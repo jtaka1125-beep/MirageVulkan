@@ -36,11 +36,11 @@ struct LfmConfig {
     std::string host = "127.0.0.1";
     int port = 11434;
     // 軽量分類: LFM2-350M  / 複雑判断: LFM2.5-1.2B-Instruct
-    std::string model_fast  = "hf.co/LiquidAI/LFM2-350M-GGUF:Q4_K_M";
-    std::string model_smart = "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M";
+    std::string model_fast  = "qwen3:0.6b";   // was: LFM2-350M (English-only)
+    std::string model_smart = "qwen3:1.7b";   // was: LFM2.5-1.2B
     int timeout_sec = 10;
     float temperature = 0.0f;  // 分類なので決定論的
-    int max_tokens = 4;        // "close"/"tap"/"ignore"/"unknown" の最大長
+    int max_tokens = 8;   // qwen3 may emit /think prefix; 8 is safe minimum        // "close"/"tap"/"ignore"/"unknown" の最大長
 };
 
 class LfmClassifier {

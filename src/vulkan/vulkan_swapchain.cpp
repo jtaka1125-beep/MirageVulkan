@@ -49,11 +49,9 @@ bool VulkanSwapchain::createSwapchain(int w, int h) {
     VkResult capsResult = VK_ERROR_UNKNOWN;
     // Some drivers may return VK_ERROR_UNKNOWN if queried too early right after surface creation.
     // Retry briefly to avoid transient startup freezes / init failures.
-    for (int i = 0; i < 20; i++) {
-        capsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface_, &caps);
-        if (capsResult == VK_SUCCESS) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    // Single attempt: caller (createVulkanResources) handles retry loop.
+    // Keeps each createSwapchain call fast so the outer loop can pump messages.
+    capsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface_, &caps);
     if (capsResult != VK_SUCCESS) {
         MLOG_ERROR("VkSwap", "getSurfaceCaps failed after retry: %d", (int)capsResult);
         return false;

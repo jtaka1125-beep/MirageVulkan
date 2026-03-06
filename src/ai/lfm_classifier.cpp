@@ -28,18 +28,19 @@ struct WinHttpHandleLfm {
 // プロンプト構築
 // =============================================================================
 static const char* SYSTEM_PROMPT =
-    "You are a mobile UI automation agent. "
-    "Analyze the UI text and return exactly one word.\n"
-    "Allowed outputs: close tap ignore unknown\n\n";
+    // /no_think disables Qwen3 thinking mode for fast, deterministic output
+    "/no_think\n"
+    "classify:\n"
+    "options: close tap ignore unknown\n";
 
 std::string LfmClassifier::buildPrompt(const std::string& ocr_text,
                                         const std::string& task_context) {
+    // classify format: concise input for qwen3 non-thinking mode (~20 tokens)
     std::string prompt = SYSTEM_PROMPT;
-    prompt += "UI text: \"" + ocr_text + "\"\n";
+    prompt += "text: \"" + ocr_text + "\"\n";
     if (!task_context.empty()) {
-        prompt += "Task context: " + task_context + "\n";
+        prompt += "context: " + task_context + "\n";
     }
-    prompt += "Action?";
     return prompt;
 }
 

@@ -190,12 +190,12 @@ bool VulkanImage::uploadFromStaging(VkCommandPool cmd_pool, VkQueue queue) {
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
-    if (vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
+    if (ctx_->safeQueueSubmit(queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
         MLOG_ERROR("VkImg", "vkQueueSubmit failed");
         vkFreeCommandBuffers(dev, cmd_pool, 1, &cmd);
         return false;
     }
-    vkQueueWaitIdle(queue);
+    ctx_->safeQueueWaitIdle(queue);
 
     vkFreeCommandBuffers(dev, cmd_pool, 1, &cmd);
     return true;
@@ -248,12 +248,12 @@ bool VulkanImage::download(VkCommandPool cmd_pool, VkQueue queue,
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
-    if (vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
+    if (ctx_->safeQueueSubmit(queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
         MLOG_ERROR("VkImg", "vkQueueSubmit failed");
         vkFreeCommandBuffers(dev, cmd_pool, 1, &cmd);
         return false;
     }
-    vkQueueWaitIdle(queue);
+    ctx_->safeQueueWaitIdle(queue);
 
     // Read from persistently mapped staging (no map/unmap)
     memcpy(out_data, staging_mapped_, size);

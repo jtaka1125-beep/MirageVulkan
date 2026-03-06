@@ -213,7 +213,7 @@ VulkanImage* VulkanComputeProcessor::rgbaToGrayGpu(const uint8_t* rgba, int widt
         si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
         si.pCommandBuffers = &cmd;
-        vkQueueSubmit(ctx_->computeQueue(), 1, &si, fence_);
+        ctx_->safeQueueSubmit(ctx_->computeQueue(), 1, &si, fence_);
         vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, UINT64_MAX);
 
         vkFreeCommandBuffers(ctx_->device(), cmd_pool_, 1, &cmd);

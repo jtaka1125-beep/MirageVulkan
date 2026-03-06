@@ -96,10 +96,10 @@
 - gui_device_control.cpp: 539
 - gui_command.cpp:        356
 - gui_window.cpp:         237
-- gui_main.cpp:           612
+- gui_main.cpp:           325
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4152 lines
+- TOTAL:                 3865 lines
 
 ## Key Decisions Log
 - 2026-03-03: MCP二重起動防止完了。MirageMCPServerタスクをDisable化、start_all.batをMirageMCP(watchdog)経由に統一、MirageMCPGuard(1分毎ヘルスチェック)を再有効化。
