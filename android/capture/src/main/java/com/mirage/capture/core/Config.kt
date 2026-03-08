@@ -7,5 +7,7 @@ object Config {
     const val TAG_LOG: String      = "LOG"
     const val TAG_TAP_EXEC: String = "TAP_EXEC"
     const val TAG_BACK_EXEC: String = "BACK_EXEC"
-    // UDP_HOST / UDP_PORT は CaptureActivity の UI 入力値から取得するため不要
+    // UDP sender defaults (used by UdpSender from merged accessory module)
+    const val UDP_HOST: String = "192.168.0.2"
+    const val UDP_PORT: Int = 60000
 }

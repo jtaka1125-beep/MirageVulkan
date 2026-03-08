@@ -1,7 +1,11 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-feature android:name="android.hardware.usb.accessory" android:required="false" />
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -10,6 +14,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="true"
@@ -20,11 +26,18 @@
         <activity
             android:name=".ui.CaptureActivity"
             android:exported="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleTop"
+            android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/accessory_filter" />
         </activity>
 
         <receiver
@@ -39,11 +52,27 @@
             </intent-filter>
         </receiver>
 
-        <!-- Exported=true to allow ADB setup commands (ai_start/ai_stop/fps/route). In production, can be set false. -->
         <service
             android:name=".capture.ScreenCaptureService"
             android:exported="true"
             android:foregroundServiceType="mediaProjection" />
+
+        <service
+            android:name=".usb.AccessoryIoService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <service
+            android:name=".access.MirageAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/mirage_accessibility" />
+        </service>
 
         <service
             android:name=".svc.WatchdogService"
@@ -54,6 +83,13 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection|microphone" />
 
+        <receiver
+            android:name=".access.DebugCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mirage.capture.DEBUG_CMD" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".boot.CaptureBootReceiver"
@@ -63,6 +99,7 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.mirage.capture.TEST_BOOT" />
+                <action android:name="com.mirage.accessory.TEST_BOOT" />
             </intent-filter>
         </receiver>
 

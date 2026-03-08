@@ -1,4 +1,4 @@
-package com.mirage.capture.usb
+﻿package com.mirage.capture.usb
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -92,7 +92,7 @@ object Protocol {
         data class Config(override val seq: Int, val payload: ByteArray) : Command()           // 設定変更
         data class ClickId(override val seq: Int, val resourceId: String) : Command()           // リソースID指定タップ
         data class ClickText(override val seq: Int, val text: String) : Command()               // テキスト指定タップ
-        data class Swipe(override val seq: Int, val startX: Int, val startY: Int, val endX: Int, val endY: Int, val durationMs: Int) : Command()
+        data class Swipe(override val seq: Int, val startX: Int, val startY: Int, val endX: Int, val endY: Int, val durationMs: Int, val screenW: Int = 0, val screenH: Int = 0) : Command()
         // FIX-B
         data class Pinch(override val seq: Int, val centerX: Int, val centerY: Int,
                          val startDistance: Int, val endDistance: Int,
@@ -374,5 +374,17 @@ object Protocol {
         // RTP data
         System.arraycopy(rtpData, 0, packet, VIDEO_HEADER_SIZE, rtpData.size)
         return packet
+    }
+
+    fun buildPacket(cmd: Byte, seq: Int, payload: ByteArray? = null): ByteArray {
+        val payloadLen = payload?.size ?: 0
+        val buf = ByteBuffer.allocate(HEADER_SIZE + payloadLen).order(ByteOrder.LITTLE_ENDIAN)
+        buf.putInt(MAGIC)
+        buf.put(VERSION)
+        buf.put(cmd)
+        buf.putInt(seq)
+        buf.putInt(payloadLen)
+        if (payload != null) buf.put(payload)
+        return buf.array()
     }
 }

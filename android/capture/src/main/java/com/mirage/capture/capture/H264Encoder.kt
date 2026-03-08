@@ -1,10 +1,11 @@
-﻿package com.mirage.capture.capture
+package com.mirage.capture.capture
 
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.os.Build
@@ -41,15 +42,7 @@ class H264Encoder(
     initialFps: Int = 60
 ) {
     companion object {
-        private const val TAG = "MirageH264"
-
-        private fun preferSoftwareEncoder(w: Int, h: Int): Boolean {
-            val model = android.os.Build.MODEL?.lowercase() ?: ""
-            // For X1 native 1200x2000, hardware AVC often clamps to 1080x1920;
-            // use Google software encoder to preserve size for AI/macro.
-            if (model.contains("npad") && w == 1200 && h == 2000) return true
-            return false
-        }
+        private const val TAG = "MirageH265"
 
         private fun isRepeaterSafe(): Boolean {
             val hw = android.os.Build.HARDWARE?.lowercase() ?: ""
@@ -70,7 +63,8 @@ class H264Encoder(
             return true
         }
 
-        private const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
+        private fun mimeType() = MediaFormat.MIMETYPE_VIDEO_HEVC
+
         private const val MIN_FPS = 10
         private const val MAX_FPS = 60
         private const val BASE_BITRATE = 10_000_000
@@ -78,7 +72,7 @@ class H264Encoder(
         private const val BITRATE_CAP = 32_000_000
         private const val LOG_INTERVAL_MS = 5000L
         private const val SPS_PPS_RESEND_INTERVAL_MS = 5000L
-        private const val I_FRAME_INTERVAL = 999  // IDR on connect only
+        private const val I_FRAME_INTERVAL = 5   // IDR every 5s: clears MTK HEVC stale reference frames (subtitle ghost fix)
     }
 
     private var codec: MediaCodec? = null
@@ -94,11 +88,15 @@ class H264Encoder(
 
     private val targetFps = AtomicInteger(initialFps.coerceIn(MIN_FPS, MAX_FPS))
     @Volatile private var lastSpsPpsSendTimeMs = 0L
+    @Volatile private var idrPending = false  // Drop P-frames until first IDR after new client connect
 
     private val packetizer = RtpH264Packetizer(
         ssrc = 0x13572468,
         payloadType = 96,
-        mtuPayload = 1200
+        // HEVC over TCP: use large MTU to avoid FU-A which corrupts HEVC NAL headers
+        mtuPayload = 1200,
+        useHevc = true  // Always HEVC
+
     )
 
     private val sendQueue = ArrayBlockingQueue<List<ByteArray>>(16)
@@ -110,33 +108,98 @@ class H264Encoder(
         }
     }
 
-    fun start() {
+    /** Returns the physical screen size to use for VirtualDisplay creation.
+     *  On N-one Npad X1 (and similar npad devices), maximumWindowMetrics
+     *  returns the scaled logical size (1080x1920) instead of the physical
+     *  panel size (1200x2000). We force the correct value here.
+     */
+    private fun physicalScreenSize(): Pair<Int, Int> {
+        val model = android.os.Build.MODEL?.lowercase() ?: ""
+        if (model.contains("npad")) {
+            Log.i(TAG, "physicalScreenSize: npad override -> 1200x2000")
+            return Pair(1200, 2000)
+        }
         val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
-        val width: Int
-        val height: Int
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val bounds = wm.maximumWindowMetrics.bounds
-            width = bounds.width()
-            height = bounds.height()
+            Pair(bounds.width(), bounds.height())
         } else {
             val size = android.graphics.Point()
             @Suppress("DEPRECATION")
             wm.defaultDisplay.getRealSize(size)
-            width = size.x
-            height = size.y
+            Pair(size.x, size.y)
         }
+    }
+
+
+    private fun getIntOrNull(format: MediaFormat, key: String): Int? =
+        if (format.containsKey(key)) format.getInteger(key) else null
+
+    private fun dumpCodecCapabilities(reqW: Int, reqH: Int, altW: Int, altH: Int, fps: Int) {
+        val mimeList = listOf(
+            MediaFormat.MIMETYPE_VIDEO_HEVC,
+            MediaFormat.MIMETYPE_VIDEO_VP9,
+        )
+        for (mime in mimeList) {
+            try {
+                val infos = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.filter { info ->
+                    info.isEncoder && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+                }
+                Log.i(TAG, "CODEC survey start: mime=${mime}, req=${reqW}x${reqH}@${fps}, alt=${altW}x${altH}@${fps}, codecs=${infos.size}")
+                for (info in infos) {
+                    try {
+                        val caps = info.getCapabilitiesForType(mime)
+                        val vc = caps.videoCapabilities
+                        val heightsForReqW = try { vc.getSupportedHeightsFor(reqW).toString() } catch (_: Throwable) { "n/a" }
+                        val widthsForReqH = try { vc.getSupportedWidthsFor(reqH).toString() } catch (_: Throwable) { "n/a" }
+                        val heightsForAltW = try { vc.getSupportedHeightsFor(altW).toString() } catch (_: Throwable) { "n/a" }
+                        val widthsForAltH = try { vc.getSupportedWidthsFor(altH).toString() } catch (_: Throwable) { "n/a" }
+                        val fpsForReq = try { vc.getSupportedFrameRatesFor(reqW, reqH).toString() } catch (_: Throwable) { "n/a" }
+                        val fpsForAlt = try { vc.getSupportedFrameRatesFor(altW, altH).toString() } catch (_: Throwable) { "n/a" }
+                        Log.i(
+                            TAG,
+                            "CODEC mime=${mime} codec=${info.name} hw=${info.isHardwareAccelerated} sw=${info.isSoftwareOnly} vendor=${info.isVendor} " +
+                                "widths=${vc.supportedWidths} heights=${vc.supportedHeights} align=${vc.widthAlignment}x${vc.heightAlignment} " +
+                                "reqOK=${vc.isSizeSupported(reqW, reqH)} altOK=${vc.isSizeSupported(altW, altH)} " +
+                                "heightsForReqW=${heightsForReqW} widthsForReqH=${widthsForReqH} heightsForAltW=${heightsForAltW} widthsForAltH=${widthsForAltH} " +
+                                "fpsForReq=${fpsForReq} fpsForAlt=${fpsForAlt}"
+                        )
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "CODEC capability dump failed: mime=${mime}, codec=${info.name}", e)
+                    }
+                }
+                Log.i(TAG, "CODEC survey end: mime=${mime}")
+            } catch (e: Throwable) {
+                Log.w(TAG, "CODEC survey failed: mime=${mime}", e)
+            }
+        }
+    }
+
+    fun start() {
+        val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val (rawWidth, rawHeight) = physicalScreenSize()
+        val captureWidth = maxOf(rawWidth, rawHeight)
+        val captureHeight = minOf(rawWidth, rawHeight)
         val metrics: DisplayMetrics = ctx.resources.displayMetrics
         val dpi = metrics.densityDpi
         val fps = targetFps.get()
         val bitrate = (BASE_BITRATE * fps / BASE_FPS).coerceAtMost(BITRATE_CAP)
 
-        Log.i(TAG, "Starting encoder v5d-direct: ${width}x${height} @ ${fps}fps, ${bitrate/1000}kbps VBR")
+        val windowBounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) wm.maximumWindowMetrics.bounds else null
+        Log.i(
+            TAG,
+            "Starting encoder v6-probe: raw=${rawWidth}x${rawHeight}, capture=${captureWidth}x${captureHeight}, " +
+                "window=${windowBounds?.width()}x${windowBounds?.height()}, dpi=${dpi}, fps=${fps}, bitrate=${bitrate/1000}kbps"
+        )
+        dumpCodecCapabilities(captureWidth, captureHeight, rawWidth, rawHeight, fps)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             projection.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
         }
 
-        val format = MediaFormat.createVideoFormat(MIME_TYPE, width, height).apply {
+        val effectiveMime = mimeType()  // Always HEVC
+        Log.i(TAG, "Encoder mime: $effectiveMime")
+        val format = MediaFormat.createVideoFormat(effectiveMime, captureWidth, captureHeight).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
@@ -152,19 +215,23 @@ class H264Encoder(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
+            // HEVC: prepend VPS/SPS/PPS before every IDR so PC can detect stream start
+            if (effectiveMime == MediaFormat.MIMETYPE_VIDEO_HEVC) {
+                setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1)
+            }
         }
 
+        Log.i(TAG, "Requested format: ${format}")
         Log.i(TAG, "RepeatPrevFrameAfter set for fps=$fps")
 
         codec = try {
-            if (preferSoftwareEncoder(width, height)) MediaCodec.createByCodecName("OMX.google.h264.encoder")
-            else MediaCodec.createEncoderByType(MIME_TYPE)
-        } catch (_: Exception) {
-            MediaCodec.createEncoderByType(MIME_TYPE)
-        }.apply {
-            configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        }
-
+            val swName = "OMX.google.hevc.encoder"
+            Log.i(TAG, "Using SW HEVC encoder: $swName for ${captureWidth}x${captureHeight}")
+            MediaCodec.createByCodecName(swName)
+        } catch (e: Exception) {
+            Log.w(TAG, "SW HEVC encoder unavailable ($e), falling back to HW HEVC")
+            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC)
+        }.apply { configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE) }
         encoderInputSurface = codec!!.createInputSurface()
         codec!!.start()
 
@@ -172,29 +239,29 @@ class H264Encoder(
         // Many devices cap VirtualDisplay supply to ~30fps. When targeting 50-60fps,
         // use SurfaceRepeater to swap encoder surface at target fps using the latest frame.
         if (fps >= 50 && isRepeaterSafe()) {
-            repeater = SurfaceRepeater(width, height, fps, encoderInputSurface!!) { srcSurface ->
+            repeater = SurfaceRepeater(captureWidth, captureHeight, fps, encoderInputSurface!!) { srcSurface ->
                 virtualDisplay = projection.createVirtualDisplay(
-                    "mirage_capture", width, height, dpi,
+                    "mirage_capture", captureWidth, captureHeight, dpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
                     srcSurface, null, null
                 )
             }
             repeater?.start()
-            Log.i(TAG, "REPEATER mode active: VirtualDisplay -> SurfaceTexture -> MediaCodec @$fps")
+            Log.i(TAG, "REPEATER mode active: VirtualDisplay(${captureWidth}x${captureHeight}) -> SurfaceTexture -> MediaCodec @$fps")
         } else {
             virtualDisplay = projection.createVirtualDisplay(
-                "mirage_capture", width, height, dpi,
+                "mirage_capture", captureWidth, captureHeight, dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
                 encoderInputSurface, null, null
             )
-            Log.i(TAG, "DIRECT mode active: VirtualDisplay -> MediaCodec")
+            Log.i(TAG, "DIRECT mode active: VirtualDisplay(${captureWidth}x${captureHeight}) -> MediaCodec")
         }
 
         running = true
         sendThread = Thread({ sendLoop() }, "H264Send").also { it.start() }
         encoderThread = Thread({ encoderLoop() }, "H264Encoder").also { it.start() }
 
-        Log.i(TAG, "Encoder v5d-direct started: ${fps}fps, ${bitrate/1000}kbps VBR, IFrame=${I_FRAME_INTERVAL}s")
+        Log.i(TAG, "Encoder v6-probe started: capture=${captureWidth}x${captureHeight}, ${fps}fps, ${bitrate/1000}kbps VBR, IFrame=${I_FRAME_INTERVAL}s")
     }
 
     fun stop() {
@@ -235,6 +302,9 @@ class H264Encoder(
     fun getTargetFps(): Int = targetFps.get()
 
     fun requestIdr() {
+        idrPending = true
+        lastSpsPpsSendTimeMs = 0L  // Force VPS/SPS/PPS resend with first IDR
+        sendQueue.clear()  // Discard stale frames
         try {
             codec?.setParameters(Bundle().apply {
                 putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
@@ -291,6 +361,18 @@ class H264Encoder(
             if (outputIndex >= 0) {
                 val outputBuffer = codec!!.getOutputBuffer(outputIndex)
                 if (outputBuffer != null && bufferInfo.size > 0) {
+                    // Drop non-IDR frames until first IDR after new client connect
+                    val isKeyFrame = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+                    if (idrPending && !isKeyFrame) {
+                        codec!!.releaseOutputBuffer(outputIndex, false)
+                        continue
+                    }
+                    if (idrPending && isKeyFrame) {
+                        idrPending = false
+                        sendQueue.clear()  // Clear any P-frames that snuck in
+                        Log.i(TAG, "IDR arrived, resuming stream for new client")
+                    }
+
                     val data = ByteArray(bufferInfo.size)
                     outputBuffer.position(bufferInfo.offset)
                     outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
@@ -340,7 +422,7 @@ class H264Encoder(
                 }
                 codec!!.releaseOutputBuffer(outputIndex, false)
             } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                Log.i(TAG, "Output format: ${codec!!.outputFormat}")
+                codec!!.outputFormat.also { of -> Log.i(TAG, "Output format: ${of}, coded=${getIntOrNull(of, MediaFormat.KEY_WIDTH)}x${getIntOrNull(of, MediaFormat.KEY_HEIGHT)}, crop=${getIntOrNull(of, "crop-left")},${getIntOrNull(of, "crop-top")}-${getIntOrNull(of, "crop-right")},${getIntOrNull(of, "crop-bottom")}, stride=${getIntOrNull(of, MediaFormat.KEY_STRIDE)}, sliceHeight=${getIntOrNull(of, MediaFormat.KEY_SLICE_HEIGHT)}, color=${getIntOrNull(of, MediaFormat.KEY_COLOR_FORMAT)}") }
             }
         }
         Log.i(TAG, "Encoder loop ended, total frames: $frameCount")

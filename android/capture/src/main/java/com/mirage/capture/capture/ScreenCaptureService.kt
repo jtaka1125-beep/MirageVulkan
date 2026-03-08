@@ -1,4 +1,4 @@
-package com.mirage.capture.capture
+﻿package com.mirage.capture.capture
 
 import android.app.Activity
 import android.app.Notification
@@ -72,7 +72,6 @@ class ScreenCaptureService : Service() {
 
     private var projection: MediaProjection? = null
     private var encoder: H264Encoder? = null
-    private var tiledEncoder: TiledEncoder? = null  // For X1 (1x2 tile split)
     private var videoSender: VideoSender? = null
     private var tcpSecondarySender: TcpVideoSender? = null
     private val encoderLock = Any()  // Guards TiledEncoder vs attachUsbStream race
@@ -246,27 +245,19 @@ class ScreenCaptureService : Service() {
         }
 
         // Duplicate start guard: if already capturing, ignore re-start
-        // NOTE: TiledEncoder mode sets videoSender=null, so check tiledEncoder too
-        if (tiledEncoder != null) {
-            Log.w(TAG, "Already capturing via TiledEncoder (mode=$mirrorMode), ignoring duplicate onStartCommand")
-            return START_STICKY
-        }
         if (encoder != null && videoSender != null && videoSender!!.isActive()) {
             Log.w(TAG, "Already capturing (mode=$mirrorMode), ignoring duplicate onStartCommand")
             return START_STICKY
         }
 
         // Clean up previous session if sender is dead
-        // Also handles TiledEncoder path where videoSender==null
-        if (videoSender != null || tiledEncoder != null) {
+        if (videoSender != null) {
             Log.i(TAG, "Previous sender inactive, cleaning up before restart")
             stopTcpSecondary()
             encoder?.stop()
-            tiledEncoder?.stop()
             projection?.stop()
             videoSender?.close()
             encoder = null
-            tiledEncoder = null
             videoSender = null
             projection = null
         }
@@ -290,34 +281,6 @@ class ScreenCaptureService : Service() {
         val screenW = minOf(metrics.widthPixels, metrics.heightPixels)
         val dpi = metrics.densityDpi
 
-        // X1 with TCP mode and tall screen: use TiledEncoder for split-tile transmission
-        if (isX1 && mirrorMode == MIRROR_MODE_TCP && screenH >= 1900) {
-            Log.i(TAG, "X1 device detected with height=$screenH, using TiledEncoder on port $tcpPort")
-            val tileStarted = synchronized(encoderLock) {
-                val te = TiledEncoder(
-                    projection = projection!!,
-                    densityDpi = dpi,
-                    targetW = screenW,
-                    targetH = screenH,
-                    fps = desiredFps,
-                    bitrate = 12_000_000,  // 12Mbps for 60fps (was 8Mbps @30fps)
-                    tcpBasePort = tcpPort,
-                    useHevc = false,
-                    onRequestIdr = { tiledEncoder?.requestIdr() }
-                )
-                if (te.start()) {
-                    tiledEncoder = te
-                    videoSender = null
-                    Log.i(TAG, "TiledEncoder started successfully (tiles will use ports $tcpPort, ${tcpPort+1})")
-                    true
-                } else {
-                    Log.w(TAG, "TiledEncoder failed to start, falling back to single H264Encoder")
-                    tiledEncoder = null
-                    false
-                }
-            }
-            if (tileStarted) return START_STICKY
-        }
 
         // Standard single-stream path
         videoSender = when (mirrorMode) {
@@ -381,7 +344,6 @@ class ScreenCaptureService : Service() {
         ipcReceiver = null
         stopTcpSecondary()
         encoder?.stop()
-        tiledEncoder?.stop()
         projection?.stop()
         videoSender?.close()
         super.onDestroy()
@@ -394,17 +356,9 @@ class ScreenCaptureService : Service() {
             return
         }
         synchronized(encoderLock) {
-            // If TiledEncoder is running (X1 WiFi TCP mode), do not switch to USB
             // We prefer WiFi tiles over USB H264 for the X1 tiled path
-            if (tiledEncoder != null) {
-                Log.i(TAG, "attachUsbStream: TiledEncoder active, ignoring USB switch")
-                return
-            }
             Log.i(TAG, "attachUsbStream: switching to USB mode (was $mirrorMode)")
             stopTcpSecondary()
-            // Stop TiledEncoder if active (X1 TCP mode) - safety cleanup
-            tiledEncoder?.stop()
-            tiledEncoder = null
             encoder?.stop()
             videoSender?.close()
             videoSender = UsbVideoSender(outputStream)
@@ -447,12 +401,6 @@ class ScreenCaptureService : Service() {
         val fps = targetFps.coerceIn(10, 60)
         desiredFps = fps
         Log.i(TAG, "Updating FPS to $fps")
-        // TiledEncoder: update without restart (TileRepeater timing loop handles it)
-        val te = tiledEncoder
-        if (te != null) {
-            te.updateFps(fps)
-            return
-        }
         val proj = projection
         val sender = videoSender
         // If not capturing yet, just store desired FPS and best-effort apply.
