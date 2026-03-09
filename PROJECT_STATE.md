@@ -92,7 +92,7 @@
 
 ## GUI File Line Counts (Updated 2026-03-10)
 - gui_ai_panel.cpp:       663
-- gui_init.cpp:          1201
+- gui_init.cpp:          1189
 - gui_threads.cpp:        676
 - gui_device_control.cpp: 539
 - gui_command.cpp:        455
@@ -100,7 +100,7 @@
 - gui_main.cpp:           360
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4129 lines
+- TOTAL:                 4117 lines
 
 ## Key Decisions Log
 - 2026-03-03: MCP二重起動防止完了。MirageMCPServerタスクをDisable化、start_all.batをMirageMCP(watchdog)経由に統一、MirageMCPGuard(1分毎ヘルスチェック)を再有効化。

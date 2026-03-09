@@ -1,4 +1,4 @@
-﻿// =============================================================================
+// =============================================================================
 
 
 
@@ -504,7 +504,7 @@ public:
 
 
 
-    // 初期化 — VulkanContext必須
+    // 初期化 ? VulkanContext必須
 
 
 
@@ -572,7 +572,7 @@ public:
 
 
 
-    // 改善O: 非同期処理 — スロット別ワーカースレッド
+    // 改善O: 非同期処理 ? スロット別ワーカースレッド
 
 
 
@@ -837,6 +837,13 @@ public:
 
 
     void setHotReload(bool enable, int interval_ms = 1000);
+
+    // Phase 2: Canonical Lane 単一化
+    // true enables canonical-only mode; otherwise all devices are processed uniformly from FrameReadyEvent.
+    // AI/マクロの入力を CanonicalFrameProvider に固定する際に使用
+    void setCanonicalOnly(bool enable);
+    bool isCanonicalOnly() const;
+
 
 
 

@@ -388,28 +388,16 @@ int success = 0;
     });
 
         g_multi_receiver->setFrameCallback([](const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame) {
-        // Convert hardware_id to slot_N format for AI engine
-        static std::unordered_map<std::string, int> s_hw_slot;
-        static std::mutex s_hw_mutex;
+        // Start AI async workers once. Actual device->slot mapping is resolved inside AIEngine
+        // from the same GUI-fed FrameReadyEvent stream, so GUI does not special-case main/sub.
         static bool s_async_started = false;
-        int slot = 0;
-        {
-            std::lock_guard<std::mutex> lk(s_hw_mutex);
-            auto it = s_hw_slot.find(hardware_id);
-            if (it == s_hw_slot.end()) {
-                slot = (int)s_hw_slot.size();
-                s_hw_slot[hardware_id] = slot;
-            } else {
-                slot = it->second;
-            }
-            if (!s_async_started && g_ai_engine && g_ai_enabled) {
-                g_ai_engine->setAsyncMode(true);
-                s_async_started = true;
-            }
+        if (!s_async_started && g_ai_engine && g_ai_enabled) {
+            g_ai_engine->setAsyncMode(true);
+            s_async_started = true;
         }
 
-        // Use dispatcher for unified SharedFrame delivery
-        // device_id uses hardware_id for mainview matching; slot index for AI engine
+        // Use dispatcher for unified SharedFrame delivery.
+        // device_id stays hardware_id; GUI/AI both consume the same frame stream.
         std::string device_id = hardware_id;
         int source_port = 0;
         {

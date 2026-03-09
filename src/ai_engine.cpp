@@ -11740,7 +11740,7 @@ if (decision.should_act && can_send) {
 
 
 
-        // GUIからはslot_0〜slot_9の固定range
+        // Stable internal AI slot namespace (device->slot mapping may come from GUI-fed FrameReadyEvent).
 
 
 
