@@ -8,8 +8,11 @@
 #include <cstring>
 #include <cstdio>
 #include <vector>
+#include <mutex>
 
 namespace mirage::video {
+
+static std::mutex g_vulkan_queue_submit_mutex;
 
 // Embedded SPIR-V shader (compiled from yuv_to_rgba.comp)
 // This is a placeholder - in production, load from file or embed compiled SPIR-V
@@ -536,6 +539,24 @@ bool VulkanYuvConverter::convert(VkImage /*nv12_input*/,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          0, 0, nullptr, 0, nullptr, 1, &barrier);
 
+    // Clear output image first to avoid stale/gray regions when any pixels are not overwritten
+    VkClearColorValue clear_color = {};
+    clear_color.float32[0] = 0.0f;
+    clear_color.float32[1] = 0.0f;
+    clear_color.float32[2] = 0.0f;
+    clear_color.float32[3] = 1.0f;
+    vkCmdClearColorImage(cmd_buffer_, rgba_output, VK_IMAGE_LAYOUT_GENERAL,
+                         &clear_color, 1, &barrier.subresourceRange);
+
+    VkMemoryBarrier clear_to_compute = {};
+    clear_to_compute.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    clear_to_compute.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    clear_to_compute.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd_buffer_,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0, 1, &clear_to_compute, 0, nullptr, 0, nullptr);
+
     // Bind pipeline and descriptors
     vkCmdBindPipeline(cmd_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(cmd_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -576,12 +597,15 @@ bool VulkanYuvConverter::convert(VkImage /*nv12_input*/,
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &cmd_buffer_;
 
+    {
+        std::lock_guard<std::mutex> qlk(g_vulkan_queue_submit_mutex);
     if (vkQueueSubmit(compute_queue_, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS) {
         MLOG_ERROR("YuvConv", "Failed to submit conversion command");
         return false;
     }
 
-    vkQueueWaitIdle(compute_queue_);
+        vkQueueWaitIdle(compute_queue_);
+    }
 
     return true;
 }
@@ -673,6 +697,24 @@ bool VulkanYuvConverter::convertAsync(VkImage nv12_input,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          0, 0, nullptr, 0, nullptr, 1, &barrier);
 
+    // Clear output image first to avoid stale/gray regions when any pixels are not overwritten
+    VkClearColorValue clear_color = {};
+    clear_color.float32[0] = 0.0f;
+    clear_color.float32[1] = 0.0f;
+    clear_color.float32[2] = 0.0f;
+    clear_color.float32[3] = 1.0f;
+    vkCmdClearColorImage(cmd_buffer_, rgba_output, VK_IMAGE_LAYOUT_GENERAL,
+                         &clear_color, 1, &barrier.subresourceRange);
+
+    VkMemoryBarrier clear_to_compute = {};
+    clear_to_compute.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    clear_to_compute.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    clear_to_compute.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd_buffer_,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0, 1, &clear_to_compute, 0, nullptr, 0, nullptr);
+
     // Bind pipeline and descriptors
     vkCmdBindPipeline(cmd_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(cmd_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -720,9 +762,12 @@ bool VulkanYuvConverter::convertAsync(VkImage nv12_input,
     submit_info.signalSemaphoreCount = signal_semaphore != VK_NULL_HANDLE ? 1 : 0;
     submit_info.pSignalSemaphores = signal_semaphore != VK_NULL_HANDLE ? &signal_semaphore : nullptr;
 
+    {
+        std::lock_guard<std::mutex> qlk(g_vulkan_queue_submit_mutex);
     if (vkQueueSubmit(compute_queue_, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS) {
         MLOG_ERROR("YuvConv", "Failed to submit async conversion command");
         return false;
+    }
     }
 
     return true;
