@@ -17,6 +17,7 @@
 - PC RX (USB): HybridCommandSender.video_callback -> VID0 parse -> g_usb_decoders[device_id]
 - PC RX (TCP): adb forward tcp:50100 -> MirrorReceiver.start_tcp_vid0 -> VID0 -> RTP -> decode
 - Routing: RouteController (tcp_only_mode=true), FPS via ADB broadcast to MirageCapture APK
+- Policy: Video route prefers USB, auto-offloads to WiFi when USB bandwidth/RTT is congested, and returns to USB after recovery. Control route remains USB -> WiFi fallback. This policy is intended as a common rule for supported devices, not X1-only.
 - Note: g_hybrid_receiver always nullptr at runtime; TCP+USB decoder path active
 
 ## Architecture (AI Pipeline)
