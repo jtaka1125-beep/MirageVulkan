@@ -35,7 +35,7 @@ void RouteController::registerDevice(const std::string& device_id, bool is_main,
     info.device_id = device_id;
     info.is_main = is_main;
     info.wifi_port = wifi_port;
-    info.current_fps = is_main ? MAIN_FPS_HIGH : SUB_FPS_HIGH;
+    info.current_fps = 0;  // Force fps_callback on first applyDecision
     info.current_video_route = VideoRoute::USB;
     devices_[device_id] = info;
 
@@ -46,6 +46,17 @@ void RouteController::registerDevice(const std::string& device_id, bool is_main,
 void RouteController::unregisterDevice(const std::string& device_id) {
     devices_.erase(device_id);
     MLOG_INFO("RouteCtrl", "Unregistered device %s", device_id.c_str());
+}
+
+void RouteController::resetDeviceFps(const std::string& device_id) {
+    // Reset current_fps=0 so next applyDecision forces FPS re-send
+    for (auto& [id, info] : devices_) {
+        if (id == device_id) {
+            info.current_fps = 0;
+            MLOG_INFO("RouteCtrl", "resetDeviceFps: %s -> will resend FPS", id.c_str());
+            break;
+        }
+    }
 }
 
 RouteController::RouteDecision RouteController::evaluate(
@@ -69,9 +80,12 @@ RouteController::RouteDecision RouteController::evaluate(
     ewma_rtt_      = EWMA_ALPHA * usb.ping_rtt_ms       + (1.0f - EWMA_ALPHA) * ewma_rtt_;
     // ISSUE-20: smooth packet loss to suppress transient spikes
     ewma_wifi_loss_= EWMA_ALPHA * wifi.packet_loss_rate + (1.0f - EWMA_ALPHA) * ewma_wifi_loss_;
-    const bool usb_congested_ewma = usb.is_congested         // keep BandwidthMonitor flag
-                                  || (ewma_usb_bw_ > 25.0f)  // EWMA: USB_CONGESTION_THRESHOLD_MBPS
-                                  || (ewma_rtt_ > 50.0f);   // EWMA: USB_RTT_THRESHOLD_MS
+    const bool usb_congested_ewma = usb.is_congested
+                                  || (ewma_usb_bw_ > 25.0f)
+                                  || (ewma_rtt_ > 50.0f);
+    const bool usb_recovered_ewma = usb.is_alive
+                                  && (ewma_usb_bw_ < 18.0f)
+                                  && (ewma_rtt_ < 35.0f);
 
     // Track consecutive states for hysteresis
     // TCP_ONLY: USB counters skipped (USB always dead, would reset recovery counter)
@@ -127,6 +141,7 @@ RouteController::RouteDecision RouteController::evaluate(
             state_ = State::BOTH_DEGRADED;
         } else if (wifi_loss > 0.10f) {
             // 鬮倥ヱ繧ｱ繝・・ｽ・ｽ繝ｭ繧ｹ - 遨肴･ｵ逧・・ｽ・ｽ蜑頑ｸ・            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -10);
+            decision.encode_max_size = 1000; // BW degraded: downscale
             decision.sub_fps = adjustFps(current_.sub_fps, SUB_FPS_LOW, -5);
         } else if (wifi_loss > 0.05f) {
             // 荳ｭ遞句ｺｦ縺ｮ繝ｭ繧ｹ - 谿ｵ髫守噪縺ｫ蜑頑ｸ・            decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_MED, -5);
@@ -134,6 +149,7 @@ RouteController::RouteDecision RouteController::evaluate(
         } else {
             // WiFi豁｣蟶ｸ - 譛螟ｧ蛟､縺ｫ蜷代￠縺ｦ蠅怜刈
             decision.main_fps = adjustFps(current_.main_fps, MAIN_FPS_HIGH, 5);
+            decision.encode_max_size = 2000; // BW recovered: full res
             decision.sub_fps = adjustFps(current_.sub_fps, SUB_FPS_HIGH, 5);
             if (state_ != State::NORMAL) {
                 consecutive_recovery_++;
@@ -228,19 +244,21 @@ RouteController::RouteDecision RouteController::evaluate(
             decision.main_fps = adjustFps(decision.main_fps, MAIN_FPS_LOW, -5);
             decision.sub_fps = adjustFps(decision.sub_fps, SUB_FPS_LOW, -5);
             MLOG_INFO("RouteCtrl", "USB_OFFLOAD -> FPS_REDUCED (wifi loss %.2f)", wifi_loss);
-        } else if (!usb.is_congested) {
+        } else if (usb_recovered_ewma) {
             consecutive_recovery_++;
             if (consecutive_recovery_ >= RECOVERY_THRESHOLD) {
                 state_ = State::NORMAL;
                 decision.video = VideoRoute::USB;
                 consecutive_recovery_ = 0;
-                MLOG_INFO("RouteCtrl", "USB_OFFLOAD -> NORMAL (usb recovered)");
+                MLOG_INFO("RouteCtrl", "USB_OFFLOAD -> NORMAL (usb recovered ewma)");
             }
+        } else {
+            consecutive_recovery_ = 0;
         }
         break;
 
     case State::FPS_REDUCED:
-        if (!usb.is_congested && wifi_loss < 0.05f && !wifi_failed) {
+        if (usb_recovered_ewma && wifi_loss < 0.05f && !wifi_failed) {
             consecutive_recovery_++;
             if (consecutive_recovery_ >= RECOVERY_THRESHOLD) {
                 // Gradually increase FPS
@@ -370,6 +388,17 @@ void RouteController::applyDecision(const RouteDecision& decision) {
                       decision.video == VideoRoute::WIFI ? "WiFi" : "USB", id.c_str());
         }
     }
+
+    // Phase E: quality (encode_max_size) change -> notify Android
+    if (decision.encode_max_size > 0 &&
+        decision.encode_max_size != current_.encode_max_size &&
+        quality_callback_) {
+        for (const auto& [id, info] : devices_) {
+            quality_callback_(id, decision.encode_max_size);
+            MLOG_INFO("RouteCtrl", "Phase E: encode_max_size=%d to %s",
+                      decision.encode_max_size, id.c_str());
+        }
+    }
 }
 
 int RouteController::adjustFps(int current, int target, int step) {
@@ -399,7 +428,7 @@ void RouteController::resetToNormal() {
     consecutive_recovery_ = 0;
 
     for (auto& [id, info] : devices_) {
-        info.current_fps = info.is_main ? MAIN_FPS_HIGH : SUB_FPS_HIGH;
+        info.current_fps = 0;  // Force re-send on next applyDecision
         info.current_video_route = VideoRoute::USB;
     }
 

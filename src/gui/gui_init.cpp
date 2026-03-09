@@ -696,54 +696,25 @@ static void onQualityCommand(const std::string& device_id, int encode_max_size) 
 }
 
 static void onFpsCommand(const std::string& device_id, int fps) {
-    // X1 always uses ADB broadcast (WiFi direct video, serial "93020523431940")
-    const bool deviceIsX1 = (device_id.find("93020523431940") != std::string::npos);
     const bool useTcpOnly = g_route_controller && g_route_controller->isTcpOnlyMode();
     bool sent_via_adb = false;
-    if ((useTcpOnly || deviceIsX1) && g_adb_manager) {
+    if (useTcpOnly && g_adb_manager) {
         auto devices = g_adb_manager->getUniqueDevices();
         std::string adb_id;
-        bool isX1 = deviceIsX1;
-        if (useTcpOnly) {
-            // tcp_only_mode: match by hardware_id
-            for (const auto& dev : devices) {
-                if (dev.hardware_id == device_id) {
-                    adb_id = dev.preferred_adb_id;
-                    isX1 = isX1 || (dev.display_name.find("Npad X1") != std::string::npos) ||
-                                   (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos);
-                    break;
-                }
+        for (const auto& dev : devices) {
+            if (dev.hardware_id == device_id) {
+                adb_id = dev.preferred_adb_id;
+                break;
             }
-        } else {
-            // X1 WiFi direct: find by serial in wifi_connections or preferred_adb_id
-            for (const auto& dev : devices) {
-                if (dev.display_name.find("Npad X1") != std::string::npos ||
-                    dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos ||
-                    dev.preferred_adb_id.find("93020523431940") != std::string::npos) {
-                    adb_id = dev.preferred_adb_id;
-                    break;
-                }
-            }
-            if (adb_id.empty()) adb_id = "192.168.0.3:5555";  // fallback
         }
         if (!adb_id.empty()) {
-            int send_fps = fps;
-            if (isX1 && send_fps < 90) send_fps = 90;
-            std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps " + std::to_string(send_fps) + " --ei fps " + std::to_string(send_fps);
-            std::string cmd2 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 1800" : "";
-            std::string cmd3 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture" : "";
-            std::thread([adb_id, cmd, cmd2, cmd3, device_id, send_fps]() {
-                if (g_adb_manager) { g_adb_manager->adbCommand(adb_id, cmd); if(!cmd2.empty()) g_adb_manager->adbCommand(adb_id, cmd2); if(!cmd3.empty()) g_adb_manager->adbCommand(adb_id, cmd3); }
-                MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)", send_fps, device_id.c_str(), adb_id.c_str());
+            std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps " + std::to_string(fps) + " --ei fps " + std::to_string(fps);
+            std::thread([adb_id, cmd, device_id, fps]() {
+                if (g_adb_manager) { g_adb_manager->adbCommand(adb_id, cmd); }
+                MLOG_INFO("RouteCtrl", "Sent FPS=%d to %s via ADB broadcast (%s)", fps, device_id.c_str(), adb_id.c_str());
             }).detach();
             sent_via_adb = true;
         }
-    }
-    const bool is_x1_auto = (device_id.find("93020523431940") != std::string::npos) ||
-                            (device_id.find("f1925da3_1235545") != std::string::npos);
-    if (is_x1_auto) {
-        MLOG_INFO("RouteCtrl", "Skip auto FPS for X1: %s fps=%d", device_id.c_str(), fps);
-        return;
     }
     if (!sent_via_adb && g_hybrid_cmd) {
         g_hybrid_cmd->send_video_fps(device_id, fps);
@@ -1023,12 +994,7 @@ static void onDeviceSelected(const std::string& device_id) {
             std::string hw_id = uid;
             auto it = usb_to_hw.find(uid);
             if (it != usb_to_hw.end()) hw_id = it->second;
-            const bool is_x1_sel = (uid.find("93020523431940") != std::string::npos) || (hw_id.find("f1925da3_1235545") != std::string::npos);
             int target_fps = (hw_id == device_id) ? 60 : 30;
-            if (is_x1_sel) {
-                MLOG_INFO("gui", "Skip selection FPS update for X1 (USB): %s -> %d", uid.c_str(), target_fps);
-                continue;
-            }
             g_hybrid_cmd->send_video_fps(uid, target_fps);
             MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
                       uid.c_str(), target_fps,
@@ -1040,12 +1006,7 @@ static void onDeviceSelected(const std::string& device_id) {
             auto adb_devices = g_adb_manager->getUniqueDevices();
             std::thread([adb_devices, device_id]() {
                 for (const auto& dev : adb_devices) {
-                    const bool isX1dev = (dev.hardware_id.find("f1925da3") != std::string::npos);
-                    int target_fps = (dev.hardware_id == device_id) ? (isX1dev ? 90 : 60) : 30;
-                    if (isX1dev) {
-                        MLOG_INFO("gui", "Skip selection FPS update for X1 (ADB fallback): %s -> %d", dev.hardware_id.c_str(), target_fps);
-                        continue;
-                    }
+                    int target_fps = (dev.hardware_id == device_id) ? 60 : 30;
                     std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS"
                         " -p com.mirage.capture --ei target_fps " + std::to_string(target_fps)
                         + " --ei fps " + std::to_string(target_fps);
