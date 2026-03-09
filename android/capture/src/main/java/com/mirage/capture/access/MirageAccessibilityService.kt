@@ -5,8 +5,11 @@ import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.Intent
 import android.graphics.Path
+import android.graphics.Point
 import android.util.Log
 import android.graphics.Rect
+import android.os.Build
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.mirage.capture.core.Config
@@ -165,6 +168,35 @@ class MirageAccessibilityService : AccessibilityService() {
     // =========================================================================
     // Gesture implementations
     // =========================================================================
+
+    private fun currentDisplaySize(): Pair<Int, Int> {
+        return try {
+            val wm = getSystemService(WindowManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val b = wm.currentWindowMetrics.bounds
+                Pair(b.width(), b.height())
+            } else {
+                val p = Point()
+                @Suppress("DEPRECATION")
+                wm.defaultDisplay.getRealSize(p)
+                Pair(p.x, p.y)
+            }
+        } catch (_: Exception) {
+            Pair(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        }
+    }
+
+    fun mapFromSource(x: Float, y: Float, srcW: Int, srcH: Int): Pair<Float, Float> {
+        if (srcW <= 0 || srcH <= 0) return Pair(x, y)
+        val (dw, dh) = currentDisplaySize()
+        if (dw <= 0 || dh <= 0) return Pair(x, y)
+        val sx = dw.toFloat() / srcW.toFloat()
+        val sy = dh.toFloat() / srcH.toFloat()
+        val tx = (x * sx).coerceIn(0f, (dw - 1).toFloat())
+        val ty = (y * sy).coerceIn(0f, (dh - 1).toFloat())
+        Log.i(TAG, "mapFromSource: src=(${x.toInt()},${y.toInt()}) ${srcW}x${srcH} -> dst=(${tx.toInt()},${ty.toInt()}) ${dw}x${dh}")
+        return Pair(tx, ty)
+    }
 
     fun tap(x: Float, y: Float, seq: Int = 0) {
         Log.i(TAG, "tap() called: ($x, $y) seq=$seq")
@@ -430,3 +462,4 @@ class MirageAccessibilityService : AccessibilityService() {
     }
 
 }
+

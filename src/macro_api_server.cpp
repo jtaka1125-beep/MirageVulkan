@@ -673,7 +673,18 @@ std::string MacroApiServer::handle_tap(const std::string& device_id, int x, int 
         std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
         std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
         std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
-        uint32_t seq = hybrid->send_tap(route_key, x, y);
+        int sw = 0, sh = 0;
+        if (auto* mgr = ctx().adb_manager.get()) {
+            auto devices = mgr->getUniqueDevices();
+            for (const auto& ud : devices) {
+                if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
+                    if (ud.screen_width > 0) sw = ud.screen_width;
+                    if (ud.screen_height > 0) sh = ud.screen_height;
+                    break;
+                }
+            }
+        }
+        uint32_t seq = hybrid->send_tap(route_key, x, y, sw, sh);
         if (seq > 0) {
             return "{\"status\":\"ok\",\"via\":\"" + hybrid->get_touch_mode_str() + "\",\"seq\":" + std::to_string(seq) + "}";
         }
@@ -694,7 +705,18 @@ std::string MacroApiServer::handle_swipe(const std::string& device_id,
         std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
         std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
         std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
-        uint32_t seq = hybrid->send_swipe(route_key, x1, y1, x2, y2, duration_ms);
+        int sw = 0, sh = 0;
+        if (auto* mgr = ctx().adb_manager.get()) {
+            auto devices = mgr->getUniqueDevices();
+            for (const auto& ud : devices) {
+                if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
+                    if (ud.screen_width > 0) sw = ud.screen_width;
+                    if (ud.screen_height > 0) sh = ud.screen_height;
+                    break;
+                }
+            }
+        }
+        uint32_t seq = hybrid->send_swipe(route_key, x1, y1, x2, y2, duration_ms, sw, sh);
         if (seq > 0) {
             return "{\"status\":\"ok\",\"via\":\"" + hybrid->get_touch_mode_str() + "\",\"seq\":" + std::to_string(seq) + "}";
         }
@@ -717,7 +739,18 @@ std::string MacroApiServer::handle_long_press(const std::string& device_id,
         std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
         std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
         std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
-        bool ok = hybrid->send_long_press(route_key, x, y, 0, 0, duration_ms);
+        int sw = 0, sh = 0;
+        if (auto* mgr = ctx().adb_manager.get()) {
+            auto devices = mgr->getUniqueDevices();
+            for (const auto& ud : devices) {
+                if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
+                    if (ud.screen_width > 0) sw = ud.screen_width;
+                    if (ud.screen_height > 0) sh = ud.screen_height;
+                    break;
+                }
+            }
+        }
+        bool ok = hybrid->send_long_press(route_key, x, y, sw, sh, duration_ms);
         if (ok) return "{\"status\":\"ok\",\"via\":\"" + hybrid->get_touch_mode_str() + "\"}";
     }
 

@@ -48,29 +48,46 @@ std::pair<int, int> GuiApplication::screenToDeviceCoords(
     rel_x = std::clamp(rel_x, 0.0f, 1.0f);
     rel_y = std::clamp(rel_y, 0.0f, 1.0f);
 
-    // Map to decoded video pixel coordinates
-    const int vw = (device.video_width  > 0) ? device.video_width  : device.texture_width;
-    const int vh = (device.video_height > 0) ? device.video_height : device.texture_height;
-    float vx = rel_x * static_cast<float>(vw);
-    float vy = rel_y * static_cast<float>(vh);
-    vx = std::clamp(vx, 0.0f, static_cast<float>(std::max(0, vw - 1)));
-    vy = std::clamp(vy, 0.0f, static_cast<float>(std::max(0, vh - 1)));
-
-    // Apply DeviceTransform: video -> native (automation coordinate system)
-    float nx = vx, ny = vy;
-    device.transform.video_to_native(vx, vy, nx, ny);
-    int dev_x = static_cast<int>(std::lround(nx));
-    int dev_y = static_cast<int>(std::lround(ny));
-
-    // Clamp to native bounds (expected/native resolution)
+    // Map view position (rel_x, rel_y) to native device coordinates.
+    // IMPORTANT: the rendered image may have a display_rotation_offset applied
+    // (e.g. X1 uses 180 degrees). We must invert that display rotation here,
+    // otherwise visible click positions and injected tap positions will differ.
     const int nw = (device.expected_width  > 0) ? device.expected_width  : device.texture_width;
     const int nh = (device.expected_height > 0) ? device.expected_height : device.texture_height;
-    dev_x = std::max(0, std::min(dev_x, std::max(0, nw - 1)));
-    dev_y = std::max(0, std::min(dev_y, std::max(0, nh - 1)));
+    if (nw <= 0 || nh <= 0) return {-1, -1};
 
-    // Optional debug log (kept quiet unless needed)
-    // MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) video=(%.1f,%.1f) native=(%d,%d) xf(rot=%d s=%.6f off=(%.2f,%.2f))",
-    //          device.id.c_str(), rel_x, rel_y, vx, vy, dev_x, dev_y, device.transform.rotation, device.transform.scale_x, device.transform.offset_x, device.transform.offset_y);
+    float map_x = rel_x;
+    float map_y = rel_y;
+    int drot = device.transform.display_rotation_offset % 360;
+    if (drot < 0) drot += 360;
+    switch (drot) {
+        case 90: {
+            float ox = map_x, oy = map_y;
+            map_x = oy;
+            map_y = 1.0f - ox;
+            break;
+        }
+        case 180:
+            map_x = 1.0f - map_x;
+            map_y = 1.0f - map_y;
+            break;
+        case 270: {
+            float ox = map_x, oy = map_y;
+            map_x = 1.0f - oy;
+            map_y = ox;
+            break;
+        }
+        default:
+            break;
+    }
+
+    int dev_x = static_cast<int>(std::lround(map_x * static_cast<float>(nw)));
+    int dev_y = static_cast<int>(std::lround(map_y * static_cast<float>(nh)));
+    dev_x = std::max(0, std::min(dev_x, nw - 1));
+    dev_y = std::max(0, std::min(dev_y, nh - 1));
+
+    MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) map=(%.3f,%.3f) drot=%d native=(%d,%d)",
+             device.id.c_str(), rel_x, rel_y, map_x, map_y, drot, dev_x, dev_y);
 
     return {dev_x, dev_y};
 }
@@ -130,6 +147,11 @@ void GuiApplication::onMouseUp(int button, int x, int y) {
             processSwipe(drag_start_x_, drag_start_y_, x, y);
         } else {
             // This was a tap/click
+            // Re-eval panel from mouse position (hovered_panel_ may be None)
+            MLOG_INFO("input","click x=%d y=%d lw=%.0f cw=%.0f panel=%d",x,y,layout.left_w,layout.center_w,(int)hovered_panel_);
+            if (x < (int)layout.left_w) hovered_panel_ = HoveredPanel::Left;
+            else if (x < (int)(layout.left_w + layout.center_w)) hovered_panel_ = HoveredPanel::Center;
+            else hovered_panel_ = HoveredPanel::Right;
 
             if (hovered_panel_ == HoveredPanel::Center) {
                 // Both x and y should be relative to center panel
