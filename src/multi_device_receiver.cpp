@@ -1,6 +1,11 @@
 #include "multi_device_receiver.hpp"
 #include <cstdio>
 #include "mirage_log.hpp"
+#include <chrono>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <thread>
 #include "config_loader.hpp"  // ExpectedSizeRegistry
 
 namespace gui {
@@ -97,7 +102,7 @@ bool MultiDeviceReceiver::restart_as_tcp(const std::string& hardware_id, uint16_
     }
 }
 
-bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port) {
+bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port, const std::string& host) {
     // IDRコールバック：デバウンス付き（スレッド横断で共有するatomicタイマー）
     auto make_idr_callback = [this](const std::string& hw_id) -> std::function<void()> {
         auto last_idr_ms = std::make_shared<std::atomic<int64_t>>(0);
@@ -146,7 +151,7 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, ui
             entry.receiver->setIdrCallback(make_idr_callback(hardware_id));
         }
 
-        if (entry.receiver->start_tcp_vid0(tcp_port)) {
+        if (entry.receiver->start_tcp_vid0(tcp_port, host)) {
             entry.port = tcp_port;
             port_to_device_[tcp_port] = hardware_id;
             MLOG_INFO("multi", "Started %s in VID0 TCP mode on port %d (new entry)",
@@ -181,7 +186,7 @@ bool MultiDeviceReceiver::restart_as_tcp_vid0(const std::string& hardware_id, ui
         entry.receiver->setIdrCallback(make_idr_callback(hardware_id));
     }
 
-    if (entry.receiver->start_tcp_vid0(tcp_port)) {
+    if (entry.receiver->start_tcp_vid0(tcp_port, host)) {
         entry.port = tcp_port;
         port_to_device_.erase(old_port);
         port_to_device_[tcp_port] = hardware_id;
@@ -207,8 +212,12 @@ void MultiDeviceReceiver::setVulkanContext(VkPhysicalDevice physical_device, VkD
     MLOG_INFO("multi", "Vulkanコンテキスト設定完了");
 }
 
-void MultiDeviceReceiver::setTiledCallback(TiledCallback cb) {
-    tiled_callback_ = std::move(cb);
+// TILED_REMOVED: void MultiDeviceReceiver::setTiledCallback(TiledCallback cb) {
+// TILED_REMOVED:     tiled_callback_ = std::move(cb);
+// TILED_REMOVED: }
+
+void MultiDeviceReceiver::setDirectCallback(FrameCallback cb) {
+    direct_callback_ = std::move(cb);
 }
 
 void MultiDeviceReceiver::setFrameCallback(FrameCallback cb) {
@@ -229,10 +238,45 @@ void MultiDeviceReceiver::setFrameCallback(FrameCallback cb) {
 }
 
 void MultiDeviceReceiver::framePollThreadFunc() {
-    MLOG_INFO("multi", "フレームポーリングスレッド開始");
+    MLOG_INFO("multi", "フレームポーリングスレッド開始 (async dispatch)");
+
+    // ──────────────────────────────────────────────────────────────────
+    // Async dispatch: decouple frame callback (EventBus publish) from
+    // the poll thread so heavy subscribers (AI engine etc.) don't block
+    // frame delivery to GUI.
+    // The dispatch thread consumes the queue at its own pace; the poll
+    // thread only does a non-blocking enqueue and immediately continues.
+    // ──────────────────────────────────────────────────────────────────
+    struct DispatchItem {
+        std::string hw_id;
+        std::shared_ptr<mirage::SharedFrame> sf;
+    };
+    std::queue<DispatchItem> dispatch_q;
+    std::mutex dispatch_mu;
+    std::condition_variable dispatch_cv;
+    std::atomic<bool> dispatch_running{true};
+
+    // Dispatch worker thread
+    std::thread dispatch_thread([&]() {
+        while (dispatch_running.load() || !dispatch_q.empty()) {
+            DispatchItem item;
+            {
+                std::unique_lock<std::mutex> lk(dispatch_mu);
+                dispatch_cv.wait_for(lk, std::chrono::milliseconds(5),
+                    [&]{ return !dispatch_q.empty() || !dispatch_running.load(); });
+                if (dispatch_q.empty()) continue;
+                item = std::move(dispatch_q.front());
+                dispatch_q.pop();
+            }
+            // Fire callback (may block due to EventBus subscribers)
+            if (frame_callback_) {
+                frame_callback_(item.hw_id, item.sf);
+            }
+        }
+    });
 
     while (frame_poll_running_.load() && running_) {
-        // 各デバイスのフレームをポーリング
+        // Poll each device receiver
         std::vector<std::string> device_ids;
         {
             std::lock_guard<std::mutex> lock(receivers_mutex_);
@@ -244,13 +288,55 @@ void MultiDeviceReceiver::framePollThreadFunc() {
 
         for (const auto& hw_id : device_ids) {
             if (!frame_poll_running_.load()) break;
+            // Get latest frame (non-blocking: just grabs shared_ptr + clears flag)
             std::shared_ptr<mirage::SharedFrame> sf;
-            get_latest_shared_frame(hw_id, sf);  // callback fired inside if sf valid
+            bool got_frame = false;
+            {
+                std::lock_guard<std::mutex> lock(receivers_mutex_);
+                auto it = receivers_.find(hw_id);
+                if (it != receivers_.end() && it->second.receiver) {
+                    got_frame = it->second.receiver->get_latest_shared_frame(sf);
+                }
+            }
+            if (got_frame && sf) {
+                // DIRECT callback: GUI queue (lightweight, no EventBus, fires immediately)
+                if (direct_callback_) {
+                    direct_callback_(hw_id, sf);
+                }
+                // Enqueue for async dispatch (non-blocking, EventBus/AI)
+                {
+                    std::lock_guard<std::mutex> lk(dispatch_mu);
+                    // Low-latency policy: keep async dispatch queue latest-only.
+                    // GUI direct_callback_ already received the freshest frame immediately.
+                    if (dispatch_q.size() >= 1) {
+                        dispatch_q.pop();
+                        static std::atomic<uint64_t> s_drops{0};
+                        uint64_t d = s_drops.fetch_add(1, std::memory_order_relaxed) + 1;
+                        if (d <= 5 || d % 100 == 0)
+                            MLOG_WARN("fpoll", "dispatch queue overflow drop#%llu", (unsigned long long)d);
+                    }
+                    dispatch_q.push({hw_id, sf});
+                }
+                dispatch_cv.notify_one();
+
+                // Diag
+                static std::atomic<uint64_t> s_enq{0};
+                uint64_t n = s_enq.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (n <= 5 || n % 300 == 0)
+                    MLOG_INFO("fpoll", "enqueue #%llu hw=%.8s qsz=%zu(latest-only)",
+                        (unsigned long long)n, hw_id.c_str(), dispatch_q.size());
+            }
         }
 
-        // ~60FPS相当のポーリング間隔
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        // ~120FPS poll (now safe since we don't block)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+
+    // Drain dispatch thread
+    dispatch_running.store(false);
+    dispatch_cv.notify_all();
+    if (dispatch_thread.joinable()) dispatch_thread.join();
+
     MLOG_INFO("multi", "フレームポーリングスレッド終了");
 }
 
@@ -450,171 +536,14 @@ std::string MultiDeviceReceiver::getFirstDeviceId() const {
     return "";
 }
 
+// TILED_REMOVED: restart_as_tcp_vid0_tiled replaced with stub (TileCompositor removed)
 bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_id,
                                                      uint16_t port0, uint16_t port1,
-                                                     const std::string& host) {
-    MLOG_INFO("multi", "restart_as_tcp_vid0_tiled: %s port0=%d port1=%d host=%s",
-              hardware_id.c_str(), port0, port1, host.c_str());
-
-    std::lock_guard<std::mutex> lock(receivers_mutex_);
-    auto it = receivers_.find(hardware_id);
-    if (it == receivers_.end()) {
-        // 新規エントリ作成
-        ReceiverEntry entry;
-        entry.hardware_id = hardware_id;
-        entry.display_name = hardware_id;
-        if (adb_manager_) {
-            AdbDeviceManager::UniqueDevice dev_info;
-            if (adb_manager_->getUniqueDevice(hardware_id, dev_info))
-                entry.display_name = dev_info.display_name;
-        }
-        entry.last_stats_time = std::chrono::steady_clock::now();
-        // TileCompositor を起動（receiver は compositor 内部で管理）
-        auto tc = std::make_unique<TileCompositor>();
-        if (vk_device_ != VK_NULL_HANDLE) {
-            tc->setVulkanContext(vk_physical_device_, vk_device_,
-                vk_graphics_queue_family_, vk_graphics_queue_,
-                vk_compute_queue_family_, vk_compute_queue_);
-        }
-        // 合成済みフレームをフレームコールバックへ転送
-        auto cb = frame_callback_;
-        auto hw_id_copy = hardware_id;
-        // Zero-copy tiled callback (preferred path)
-        if (tiled_callback_) {
-            auto tiled_cb_copy = tiled_callback_;
-            auto hw_tiled = hardware_id;
-            tc->setTiledCallback([this, hw_tiled, tiled_cb_copy](
-                const std::shared_ptr<mirage::SharedFrame>& top,
-                const std::shared_ptr<mirage::SharedFrame>& bot,
-                int slice_h) {
-                // FPS accounting
-                {
-                    std::lock_guard<std::mutex> lock(receivers_mutex_);
-                    auto it = receivers_.find(hw_tiled);
-                    if (it != receivers_.end()) {
-                        auto& e = it->second;
-                        e.frames++;
-                        e.last_frame_time = std::chrono::steady_clock::now();
-                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            e.last_frame_time - e.last_stats_time).count();
-                        if (elapsed >= 1000) {
-                            float elapsed_sec = elapsed / 1000.0f;
-                            e.fps = (e.frames - e.prev_frames) / elapsed_sec;
-                            e.prev_frames = e.frames;
-                            e.last_stats_time = e.last_frame_time;
-                        }
-                    }
-                }
-                tiled_cb_copy(hw_tiled, top, bot, slice_h);
-            });
-        }
-
-        tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
-            // Update frame count and FPS for tiled mode
-            {
-                std::lock_guard<std::mutex> lock(receivers_mutex_);
-                auto it = receivers_.find(hw_id_copy);
-                if (it != receivers_.end()) {
-                    auto& e = it->second;
-                    e.frames++;
-                    e.last_frame_time = std::chrono::steady_clock::now();
-                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        e.last_frame_time - e.last_stats_time).count();
-                    if (elapsed >= 1000) {
-                        float elapsed_sec = elapsed / 1000.0f;
-                        e.fps = (e.frames - e.prev_frames) / elapsed_sec;
-                        e.prev_frames = e.frames;
-                        e.last_stats_time = e.last_frame_time;
-                    }
-                }
-            }
-            if (frame_callback_) frame_callback_(hw_id_copy, sf);
-        });
-        // デバイスのネイティブ解像度を設定 → compose()がnative_hで出力
-        {
-            int native_w = 0, native_h = 0;
-            if (mirage::config::ExpectedSizeRegistry::instance()
-                    .getExpectedSize(hardware_id, native_w, native_h) && native_h > 0) {
-                tc->set_native_size(native_w, native_h, 2);  // tilesY=2 (1x2 split)
-                MLOG_INFO("multi", "TileCompositor native size: %dx%d", native_w, native_h);
-            }
-        }
-        if (!tc->start(port0, port1, host)) {
-            MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
-            return false;
-        }
-        entry.tile_compositor = std::move(tc);
-        entry.port = port0;
-        port_to_device_[port0] = hardware_id;
-        receivers_[hardware_id] = std::move(entry);
-        running_ = true;
-        MLOG_INFO("multi", "TiledMode started for %s host=%s (new entry)", hardware_id.c_str(), host.c_str());
-        return true;
-    }
-
-    auto& entry = it->second;
-    // 既存 receiver/compositor を停止
-    if (entry.receiver)        { entry.receiver->stop(); entry.receiver.reset(); }
-    if (entry.tile_compositor) { entry.tile_compositor->stop(); entry.tile_compositor.reset(); }
-    port_to_device_.erase(entry.port);
-
-    auto tc = std::make_unique<TileCompositor>();
-    if (vk_device_ != VK_NULL_HANDLE) {
-        tc->setVulkanContext(vk_physical_device_, vk_device_,
-            vk_graphics_queue_family_, vk_graphics_queue_,
-            vk_compute_queue_family_, vk_compute_queue_);
-    }
-    auto hw_id_copy = hardware_id;
-    tc->setFrameCallback([this, hw_id_copy](std::shared_ptr<mirage::SharedFrame> sf) {
-        // Update frame count and FPS for tiled mode
-        {
-            std::lock_guard<std::mutex> lock(receivers_mutex_);
-            auto it = receivers_.find(hw_id_copy);
-            if (it != receivers_.end()) {
-                auto& e = it->second;
-                e.frames++;
-                e.last_frame_time = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    e.last_frame_time - e.last_stats_time).count();
-                if (elapsed >= 1000) {
-                    float elapsed_sec = elapsed / 1000.0f;
-                    e.fps = (e.frames - e.prev_frames) / elapsed_sec;
-                    e.prev_frames = e.frames;
-                    e.last_stats_time = e.last_frame_time;
-                }
-            }
-        }
-        if (frame_callback_) frame_callback_(hw_id_copy, sf);
-    });
-    // 既存エントリ再起動パス: tiled_callback_ も登録する
-    if (tiled_callback_) {
-        auto tiled_cb_copy2 = tiled_callback_;
-        auto hw_tiled2 = hardware_id;
-        tc->setTiledCallback([this, hw_tiled2, tiled_cb_copy2](
-            const std::shared_ptr<mirage::SharedFrame>& top,
-            const std::shared_ptr<mirage::SharedFrame>& bot,
-            int slice_h) {
-            tiled_cb_copy2(hw_tiled2, top, bot, slice_h);
-        });
-    }
-    // デバイスのネイティブ解像度を設定 → compose()がnative_hで出力（既存エントリ再起動パス）
-    {
-        int native_w = 0, native_h = 0;
-        if (mirage::config::ExpectedSizeRegistry::instance()
-                .getExpectedSize(hardware_id, native_w, native_h) && native_h > 0) {
-            tc->set_native_size(native_w, native_h, 2);  // tilesY=2 (1x2 split)
-            MLOG_INFO("multi", "TileCompositor native size (restart): %dx%d", native_w, native_h);
-        }
-    }
-    if (!tc->start(port0, port1, host)) {
-        MLOG_ERROR("multi", "TileCompositor start failed for %s", hardware_id.c_str());
-        return false;
-    }
-    entry.tile_compositor = std::move(tc);
-    entry.port = port0;
-    port_to_device_[port0] = hardware_id;
-    MLOG_INFO("multi", "TiledMode restarted for %s (port0=%d,port1=%d,host=%s)", hardware_id.c_str(), port0, port1, host.c_str());
-    return true;
+                                                     const std::string& host)
+{
+    (void)hardware_id; (void)port0; (void)port1; (void)host;
+    MLOG_WARN("multi", "restart_as_tcp_vid0_tiled: tiled mode not available (removed)");
+    return false;
 }
 
 } // namespace gui

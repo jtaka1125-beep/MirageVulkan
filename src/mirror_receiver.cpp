@@ -31,7 +31,6 @@
 #include "vid0_parser.hpp"
 
 namespace gui {
-
 // ==============================================================================
 // BitReader — H.264 NALユニットのビットストリーム読み取りヘルパー
 // ==============================================================================
@@ -617,7 +616,7 @@ void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
     int nodelay = 1;
     setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
 
-    int bufsize = 4 * 1024 * 1024;
+    int bufsize = 128 * 1024;  // 128KB~128ms@8Mbps (was 4MB=~4s of stale frames)
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char*)&bufsize, sizeof(bufsize));
 
     sockaddr_in addr{};
@@ -645,6 +644,37 @@ void MirrorReceiver::tcp_vid0_receive_thread(uint16_t tcp_port) {
       continue;  // Outer loop: retry connection indefinitely
     }
 
+    // CODEC RESET: clear stream state on every new TCP connection
+    // (prevents HEVC false-positive from previous connection polluting new AVC stream)
+    {
+        stream_is_hevc_ = false;
+        cached_sps_.clear();
+        cached_pps_.clear();
+        cached_vps_.clear();
+        has_valid_sps_ = false;
+        need_idr_.store(true);
+        // Re-initialize decoder for H.264
+        if (unified_decoder_) { unified_decoder_->destroy(); unified_decoder_.reset(); }
+        if (decoder_) { decoder_.reset(); }
+        init_decoder();
+        MLOG_INFO("mirror", "VID0 codec state reset for new connection (port %d)", tcp_port);
+    }
+    // CODEC RESET: clear HEVC/AVC detection state on every new TCP connection
+    {
+        stream_is_hevc_ = false;
+        cached_sps_.clear(); cached_pps_.clear(); cached_vps_.clear();
+        has_valid_sps_ = false;
+        need_idr_.store(true);
+        if (unified_decoder_) { unified_decoder_->destroy(); unified_decoder_.reset(); }
+        if (decoder_) { decoder_.reset(); }
+        init_decoder();
+        MLOG_INFO("mirror", "VID0 codec state reset (H264, port %d)", tcp_port);
+    }
+    // LATENCY FIX: drain any stale OS TCP buffer data after connect
+    { DWORD nb=1; ioctlsocket(sock,FIONBIO,&nb); char db[32768]; int tot=0,dr;
+      while((dr=recv(sock,db,sizeof(db),0))>0) tot+=dr;
+      nb=0; ioctlsocket(sock,FIONBIO,&nb);
+      if(tot>0) MLOG_INFO("mirror","VID0 stale drain: %d bytes (port %d)",tot,tcp_port); }
     MLOG_INFO("mirror", "VID0 TCP connected on port %d host %s (MirageCapture)", tcp_port, tcp_host_.c_str());
 
     DWORD tv = 100;  // 100ms recv timeout
@@ -872,6 +902,61 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
 
   uint8_t nal_type = payload[0] & 0x1F;
 
+  // ── HEVC RTP dispatch (RFC 7798) ─────────────────────────────────
+  // PayloadHdr byte0: nal_type = (byte0 >> 1) & 0x3f
+  // type 49 = FU,  0-47 = single NAL unit
+  if (payload_len >= 2) {
+    int h_pt = (payload[0] >> 1) & 0x3f;
+    // Early detect: VPS/SPS/PPS(32/33/34) が来たら即 HEVC モードへ
+    if (!stream_is_hevc_ && cached_sps_.empty()
+        && (h_pt == 32 || h_pt == 33 || h_pt == 34)
+        && (payload[0] & 0x1f) > 23) {  // AVC guard
+      stream_is_hevc_ = true;
+      has_valid_sps_  = true;
+      MLOG_INFO("mirror", "[RTP] Early HEVC detect nal_type=%d", h_pt);
+      if (unified_decoder_) { unified_decoder_->destroy(); unified_decoder_.reset(); }
+      init_decoder();
+    }
+    if (stream_is_hevc_) {
+      if (h_pt == 49 && payload_len >= 3) {
+        // HEVC FU reassembly
+        uint8_t fu_hdr  = payload[2];
+        bool fu_start   = (fu_hdr & 0x80) != 0;
+        bool fu_end     = (fu_hdr & 0x40) != 0;
+        uint8_t fu_type = fu_hdr & 0x3f;
+        uint8_t hdr0 = (fu_type << 1) & 0xFE;  // forbidden=0, nal_type=fu_type
+        uint8_t hdr1 = payload[1];               // layer_id / tid
+        if (fu_start) {
+          fu_buf_.clear();
+          fu_buf_.push_back(hdr0); fu_buf_.push_back(hdr1);
+          fu_buf_.insert(fu_buf_.end(), payload + 3, payload + payload_len);
+          fu_start_seq_ = seq; fu_last_seq_ = seq;
+          fu_have_last_seq_ = true; have_fu_ = true;
+        } else if (have_fu_) {
+          uint16_t exp = static_cast<uint16_t>(fu_last_seq_ + 1);
+          if (seq != exp) {
+            MLOG_INFO("mirror", "[HEVC FU] gap exp=%u got=%u", (unsigned)exp, (unsigned)seq);
+            have_fu_ = false; fu_buf_.clear(); fu_have_last_seq_ = false;
+          } else {
+            size_t ns = fu_buf_.size() + (payload_len - 3);
+            if (ns > MAX_FU_BUFFER_SIZE) { have_fu_ = false; fu_buf_.clear(); }
+            else { fu_buf_.insert(fu_buf_.end(), payload + 3, payload + payload_len); fu_last_seq_ = seq; }
+          }
+        }
+        if (fu_end && have_fu_ && fu_buf_.size() >= 2) {
+          enqueue_nal(fu_buf_.data(), fu_buf_.size());
+          nals_received_.fetch_add(1);
+          have_fu_ = false; fu_buf_.clear(); fu_have_last_seq_ = false;
+        }
+      } else if (h_pt <= 47) {
+        // HEVC single NAL unit
+        enqueue_nal(payload, payload_len);
+        nals_received_.fetch_add(1);
+      }
+      return;  // HEVC handled; skip H.264 path below
+    }
+  }
+
   if (nal_type >= 1 && nal_type <= 23) {
     enqueue_nal(payload, payload_len);
     nals_received_.fetch_add(1);
@@ -957,6 +1042,36 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
 
 void MirrorReceiver::enqueue_nal(const uint8_t* data, size_t len) {
   if (len < 1) return;
+
+  // HEVC early-detection: detect HEVC before queuing so VPS/SPS/PPS are not dropped
+  // decode_nal also detects HEVC but is called after dequeue - too late for first NALs
+  if (!stream_is_hevc_ && cached_sps_.empty() && len >= 2) {
+    int early_hevc_type = (data[0] >> 1) & 0x3f;
+    if (early_hevc_type == 32 || early_hevc_type == 33 || early_hevc_type == 34) {
+      stream_is_hevc_ = true;
+      MLOG_INFO("mirror", "[enqueue_nal] HEVC early-detect: nal_type=%d - switching to HEVC", early_hevc_type);
+      if (unified_decoder_) { unified_decoder_->destroy(); unified_decoder_.reset(); }
+      init_decoder();
+      has_valid_sps_ = true;
+    }
+  }
+
+  // HEVC: H.264 SPSゲートをバイパスしてキューに直接積む
+  if (stream_is_hevc_) {
+    std::lock_guard<std::mutex> lk(nal_queue_mtx_);
+    if (nal_queue_.size() >= MAX_NAL_QUEUE_SIZE) {
+      int ht = (len >= 2) ? ((data[0] >> 1) & 0x3f) : -1;
+      if (ht == 19 || ht == 20) {  // IDR: staleをフラッシュして受け入れ
+        size_t n = nal_queue_.size();
+        while (!nal_queue_.empty()) nal_queue_.pop();
+        MLOG_WARN("mirror", "[enqueue_nal HEVC] IDR flush: %zu stale NALs", n);
+      } else { return; }
+    }
+    NalUnit nal; nal.data.assign(data, data + len);
+    nal_queue_.push(std::move(nal));
+    nal_queue_cv_.notify_one();
+    return;
+  }
 
   uint8_t nal_type = data[0] & 0x1F;
 
@@ -1053,25 +1168,33 @@ void MirrorReceiver::decode_thread_func() {
       });
       if (!running_.load() && nal_queue_.empty()) break;
 
-      // Drop strategy: if queue depth > 8 frames, skip old P-frames until next IDR
-      // This prevents latency snowball when decoder falls behind
-      constexpr size_t DROP_THRESHOLD = 8;
+      // HEVC は GOP が大きいため閾値を128に拡大。H.264 は従来の8を維持。
+      const size_t DROP_THRESHOLD = stream_is_hevc_ ? 128 : 3;  // H264@60fps: 3 NAL≈50ms (was 8≈133ms)
       if (nal_queue_.size() > DROP_THRESHOLD) {
         size_t dropped = 0;
+        bool found_key = false;
         while (nal_queue_.size() > 2) {
           const auto& front = nal_queue_.front();
-          // IDR/SPS/PPS は保持、それ以外(Pフレーム等)は捨てる
-          bool is_key = front.data.size() > 0 &&
-                        ((front.data[0] & 0x1f) == 5  ||  // IDR slice
-                         (front.data[0] & 0x1f) == 7  ||  // SPS
-                         (front.data[0] & 0x1f) == 8);    // PPS
-          if (is_key) break;
+          bool is_key = false;
+          if (front.data.size() > 0) {
+            if (stream_is_hevc_ && front.data.size() >= 2) {
+              int ht = (front.data[0] >> 1) & 0x3f;
+              is_key = (ht==19||ht==20||ht==32||ht==33||ht==34);
+            } else {
+              int at = front.data[0] & 0x1f;
+              is_key = (at==5||at==7||at==8);
+            }
+          }
+          if (is_key) { found_key = true; break; }
           nal_queue_.pop();
           dropped++;
         }
         if (dropped > 0) {
-          MLOG_DEBUG("mirror", "Queue drop: %zu P-frames dropped (queue was overflowing)", dropped);
-          need_idr_.store(false);  // IDRまで待たずに再開 (IDRが来るまで破綻フレームを許容)
+          MLOG_INFO("mirror", "Queue drop: %zu frames (thr=%zu stream=%s low-latency) key=%d",
+            dropped, DROP_THRESHOLD, stream_is_hevc_ ? "HEVC" : "H264", found_key ? 1 : 0);
+          // found_key=true: IDR is at queue front, resume immediately
+          // found_key=false: no IDR found, wait for next IDR to avoid corruption
+          need_idr_.store(!found_key);
         }
       }
 
@@ -1106,14 +1229,37 @@ void MirrorReceiver::decode_nal(const uint8_t* data, size_t len) {
     if (!stream_is_hevc_ && !avc_sps_seen && (hevc_nal_type == 32 || hevc_nal_type == 33 || hevc_nal_type == 34)) {
       stream_is_hevc_ = true;
       MLOG_INFO("mirror", "HEVC VPS/SPS detected (nal_type=%d) - switching decoder to HEVC", hevc_nal_type);
-      unified_decoder_.reset();
+      if (unified_decoder_) { unified_decoder_->destroy(); unified_decoder_.reset(); }
       init_decoder();
       has_valid_sps_ = true; // bypass H.264 SPS gate
     }
-    // Skip HEVC VPS: MediaTek c2.mtk.hevc.encoder emits non-standard VPS
-    // (vps_base_layer flags) that FFmpeg rejects. VPS is informational-only;
-    // HEVC decoders can operate with SPS+PPS alone.
-    if (stream_is_hevc_ && hevc_nal_type == 32) return;
+    // HEVC fast decode path
+    if (stream_is_hevc_) {
+      // VPS/SPS/PPS をキャッシュ（IDR prepend 用）
+      if (hevc_nal_type == 32)      { cached_vps_.assign(data, data + len); return; }
+      else if (hevc_nal_type == 33) { cached_sps_.assign(data, data + len); return; }
+      else if (hevc_nal_type == 34) { cached_pps_.assign(data, data + len); return; }
+      // IDR なら VPS+SPS+PPS を先頭に付けて Annex-B に変換
+      if (annexb_buf_.capacity() == 0) annexb_buf_.reserve(128 * 1024);
+      annexb_buf_.clear();
+      if ((hevc_nal_type == 19 || hevc_nal_type == 20)
+          && !cached_sps_.empty() && !cached_pps_.empty()) {
+        auto append = [&](const std::vector<uint8_t>& v) {
+          const uint8_t sc[4] = {0,0,0,1};
+          annexb_buf_.insert(annexb_buf_.end(), sc, sc+4);
+          annexb_buf_.insert(annexb_buf_.end(), v.begin(), v.end());
+        };
+        if (!cached_vps_.empty()) append(cached_vps_);
+        append(cached_sps_);
+        append(cached_pps_);
+      }
+      { const uint8_t sc[4]={0,0,0,1};
+        annexb_buf_.insert(annexb_buf_.end(), sc, sc+4);
+        annexb_buf_.insert(annexb_buf_.end(), data, data+len); }
+      if (use_unified_decoder_ && unified_decoder_)
+        unified_decoder_->decode(annexb_buf_.data(), annexb_buf_.size(), 0);
+      return;
+    }
   }
 
 
