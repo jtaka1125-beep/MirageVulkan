@@ -48,46 +48,20 @@ std::pair<int, int> GuiApplication::screenToDeviceCoords(
     rel_x = std::clamp(rel_x, 0.0f, 1.0f);
     rel_y = std::clamp(rel_y, 0.0f, 1.0f);
 
-    // Map view position (rel_x, rel_y) to native device coordinates.
-    // IMPORTANT: the rendered image may have a display_rotation_offset applied
-    // (e.g. X1 uses 180 degrees). We must invert that display rotation here,
-    // otherwise visible click positions and injected tap positions will differ.
+    // Map view position (rel_x, rel_y) directly to native device coordinates.
+    // Rendering currently does NOT apply display_rotation_offset on the main view,
+    // so input must stay in the same orientation as the visible image.
     const int nw = (device.expected_width  > 0) ? device.expected_width  : device.texture_width;
     const int nh = (device.expected_height > 0) ? device.expected_height : device.texture_height;
     if (nw <= 0 || nh <= 0) return {-1, -1};
 
-    float map_x = rel_x;
-    float map_y = rel_y;
-    int drot = device.transform.display_rotation_offset % 360;
-    if (drot < 0) drot += 360;
-    switch (drot) {
-        case 90: {
-            float ox = map_x, oy = map_y;
-            map_x = oy;
-            map_y = 1.0f - ox;
-            break;
-        }
-        case 180:
-            map_x = 1.0f - map_x;
-            map_y = 1.0f - map_y;
-            break;
-        case 270: {
-            float ox = map_x, oy = map_y;
-            map_x = 1.0f - oy;
-            map_y = ox;
-            break;
-        }
-        default:
-            break;
-    }
-
-    int dev_x = static_cast<int>(std::lround(map_x * static_cast<float>(nw)));
-    int dev_y = static_cast<int>(std::lround(map_y * static_cast<float>(nh)));
+    int dev_x = static_cast<int>(std::lround(rel_x * static_cast<float>(nw)));
+    int dev_y = static_cast<int>(std::lround(rel_y * static_cast<float>(nh)));
     dev_x = std::max(0, std::min(dev_x, nw - 1));
     dev_y = std::max(0, std::min(dev_y, nh - 1));
 
-    MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) map=(%.3f,%.3f) drot=%d native=(%d,%d)",
-             device.id.c_str(), rel_x, rel_y, map_x, map_y, drot, dev_x, dev_y);
+    MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) native=(%d,%d)",
+             device.id.c_str(), rel_x, rel_y, dev_x, dev_y);
 
     return {dev_x, dev_y};
 }

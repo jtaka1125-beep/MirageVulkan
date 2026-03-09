@@ -504,61 +504,6 @@ TEST(FpsCalculationTest, Smoothing) {
 }
 
 // =============================================================================
-// Test: GUI click rotation compensation
-// =============================================================================
-namespace test {
-std::pair<int,int> mapClickWithDisplayRotation(float rel_x, float rel_y, int nw, int nh, int drot) {
-    float map_x = rel_x;
-    float map_y = rel_y;
-    drot %= 360;
-    if (drot < 0) drot += 360;
-    switch (drot) {
-        case 90: {
-            float ox = map_x, oy = map_y;
-            map_x = oy;
-            map_y = 1.0f - ox;
-            break;
-        }
-        case 180:
-            map_x = 1.0f - map_x;
-            map_y = 1.0f - map_y;
-            break;
-        case 270: {
-            float ox = map_x, oy = map_y;
-            map_x = 1.0f - oy;
-            map_y = ox;
-            break;
-        }
-        default:
-            break;
-    }
-    int dev_x = static_cast<int>(std::lround(map_x * static_cast<float>(nw)));
-    int dev_y = static_cast<int>(std::lround(map_y * static_cast<float>(nh)));
-    dev_x = std::max(0, std::min(dev_x, nw - 1));
-    dev_y = std::max(0, std::min(dev_y, nh - 1));
-    return {dev_x, dev_y};
-}
-}
-
-TEST(GuiRotationTest, DisplayRotation180TopLeftMapsToBottomRight) {
-    auto p = test::mapClickWithDisplayRotation(0.0f, 0.0f, 1200, 2000, 180);
-    EXPECT_EQ(p.first, 1199);
-    EXPECT_EQ(p.second, 1999);
-}
-
-TEST(GuiRotationTest, DisplayRotation180BottomRightMapsToTopLeft) {
-    auto p = test::mapClickWithDisplayRotation(1.0f, 1.0f, 1200, 2000, 180);
-    EXPECT_EQ(p.first, 0);
-    EXPECT_EQ(p.second, 0);
-}
-
-TEST(GuiRotationTest, DisplayRotation180CenterStaysCenter) {
-    auto p = test::mapClickWithDisplayRotation(0.5f, 0.5f, 1200, 2000, 180);
-    EXPECT_NEAR(p.first, 600, 1);
-    EXPECT_NEAR(p.second, 1000, 1);
-}
-
-// =============================================================================
 // Main
 // =============================================================================
 int main(int argc, char** argv) {
