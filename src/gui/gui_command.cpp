@@ -226,16 +226,6 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
         int screen_w = 0, screen_h = 0;
         if (g_gui) { auto [sw,sh] = g_gui->getDeviceNativeSize(device_id); screen_w=sw; screen_h=sh; }
 
-        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
-            g_hybrid_cmd->send_tap(device_id, x, y, screen_w, screen_h);
-            MLOG_INFO("cmd", "WiFi TCP tap sent to %s!", device_id.c_str());
-            if (gui) {
-                gui->logInfo(u8"WiFi タップ " + device_id +
-                             " (" + std::to_string(x) + ", " + std::to_string(y) + ")");
-            }
-            return;
-        }
-
         std::string usb_id = resolveToUsbId(device_id);
         bool connected = g_hybrid_cmd->is_device_connected(usb_id);
         MLOG_INFO("cmd", "resolved='%s' connected=%s", usb_id.c_str(), connected ? "yes" : "no");
@@ -245,6 +235,16 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
             MLOG_INFO("cmd", "USB tap sent to %s!", usb_id.c_str());
             if (gui) {
                 gui->logInfo(u8"USB タップ " + device_id +
+                             " (" + std::to_string(x) + ", " + std::to_string(y) + ")");
+            }
+            return;
+        }
+
+        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+            g_hybrid_cmd->send_tap(device_id, x, y, screen_w, screen_h);
+            MLOG_INFO("cmd", "WiFi TCP tap sent to %s!", device_id.c_str());
+            if (gui) {
+                gui->logInfo(u8"WiFi タップ " + device_id +
                              " (" + std::to_string(x) + ", " + std::to_string(y) + ")");
             }
             return;
@@ -310,17 +310,6 @@ void sendSwipeCommand(const std::string& device_id, int x1, int y1, int x2, int 
         int screen_w=0,screen_h=0;
         if(g_gui){auto[sw,sh]=g_gui->getDeviceNativeSize(device_id);screen_w=sw;screen_h=sh;}
 
-        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
-            g_hybrid_cmd->send_swipe(device_id, x1, y1, x2, y2, duration_ms, screen_w, screen_h);
-            MLOG_INFO("cmd", "WiFi TCP swipe sent to %s!", device_id.c_str());
-            if (gui) {
-                gui->logInfo(u8"WiFi スワイプ " + device_id +
-                             " (" + std::to_string(x1) + "," + std::to_string(y1) +
-                             ") -> (" + std::to_string(x2) + "," + std::to_string(y2) + ")");
-            }
-            return;
-        }
-
         std::string usb_id = resolveToUsbId(device_id);
         bool connected = g_hybrid_cmd->is_device_connected(usb_id);
         MLOG_INFO("cmd", "resolved='%s' connected=%s", usb_id.c_str(), connected ? "yes" : "no");
@@ -330,6 +319,17 @@ void sendSwipeCommand(const std::string& device_id, int x1, int y1, int x2, int 
             MLOG_INFO("cmd", "USB swipe sent to %s!", usb_id.c_str());
             if (gui) {
                 gui->logInfo(u8"USB スワイプ " + device_id +
+                             " (" + std::to_string(x1) + "," + std::to_string(y1) +
+                             ") -> (" + std::to_string(x2) + "," + std::to_string(y2) + ")");
+            }
+            return;
+        }
+
+        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+            g_hybrid_cmd->send_swipe(device_id, x1, y1, x2, y2, duration_ms, screen_w, screen_h);
+            MLOG_INFO("cmd", "WiFi TCP swipe sent to %s!", device_id.c_str());
+            if (gui) {
+                gui->logInfo(u8"WiFi スワイプ " + device_id +
                              " (" + std::to_string(x1) + "," + std::to_string(y1) +
                              ") -> (" + std::to_string(x2) + "," + std::to_string(y2) + ")");
             }
@@ -384,15 +384,15 @@ void sendSwipeCommand(const std::string& device_id, int x1, int y1, int x2, int 
 
 void sendKeyCommand(const std::string& device_id, int keycode) {
     if (g_hybrid_cmd) {
-        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
-            g_hybrid_cmd->send_key(device_id, keycode);
-            MLOG_INFO("cmd", "WiFi TCP key %d sent to %s", keycode, device_id.c_str());
-            return;
-        }
         std::string usb_id = resolveToUsbId(device_id);
         if (g_hybrid_cmd->is_device_connected(usb_id)) {
             g_hybrid_cmd->send_key(usb_id, keycode);
             MLOG_INFO("cmd", "USB key %d sent to %s", keycode, usb_id.c_str());
+            return;
+        }
+        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+            g_hybrid_cmd->send_key(device_id, keycode);
+            MLOG_INFO("cmd", "WiFi TCP key %d sent to %s", keycode, device_id.c_str());
             return;
         }
     }
@@ -433,23 +433,23 @@ void sendTapCommandScaled(const std::string& device_id, int x, int y, int src_w,
         return;
     }
 
-    if (g_hybrid_cmd->has_wifi_sender(device_id)) {
-        MLOG_INFO("cmd", "[D2] sendTapCommandScaled WIFI first device=%s (%d,%d) src=%dx%d",
-                  device_id.c_str(), x, y, src_w, src_h);
-        uint32_t seq = g_hybrid_cmd->send_tap(device_id, x, y, src_w, src_h);
-        if (seq > 0) return;
-    }
-
-    // Fallback: resolve hardware_id → USB serial so HID/MIRA USB Tier 1/2 can be used
+    // First: resolve hardware_id → USB serial so HID/MIRA USB Tier 1/2 can be used
     std::string usb_id = resolveToUsbId(device_id);
     MLOG_INFO("cmd", "[D2] sendTapCommandScaled device=%s usb=%s (%d,%d) src=%dx%d",
               device_id.c_str(), usb_id.c_str(), x, y, src_w, src_h);
 
     uint32_t seq = g_hybrid_cmd->send_tap(usb_id, x, y, src_w, src_h);
-    if (seq == 0) {
-        MLOG_WARN("cmd", "[D2] All Tiers failed for %s, retrying via ADB direct", device_id.c_str());
-        sendTapCommand(device_id, x, y);  // last resort: no scaling, raw coords
+    if (seq > 0) return;
+
+    if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+        MLOG_INFO("cmd", "[D2] sendTapCommandScaled WIFI fallback device=%s (%d,%d) src=%dx%d",
+                  device_id.c_str(), x, y, src_w, src_h);
+        seq = g_hybrid_cmd->send_tap(device_id, x, y, src_w, src_h);
+        if (seq > 0) return;
     }
+
+    MLOG_WARN("cmd", "[D2] All Tiers failed for %s, retrying via ADB direct", device_id.c_str());
+    sendTapCommand(device_id, x, y);  // last resort: no scaling, raw coords
 }
 
 } // namespace mirage::gui::command
