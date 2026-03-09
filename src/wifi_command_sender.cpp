@@ -42,25 +42,51 @@ bool WifiCommandSender::start() {
         return false;
     }
 
-    // Create UDP socket
-    socket_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    // Create TCP socket
+    socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (socket_ == WIFI_INVALID_SOCKET) {
-        MLOG_ERROR("wificmd", "Failed to create socket");
+        MLOG_ERROR("wificmd", "Failed to create TCP socket");
         return false;
     }
 
-    // Set socket timeout for receive
+    // Set receive timeout
     struct timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 500000; // 500ms
-    int setsock_result = setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-    if (setsock_result != 0) {
-        MLOG_ERROR("wificmd", "Warning: Failed to set socket timeout (err=%d)", setsock_result);
-        // Continue anyway - timeout is not critical for functionality
+    setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+
+    // TCP connect to Android WifiCommandServer
+    struct sockaddr_in dest;
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(target_port_);
+    if (inet_pton(AF_INET, target_ip_.c_str(), &dest.sin_addr) <= 0) {
+        MLOG_ERROR("wificmd", "Invalid IP: %s", target_ip_.c_str());
+        closesocket(socket_);
+        socket_ = WIFI_INVALID_SOCKET;
+        return false;
+    }
+
+    // Non-blocking connect with 2s timeout
+    u_long mode = 1;
+    ioctlsocket(socket_, FIONBIO, &mode);
+    ::connect(socket_, (struct sockaddr*)&dest, sizeof(dest));
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(socket_, &wfds);
+    struct timeval ctv = {2, 0};
+    int sel = select((int)socket_+1, nullptr, &wfds, nullptr, &ctv);
+    mode = 0;
+    ioctlsocket(socket_, FIONBIO, &mode);  // back to blocking
+    if (sel <= 0) {
+        MLOG_WARN("wificmd", "TCP connect timeout/failed to %s:%d", target_ip_.c_str(), target_port_);
+        closesocket(socket_);
+        socket_ = WIFI_INVALID_SOCKET;
+        // Start anyway - reconnect thread will retry
     }
 
     running_.store(true);
-    connected_.store(true);
+    connected_.store(sel > 0);
 
     try {
         send_thread_ = std::thread(&WifiCommandSender::send_thread, this);
@@ -74,7 +100,7 @@ bool WifiCommandSender::start() {
         return false;
     }
 
-    MLOG_INFO("wificmd", "Started (target: %s:%d)", target_ip_.c_str(), target_port_);
+    MLOG_INFO("wificmd", "Started (target: %s:%d, connected=%s)", target_ip_.c_str(), target_port_, connected_.load() ? "yes" : "pending");
     return true;
 }
 
@@ -133,12 +159,13 @@ void WifiCommandSender::receive_thread() {
     MLOG_INFO("wificmd", "Receive thread started");
 
     uint8_t buf[1024];
-    struct sockaddr_in from_addr;
-    socklen_t from_len = sizeof(from_addr);
 
     while (running_.load()) {
-        int received = recvfrom(socket_, (char*)buf, sizeof(buf), 0,
-                               (struct sockaddr*)&from_addr, &from_len);
+        if (socket_ == WIFI_INVALID_SOCKET) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            continue;
+        }
+        int received = recv(socket_, (char*)buf, sizeof(buf), 0);
 
         if (received >= (int)HEADER_SIZE) {
             // Parse ACK
@@ -150,6 +177,7 @@ void WifiCommandSender::receive_thread() {
             if (magic == PROTOCOL_MAGIC && version == PROTOCOL_VERSION && cmd == CMD_ACK) {
                 uint8_t status = (received >= (int)HEADER_SIZE + 5) ? buf[HEADER_SIZE + 4] : 0;
                 acks_received_.fetch_add(1);
+                MLOG_INFO("wificmd", "ACK seq=%u status=%u", seq, (unsigned)status);
 
                 // Calculate latency from ping
                 {
@@ -178,25 +206,21 @@ void WifiCommandSender::receive_thread() {
 bool WifiCommandSender::send_raw(const uint8_t* data, size_t len) {
     if (socket_ == WIFI_INVALID_SOCKET) return false;
 
-    struct sockaddr_in dest_addr;
-    memset(&dest_addr, 0, sizeof(dest_addr));
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(target_port_);
+    if (socket_ == WIFI_INVALID_SOCKET || !connected_.load()) return false;
 
-    // Validate IP address before sending
-    if (inet_pton(AF_INET, target_ip_.c_str(), &dest_addr.sin_addr) <= 0) {
-        MLOG_ERROR("wificmd", "Invalid target IP address: %s", target_ip_.c_str());
-        return false;
-    }
-
-    int sent = sendto(socket_, (const char*)data, (int)len, 0,
-                     (struct sockaddr*)&dest_addr, sizeof(dest_addr));
-
+    uint8_t cmd = (len >= HEADER_SIZE) ? data[5] : 0xFF;
+    uint32_t seq = (len >= HEADER_SIZE) ? (uint32_t)(data[6] | (data[7] << 8) | (data[8] << 16) | (data[9] << 24)) : 0;
+    int sent = ::send(socket_, (const char*)data, (int)len, 0);
     if (sent != (int)len) {
-        MLOG_ERROR("wificmd", "Send error: sent %d of %zu", sent, len);
+        if (sent < 0) {
+            connected_.store(false);
+            MLOG_WARN("wificmd", "TCP send error (disconnected): %s:%d", target_ip_.c_str(), target_port_);
+        } else {
+            MLOG_ERROR("wificmd", "TCP send partial: sent %d of %zu", sent, len);
+        }
         return false;
     }
-
+    MLOG_INFO("wificmd", "Sent cmd=0x%02X seq=%u bytes=%zu", (unsigned)cmd, seq, len);
     return true;
 }
 
@@ -411,6 +435,55 @@ uint32_t WifiCommandSender::send_click_text(const std::string& text) {
     send_cv_.notify_one();  // ISSUE-17
 
     MLOG_INFO("wificmd", "Queued CLICK_TEXT(%s) seq=%u", text.c_str(), seq);
+    return seq;
+}
+
+
+uint32_t WifiCommandSender::send_video_fps(int fps) {
+    uint8_t payload[4];
+    payload[0] = fps & 0xFF;
+    payload[1] = (fps >> 8) & 0xFF;
+    payload[2] = 0;
+    payload[3] = 0;
+    auto packet = build_packet(CMD_VIDEO_FPS, payload, sizeof(payload));
+    uint32_t seq = packet[6] | (packet[7] << 8) | (packet[8] << 16) | (packet[9] << 24);
+    std::lock_guard<std::mutex> lock(queue_mtx_);
+    command_queue_.push(std::move(packet));
+    send_cv_.notify_one();
+    MLOG_INFO("wificmd", "Queued VIDEO_FPS(%d) seq=%u", fps, seq);
+    return seq;
+}
+
+uint32_t WifiCommandSender::send_video_route(uint8_t mode, const std::string& host, int port) {
+    std::vector<uint8_t> payload;
+    int32_t mode32 = static_cast<int32_t>(mode);
+    int32_t port32 = port;
+    payload.push_back(mode32 & 0xFF);
+    payload.push_back((mode32 >> 8) & 0xFF);
+    payload.push_back((mode32 >> 16) & 0xFF);
+    payload.push_back((mode32 >> 24) & 0xFF);
+    payload.push_back(port32 & 0xFF);
+    payload.push_back((port32 >> 8) & 0xFF);
+    payload.push_back((port32 >> 16) & 0xFF);
+    payload.push_back((port32 >> 24) & 0xFF);
+    for (char c : host) payload.push_back(static_cast<uint8_t>(c));
+    payload.push_back(0);
+    auto packet = build_packet(CMD_VIDEO_ROUTE, payload.data(), payload.size());
+    uint32_t seq = packet[6] | (packet[7] << 8) | (packet[8] << 16) | (packet[9] << 24);
+    std::lock_guard<std::mutex> lock(queue_mtx_);
+    command_queue_.push(std::move(packet));
+    send_cv_.notify_one();
+    MLOG_INFO("wificmd", "Queued VIDEO_ROUTE(mode=%u host=%s port=%d) seq=%u", (unsigned)mode, host.c_str(), port, seq);
+    return seq;
+}
+
+uint32_t WifiCommandSender::send_video_idr() {
+    auto packet = build_packet(CMD_VIDEO_IDR, nullptr, 0);
+    uint32_t seq = packet[6] | (packet[7] << 8) | (packet[8] << 16) | (packet[9] << 24);
+    std::lock_guard<std::mutex> lock(queue_mtx_);
+    command_queue_.push(std::move(packet));
+    send_cv_.notify_one();
+    MLOG_INFO("wificmd", "Queued VIDEO_IDR seq=%u", seq);
     return seq;
 }
 

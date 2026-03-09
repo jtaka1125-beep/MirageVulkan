@@ -1,7 +1,7 @@
 // =============================================================================
 // MirageSystem - Macro API Server Implementation
 // =============================================================================
-// TCP JSON-RPC server bridging Macro Editor → HybridCommandSender / ADB
+// TCP JSON-RPC server bridging Macro Editor 遶翫・HybridCommandSender / ADB
 // =============================================================================
 
 #include <winsock2.h>
@@ -46,7 +46,7 @@ namespace mirage {
 // ADB command helper (hidden window, captures stdout)
 // ---------------------------------------------------------------------------
 static std::string run_adb_cmd(const std::string& adb_id, const std::string& cmd) {
-    // ctx().adb_manager経由でadbパスを取得 (config.json設定を反映)
+    // ctx().adb_manager驍ｨ讙守ｽｰ邵ｺ・ｧadb郢昜ｻ｣縺帷ｹｧ雋槫徐陟輔・(config.json髫ｪ・ｭ陞ｳ螢ｹ・定愾閧ｴ荳・
     auto& _adb_mgr_ref = mirage::ctx().adb_manager;
     std::string _adb_exe = (_adb_mgr_ref && _adb_mgr_ref.get())
         ? _adb_mgr_ref->getAdbPath() : "adb";
@@ -75,7 +75,7 @@ static std::string run_adb_cmd(const std::string& adb_id, const std::string& cmd
     PROCESS_INFORMATION pi{};
     std::string cmd_line = "cmd /c " + full_cmd;
 
-    // タイムアウト: 8秒でプロセスをkillしてReadFileを解放
+    // 郢ｧ・ｿ郢ｧ・､郢晢｣ｰ郢ｧ・｢郢ｧ・ｦ郢昴・ 8驕伜・縲堤ｹ晏干ﾎ溽ｹｧ・ｻ郢ｧ・ｹ郢ｧ隲㌍ll邵ｺ蜉ｱ窶ｻReadFile郢ｧ螳夲ｽｧ・｣隰ｾ・ｾ
     static constexpr DWORD ADB_CMD_TIMEOUT_MS = 8000;
     if (CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
@@ -83,23 +83,23 @@ static std::string run_adb_cmd(const std::string& adb_id, const std::string& cmd
         auto t_start = GetTickCount64();
         char buf[4096];
         DWORD n;
-        // プロセス終了またはタイムアウトまでReadFile
+        // 郢晏干ﾎ溽ｹｧ・ｻ郢ｧ・ｹ驍ｨ繧・ｽｺ繝ｻ竏ｪ邵ｺ貅倥・郢ｧ・ｿ郢ｧ・､郢晢｣ｰ郢ｧ・｢郢ｧ・ｦ郢晏現竏ｪ邵ｺ・ｧReadFile
         while (true) {
-            // タイムアウトチェック
+            // 郢ｧ・ｿ郢ｧ・､郢晢｣ｰ郢ｧ・｢郢ｧ・ｦ郢晏現繝｡郢ｧ・ｧ郢昴・縺・
             if (GetTickCount64() - t_start > ADB_CMD_TIMEOUT_MS) {
                 MLOG_WARN("macro_api", "run_adb_cmd timeout (8s): %s", cmd.c_str());
                 TerminateProcess(pi.hProcess, 1);
                 break;
             }
-            // パイプにデータがあるか確認（ノンブロッキング peek）
+            // 郢昜ｻ｣縺・ｹ晏干竊鍋ｹ昴・繝ｻ郢ｧ・ｿ邵ｺ蠕娯旺郢ｧ荵敖ｰ驕抵ｽｺ髫ｱ謳ｾ・ｼ蛹ｻ繝ｮ郢晢ｽｳ郢晄じﾎ溽ｹ昴・縺冗ｹ晢ｽｳ郢ｧ・ｰ peek繝ｻ繝ｻ
             DWORD avail = 0;
             if (!PeekNamedPipe(hRead, nullptr, 0, nullptr, &avail, nullptr)) break;
             if (avail == 0) {
-                // プロセスが終了してるか確認
+                // 郢晏干ﾎ溽ｹｧ・ｻ郢ｧ・ｹ邵ｺ讙趣ｽｵ繧・ｽｺ繝ｻ・邵ｺ・ｦ郢ｧ荵敖ｰ驕抵ｽｺ髫ｱ繝ｻ
                 DWORD ec = STILL_ACTIVE;
                 GetExitCodeProcess(pi.hProcess, &ec);
                 if (ec != STILL_ACTIVE) {
-                    // 残りデータを読み切る
+                    // 隹ｿ荵晢ｽ顔ｹ昴・繝ｻ郢ｧ・ｿ郢ｧ螳夲ｽｪ・ｭ邵ｺ・ｿ陋ｻ繝ｻ・・
                     while (ReadFile(hRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0)
                         { buf[n]='\0'; result+=buf; }
                     break;
@@ -163,8 +163,8 @@ bool MacroApiServer::start(int port) {
         return false;
     }
 
-    // WSA_FLAG_NO_HANDLE_INHERIT: 子プロセス(adb/ffmpeg)へのハンドル継承を禁止
-    // これがゾンビソケットの根本解決 (プロセス終了後にソケットが残る問題を防ぐ)
+    // WSA_FLAG_NO_HANDLE_INHERIT: 陝・・繝ｻ郢晢ｽｭ郢ｧ・ｻ郢ｧ・ｹ(adb/ffmpeg)邵ｺ・ｸ邵ｺ・ｮ郢昜ｸ莞ｦ郢晏ｳｨﾎ晞け蜻惹ｾ｡郢ｧ蝣､・ｦ竏ｵ・ｭ・｢
+    // 邵ｺ阮呻ｽ檎ｸｺ蠕後□郢晢ｽｳ郢晁侭縺溽ｹｧ・ｱ郢昴・繝ｨ邵ｺ・ｮ隴ｬ・ｹ隴幢ｽｬ髫暦ｽ｣雎趣ｽｺ (郢晏干ﾎ溽ｹｧ・ｻ郢ｧ・ｹ驍ｨ繧・ｽｺ繝ｻ・ｾ蠕娯・郢ｧ・ｽ郢ｧ・ｱ郢昴・繝ｨ邵ｺ譴ｧ・ｮ荵晢ｽ玖擒蝓趣ｽ｡蠕鯉ｽ帝ｫｦ・ｲ邵ｺ繝ｻ
     server_socket_ = WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_TCP,
                                nullptr, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (server_socket_ == INVALID_SOCKET) {
@@ -205,8 +205,8 @@ bool MacroApiServer::start(int port) {
 
     // Frame cache is populated via MultiDeviceReceiver callback
 
-    // EventBusのFrameReadyEventをsubscribeしてJPEGキャッシュを更新
-    // (setFrameCallbackは上書きになるのでbus()subscribeを使う)
+    // EventBus邵ｺ・ｮFrameReadyEvent郢ｧ逞ｴubscribe邵ｺ蜉ｱ窶ｻJPEG郢ｧ・ｭ郢晢ｽ｣郢昴・縺咏ｹ晢ｽ･郢ｧ蜻亥ｳｩ隴・ｽｰ
+    // (setFrameCallback邵ｺ・ｯ闕ｳ鬆大ｶ檎ｸｺ髦ｪ竊鍋ｸｺ・ｪ郢ｧ荵昴・邵ｺ・ｧbus()subscribe郢ｧ蜑・ｽｽ・ｿ邵ｺ繝ｻ
     if (!frame_cb_registered_.exchange(true)) {
         frame_sub_ = mirage::bus().subscribe<FrameReadyEvent>(
             [this](const FrameReadyEvent& e) {
@@ -284,7 +284,7 @@ void MacroApiServer::server_loop() {
             break; // Server socket was closed for shutdown
         }
 
-        // クライアントソケットも非継承 (adb/ffmpegに継承させない)
+        // 郢ｧ・ｯ郢晢ｽｩ郢ｧ・､郢ｧ・｢郢晢ｽｳ郢晏現縺溽ｹｧ・ｱ郢昴・繝ｨ郢ｧ繧区直驍ｯ蜻惹ｾ｡ (adb/ffmpeg邵ｺ・ｫ驍ｯ蜻惹ｾ｡邵ｺ霈披雷邵ｺ・ｪ邵ｺ繝ｻ
         SetHandleInformation((HANDLE)client, HANDLE_FLAG_INHERIT, 0);
         MLOG_INFO("macro_api", "Client connected (fd=%llu)", (unsigned long long)client);
 
@@ -419,6 +419,12 @@ std::string MacroApiServer::dispatch(const std::string& json_line) {
         if (method == "screenshot") {
             return make_result(id, handle_screenshot(device_id));
         }
+        if (method == "video_route") {
+            return make_result(id, handle_video_route(device_id,
+                params.value("route", std::string("wifi")),
+                params.value("host", std::string("127.0.0.1")),
+                params.value("port", 50000)));
+        }
         if (method == "multi_touch") {
             return make_result(id, handle_multi_touch(device_id,
                 params.value("x1", 0), params.value("y1", 0),
@@ -432,7 +438,7 @@ std::string MacroApiServer::dispatch(const std::string& json_line) {
                 params.value("d_start", 400), params.value("d_end", 100)));
         }
 
-        // OCRメソッド
+        // OCR郢晢ｽ｡郢ｧ・ｽ郢昴・繝ｩ
 #ifdef MIRAGE_OCR_ENABLED
         if (method == "ocr_analyze") {
             return make_result(id, handle_ocr_analyze(device_id));
@@ -471,7 +477,7 @@ std::string MacroApiServer::make_error(int id, int code, const std::string& mess
 }
 
 // ---------------------------------------------------------------------------
-// resolve_device_id: hardware_id or ADB serial → usable ADB serial
+// resolve_device_id: hardware_id or ADB serial 遶翫・usable ADB serial
 // ---------------------------------------------------------------------------
 std::string MacroApiServer::resolve_device_id(const std::string& device_id) {
     auto& mgr = ctx().adb_manager;
@@ -546,17 +552,17 @@ std::string MacroApiServer::handle_list_devices() {
     std::vector<std::string> hybrid_ids;
     if (hybrid) hybrid_ids = hybrid->get_device_ids();
 
-    // AOA matching: resolveUsbSerialを使ってUSBシリアル→hardware_idを解決
+    // AOA matching: resolveUsbSerial郢ｧ蜑・ｽｽ・ｿ邵ｺ・｣邵ｺ・ｦUSB郢ｧ・ｷ郢晢ｽｪ郢ｧ・｢郢晢ｽｫ遶頑ｪardware_id郢ｧ螳夲ｽｧ・｣雎趣ｽｺ
     std::set<std::string> aoa_hw_ids;
     std::map<std::string, std::string> hw_to_usb;  // hardware_id -> usb_serial
     for (const auto& usb_serial : hybrid_ids) {
-        // resolveUsbSerialでhardware_idを取得（ro.serialnoクエリ含む）
+        // resolveUsbSerial邵ｺ・ｧhardware_id郢ｧ雋槫徐陟墓圜・ｼ繝ｻo.serialno郢ｧ・ｯ郢ｧ・ｨ郢晢ｽｪ陷ｷ・ｫ郢ｧﾂ繝ｻ繝ｻ
         std::string hw_id = mgr->resolveUsbSerial(usb_serial);
         if (!hw_id.empty()) {
             aoa_hw_ids.insert(hw_id);
             hw_to_usb[hw_id] = usb_serial;
         } else {
-            // フォールバック: usb_serial自体をキーとして使用
+            // 郢晁ｼ斐°郢晢ｽｼ郢晢ｽｫ郢晁・繝｣郢ｧ・ｯ: usb_serial髢ｾ・ｪ闖ｴ阮呻ｽ堤ｹｧ・ｭ郢晢ｽｼ邵ｺ・ｨ邵ｺ蜉ｱ窶ｻ闖ｴ・ｿ騾包ｽｨ
             aoa_hw_ids.insert(usb_serial);
         }
     }
@@ -574,7 +580,7 @@ std::string MacroApiServer::handle_list_devices() {
         // Check if device is available via AOA using resolved hardware_ids
         bool has_aoa = (aoa_hw_ids.count(ud.hardware_id) > 0);
         d["aoa"] = has_aoa;
-        // usb_serialはキャッシュまたは解決済みのものを使用
+        // usb_serial邵ｺ・ｯ郢ｧ・ｭ郢晢ｽ｣郢昴・縺咏ｹ晢ｽ･邵ｺ・ｾ邵ｺ貅倥・髫暦ｽ｣雎趣ｽｺ雋ょ現竏ｩ邵ｺ・ｮ郢ｧ繧・・郢ｧ蜑・ｽｽ・ｿ騾包ｽｨ
         std::string usb_ser = ud.usb_serial;
         if (usb_ser.empty()) {
             auto it = hw_to_usb.find(ud.hardware_id);
@@ -616,11 +622,26 @@ std::string MacroApiServer::handle_device_info(const std::string& device_id) {
 
 
 // Resolve hardware_id to USB serial for AOA HybridCommandSender lookup
+
+static std::string strip_route_prefix(const std::string& device_id) {
+    if (device_id.rfind("wifi:", 0) == 0) return device_id.substr(5);
+    if (device_id.rfind("usb:", 0) == 0)  return device_id.substr(4);
+    return device_id;
+}
+
+static bool wants_wifi_route(const std::string& device_id) {
+    return device_id.rfind("wifi:", 0) == 0;
+}
+
+static bool wants_usb_route(const std::string& device_id) {
+    return device_id.rfind("usb:", 0) == 0;
+}
+
 static std::string resolve_to_usb_serial(const std::string& device_id) {
     auto& mgr = mirage::ctx().adb_manager;
     if (!mgr) return device_id;
 
-    // まずキャッシュされたusb_serialを探す
+    // 邵ｺ・ｾ邵ｺ螢ｹ縺冗ｹ晢ｽ｣郢昴・縺咏ｹ晢ｽ･邵ｺ霈費ｽ檎ｸｺ谿ｷsb_serial郢ｧ蜻育粟邵ｺ繝ｻ
     auto devs = mgr->getUniqueDevices();
     for (auto& ud : devs) {
         if (ud.hardware_id == device_id || ud.preferred_adb_id == device_id) {
@@ -628,12 +649,12 @@ static std::string resolve_to_usb_serial(const std::string& device_id) {
         }
     }
 
-    // キャッシュにない場合、hybridのUSBシリアルを逆引きで探す
+    // 郢ｧ・ｭ郢晢ｽ｣郢昴・縺咏ｹ晢ｽ･邵ｺ・ｫ邵ｺ・ｪ邵ｺ繝ｻ・ｰ・ｴ陷ｷ蛹ｻﾂ窶掣brid邵ｺ・ｮUSB郢ｧ・ｷ郢晢ｽｪ郢ｧ・｢郢晢ｽｫ郢ｧ蟶敖繝ｻ・ｼ霈披ｳ邵ｺ・ｧ隰暦ｽ｢邵ｺ繝ｻ
     auto& hybrid = mirage::ctx().hybrid_cmd;
     if (hybrid) {
         auto usb_ids = hybrid->get_device_ids();
         for (const auto& usb_serial : usb_ids) {
-            // このUSBシリアルがdevice_idに対応するか確認
+            // 邵ｺ阮吶・USB郢ｧ・ｷ郢晢ｽｪ郢ｧ・｢郢晢ｽｫ邵ｺ諷ｧevice_id邵ｺ・ｫ陝・ｽｾ陟｢諛岩・郢ｧ荵敖ｰ驕抵ｽｺ髫ｱ繝ｻ
             std::string hw_id = mgr->resolveUsbSerial(usb_serial);
             if (hw_id == device_id) {
                 return usb_serial;
@@ -647,14 +668,14 @@ static std::string resolve_to_usb_serial(const std::string& device_id) {
 std::string MacroApiServer::handle_tap(const std::string& device_id, int x, int y) {
     auto& hybrid = ctx().hybrid_cmd;
 
-    // Try AOA/HybridCommandSender first
+    // Try HybridCommandSender first: prefer USB serial if connected, otherwise hardware_id for Wi-Fi sender
     {
-        std::string usb_key = resolve_to_usb_serial(device_id);
-        if (hybrid->is_device_connected(usb_key)) {
-            uint32_t seq = hybrid->send_tap(usb_key, x, y);
-            if (seq > 0) {
-                return "{\"status\":\"ok\",\"via\":\"aoa_hid\",\"seq\":" + std::to_string(seq) + "}";
-            }
+        std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
+        std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
+        std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
+        uint32_t seq = hybrid->send_tap(route_key, x, y);
+        if (seq > 0) {
+            return "{\"status\":\"ok\",\"via\":\"" + hybrid->get_touch_mode_str() + "\",\"seq\":" + std::to_string(seq) + "}";
         }
     }
 
@@ -670,12 +691,12 @@ std::string MacroApiServer::handle_swipe(const std::string& device_id,
     auto& hybrid = ctx().hybrid_cmd;
 
     {
-        std::string usb_key = resolve_to_usb_serial(device_id);
-        if (hybrid->is_device_connected(usb_key)) {
-            uint32_t seq = hybrid->send_swipe(usb_key, x1, y1, x2, y2, duration_ms);
-            if (seq > 0) {
-                return "{\"status\":\"ok\",\"via\":\"aoa_hid\",\"seq\":" + std::to_string(seq) + "}";
-            }
+        std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
+        std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
+        std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
+        uint32_t seq = hybrid->send_swipe(route_key, x1, y1, x2, y2, duration_ms);
+        if (seq > 0) {
+            return "{\"status\":\"ok\",\"via\":\"" + hybrid->get_touch_mode_str() + "\",\"seq\":" + std::to_string(seq) + "}";
         }
     }
 
@@ -693,11 +714,11 @@ std::string MacroApiServer::handle_long_press(const std::string& device_id,
     auto& hybrid = ctx().hybrid_cmd;
 
     {
-        std::string usb_key = resolve_to_usb_serial(device_id);
-        if (hybrid->is_device_connected(usb_key)) {
-            bool ok = hybrid->send_long_press(usb_key, x, y, 0, 0, duration_ms);
-            if (ok) return "{\"status\":\"ok\",\"via\":\"aoa_hid\"}";
-        }
+        std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
+        std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
+        std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
+        bool ok = hybrid->send_long_press(route_key, x, y, 0, 0, duration_ms);
+        if (ok) return "{\"status\":\"ok\",\"via\":\"" + hybrid->get_touch_mode_str() + "\"}";
     }
 
     // ADB fallback: swipe to same point with duration = long press
@@ -783,12 +804,12 @@ std::string MacroApiServer::handle_key(const std::string& device_id, int keycode
     auto& hybrid = ctx().hybrid_cmd;
 
     {
-        std::string usb_key = resolve_to_usb_serial(device_id);
-        if (hybrid->is_device_connected(usb_key)) {
-            uint32_t seq = hybrid->send_key(usb_key, keycode);
-            if (seq > 0) {
-                return "{\"status\":\"ok\",\"via\":\"aoa_hid\",\"seq\":" + std::to_string(seq) + "}";
-            }
+        std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
+        std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
+        std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
+        uint32_t seq = hybrid->send_key(route_key, keycode);
+        if (seq > 0) {
+            return "{\"status\":\"ok\",\"via\":\"" + hybrid->get_touch_mode_str() + "\",\"seq\":" + std::to_string(seq) + "}";
         }
     }
 
@@ -820,7 +841,7 @@ std::string MacroApiServer::handle_ui_tree(const std::string& device_id) {
     if (!hybrid) return R"({"status":"error","message":"no sender"})";
     uint32_t seq = hybrid->send_ui_tree_req(device_id);
     if (seq == 0) return R"({"status":"error","message":"ui_tree_req requires AOA connection"})";
-    // 応答はCMD_UI_TREE_DATAで非同期受信 (seq返却で追跡可能)
+    // 陟｢諛・ｽｭ譁舌・CMD_UI_TREE_DATA邵ｺ・ｧ鬮ｱ讒ｫ驟碑ｭ帶ｺｷ螂ｳ闖ｫ・｡ (seq髴第ｳ悟陪邵ｺ・ｧ髴托ｽｽ髴搾ｽ｡陷ｿ・ｯ髢ｭ・ｽ)
     return "{\"status\":\"ok\",\"seq\":" + std::to_string(seq) + "}";
 }
 
@@ -873,8 +894,30 @@ std::string MacroApiServer::handle_force_stop(const std::string& device_id,
     return "{\"status\":\"ok\",\"via\":\"adb\"}";
 }
 
+std::string MacroApiServer::handle_video_route(const std::string& device_id, const std::string& route, const std::string& host, int port) {
+    auto& hybrid = ctx().hybrid_cmd;
+    std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
+    std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
+    std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
+    MLOG_INFO("macro_api", "video_route req: device_id=%s hw_id=%s usb_key=%s route_key=%s wants_wifi=%d wants_usb=%d", device_id.c_str(), hw_id.c_str(), usb_key.c_str(), route_key.c_str(), wants_wifi_route(device_id) ? 1 : 0, wants_usb_route(device_id) ? 1 : 0);
+    uint8_t mode = 1;
+    if (route == "usb") mode = 0;
+    else if (route == "tcp") mode = 2;
+    else if (route == "udp" || route == "wifi") mode = 1;
+
+    if (mode == 0) {
+        MLOG_INFO("macro_api", "usb route uses existing MultiUsbCommandSender video callback: serial=%s", usb_key.c_str());
+    }
+    uint32_t seq = hybrid->send_video_route(route_key, mode, host, port);
+    MLOG_INFO("macro_api", "video_route send: mode=%u host=%s port=%d seq=%u", (unsigned)mode, host.c_str(), port, seq);
+    if (seq > 0) {
+        return "{\"status\":\"ok\",\"seq\":" + std::to_string(seq) + ",\"route\":\"" + route + "\"}";
+    }
+    return "{\"status\":\"error\",\"message\":\"video_route failed\"}";
+}
+
 std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
-    // Fast path: JPEGキャッシュから返す (MultiDeviceReceiverコールバックで常時更新)
+    // Fast path: JPEG郢ｧ・ｭ郢晢ｽ｣郢昴・縺咏ｹ晢ｽ･邵ｺ荵晢ｽ蛾恆譁絶・ (MultiDeviceReceiver郢ｧ・ｳ郢晢ｽｼ郢晢ｽｫ郢晁・繝｣郢ｧ・ｯ邵ｺ・ｧ陝ｶ・ｸ隴弱ｈ蟲ｩ隴・ｽｰ)
     {
         std::string hw_id = device_id;
         auto* mgr = ctx().adb_manager.get();
@@ -985,7 +1028,7 @@ std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
 }
 
 // ---------------------------------------------------------------------------
-// OCR handlers (Tesseract経由テキスト認識)
+// OCR handlers (Tesseract驍ｨ讙守ｽｰ郢昴・縺冗ｹｧ・ｹ郢晞メ・ｪ蟠趣ｽｭ繝ｻ
 // ---------------------------------------------------------------------------
 #ifdef MIRAGE_OCR_ENABLED
 
@@ -993,20 +1036,20 @@ void MacroApiServer::ensure_ocr_initialized() {
     static bool s_initialized = false;
     if (s_initialized) return;
     if (!analyzer().isInitialized()) {
-        MLOG_INFO("macro_api", "OCR: Tesseract初期化中 (eng+jpn)...");
+        MLOG_INFO("macro_api", "OCR: initializing Tesseract (eng+jpn)...");
         if (!analyzer().init("eng+jpn")) {
-            MLOG_ERROR("macro_api", "OCR: Tesseract初期化失敗");
+            MLOG_ERROR("macro_api", "OCR: Tesseract initialization failed");
             return;
         }
         analyzer().startCapture();
-        MLOG_INFO("macro_api", "OCR: Tesseract初期化完了、フレームキャプチャ開始");
+        MLOG_INFO("macro_api", "OCR: Tesseract initialized and capture started");
     }
     s_initialized = true;
 }
 
 std::string MacroApiServer::handle_ocr_analyze(const std::string& device_id) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_hw_id(device_id);
+    std::string adb_id = resolve_hw_id(strip_route_prefix(device_id));
 
     auto result = analyzer().analyzeText(adb_id);
 
@@ -1033,7 +1076,7 @@ std::string MacroApiServer::handle_ocr_analyze(const std::string& device_id) {
 std::string MacroApiServer::handle_ocr_find_text(const std::string& device_id,
     const std::string& query) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_hw_id(device_id);
+    std::string adb_id = resolve_hw_id(strip_route_prefix(device_id));
 
     auto matches = analyzer().findText(adb_id, query);
 
@@ -1060,7 +1103,7 @@ std::string MacroApiServer::handle_ocr_find_text(const std::string& device_id,
 std::string MacroApiServer::handle_ocr_has_text(const std::string& device_id,
     const std::string& query) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_hw_id(device_id);
+    std::string adb_id = resolve_hw_id(strip_route_prefix(device_id));
 
     bool found = analyzer().hasText(adb_id, query);
 
@@ -1072,13 +1115,13 @@ std::string MacroApiServer::handle_ocr_has_text(const std::string& device_id,
 std::string MacroApiServer::handle_ocr_tap_text(const std::string& device_id,
     const std::string& query) {
     ensure_ocr_initialized();
-    std::string adb_id = resolve_hw_id(device_id);
+    std::string adb_id = resolve_hw_id(strip_route_prefix(device_id));
 
     int cx = 0, cy = 0;
     bool found = analyzer().getTextCenter(adb_id, query, cx, cy);
 
     if (found) {
-        // テキスト位置をタップ
+        // 郢昴・縺冗ｹｧ・ｹ郢昜ｺ包ｽｽ蜥ｲ・ｽ・ｮ郢ｧ蛛ｵ縺｡郢昴・繝ｻ
         handle_tap(device_id, cx, cy);
         json r;
         r["found"] = true;

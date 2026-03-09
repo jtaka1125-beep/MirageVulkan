@@ -23,6 +23,7 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 
 import com.mirage.capture.util.parcelableExtra
+import com.mirage.capture.util.RouteTrace
 
 import java.io.File
 
@@ -167,6 +168,14 @@ class AccessoryIoService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
 
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification())
+            Log.i(TAG, "startForeground called at service start")
+            RouteTrace.append(this, "AccessoryIoService: startForeground called at service start")
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed at service start", e)
+        }
+
         if (!starting.compareAndSet(false, true)) {
 
             Log.i(TAG, "Already starting, ignoring duplicate")
@@ -196,14 +205,16 @@ class AccessoryIoService : Service() {
         val opened = if (accessory != null) {
 
             Log.i(TAG, "Starting via USB_ACCESSORY_ATTACHED intent")
+            RouteTrace.append(this, "AccessoryIoService: starting via USB_ACCESSORY_ATTACHED intent")
 
             openAccessory(accessory)
 
         } else {
 
-            Log.i(TAG, "No accessory in intent, trying direct /dev/usb_accessory open")
+            Log.i(TAG, "No accessory in intent, trying existing UsbManager accessory list first")
+            RouteTrace.append(this, "AccessoryIoService: no intent accessory, trying existing list first")
 
-            openAccessoryDirect()
+            openExistingAccessoryViaUsbManager() || openAccessoryDirect()
 
         }
 
@@ -212,18 +223,26 @@ class AccessoryIoService : Service() {
         if (!opened) {
 
             Log.e(TAG, "Failed to open accessory (both UsbManager and direct)")
-
-            starting.set(false)
-
+            RouteTrace.append(this, "AccessoryIoService: failed to open accessory (both UsbManager and direct)")
+            try {
+                com.mirage.capture.capture.ScreenCaptureService.instance?.let { svc ->
+                    Log.w(TAG, "Accessory open failed, fallback to existing TCP/Wi-Fi route (no recursive USB retry)")
+                    RouteTrace.append(this, "AccessoryIoService: fallback to existing TCP/Wi-Fi route")
+                    // Keep current non-USB route; do not recursively re-enter ensureUsbVideoRoute().
+                    if (svc.mirrorMode == com.mirage.capture.capture.ScreenCaptureService.MIRROR_MODE_USB) {
+                        svc.detachUsbStream()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Fallback after open failure failed", e)
+            }
             stopSelf()
-
+            starting.set(false)
             return START_NOT_STICKY
 
         }
 
 
-
-        startForeground(NOTIFICATION_ID, buildNotification())
 
         startIoLoop()
 
@@ -412,6 +431,50 @@ class AccessoryIoService : Service() {
 
 
 
+    private fun openExistingAccessoryViaUsbManager(): Boolean {
+
+        return try {
+
+            val usbManager = getSystemService(UsbManager::class.java)
+            val list = usbManager.accessoryList
+            if (list == null || list.isEmpty()) {
+                Log.i(TAG, "UsbManager.accessoryList is empty")
+                return false
+            }
+            val accessory = list.first()
+            val permitted = try { usbManager.hasPermission(accessory) } catch (_: Exception) { false }
+            Log.i(TAG, "Trying existing accessory via UsbManager: permitted=$permitted model=${accessory.model} manufacturer=${accessory.manufacturer}")
+            RouteTrace.append(this, "AccessoryIoService: existing accessory via UsbManager permitted=$permitted model=${accessory.model} manufacturer=${accessory.manufacturer}")
+            if (!permitted) {
+                Log.w(TAG, "UsbManager has no permission for existing accessory")
+                RouteTrace.append(this, "AccessoryIoService: UsbManager has no permission for existing accessory")
+                return false
+            }
+            fileDescriptor = usbManager.openAccessory(accessory) ?: run {
+                Log.e(TAG, "UsbManager.openAccessory(existing) returned null")
+                RouteTrace.append(this, "AccessoryIoService: UsbManager.openAccessory(existing) returned null")
+                return false
+            }
+            val fd = fileDescriptor!!.fileDescriptor
+            inputStream = FileInputStream(fd)
+            outputStream = FileOutputStream(fd)
+            Log.i(TAG, "Accessory opened via existing UsbManager accessory list")
+            RouteTrace.append(this, "AccessoryIoService: opened via existing UsbManager accessory list")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "openExistingAccessoryViaUsbManager failed", e)
+            RouteTrace.append(this, "AccessoryIoService: openExistingAccessoryViaUsbManager failed: ${e.javaClass.simpleName}: ${e.message}")
+            try { fileDescriptor?.close() } catch (_: Exception) {}
+            fileDescriptor = null
+            inputStream = null
+            outputStream = null
+            false
+        }
+
+    }
+
+
+
     /**
 
      * Fallback: open /dev/usb_accessory directly (for ADB-launched service or when
@@ -457,6 +520,7 @@ class AccessoryIoService : Service() {
             outputStream = fos
 
             Log.i(TAG, "Accessory opened directly via $USB_ACCESSORY_DEV")
+            RouteTrace.append(this, "AccessoryIoService: opened directly via $USB_ACCESSORY_DEV")
 
             true
 
@@ -465,6 +529,7 @@ class AccessoryIoService : Service() {
             // IOException (デバイスI/Oエラー) + SecurityException (SELinux/権限拒否) 両方を処理
 
             Log.e(TAG, "Direct open of $USB_ACCESSORY_DEV failed: ${e.javaClass.simpleName}: ${e.message}")
+            RouteTrace.append(this, "AccessoryIoService: direct open failed: ${e.javaClass.simpleName}: ${e.message}")
 
             false
 

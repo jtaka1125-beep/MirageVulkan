@@ -17,7 +17,8 @@
       "target_fps": 60,
       "preferred_route": "usb",
       "video_bitrate_kbps": 2144,
-      "tcp_port": 50102
+      "tcp_port": 50100,
+      "cmd_port": 50101
     },
     {
       "hardware_id": "98875caa_83873610",
@@ -36,7 +37,8 @@
       "target_fps": 60,
       "preferred_route": "usb",
       "video_bitrate_kbps": 2144,
-      "tcp_port": 50104
+      "tcp_port": 50200,
+      "cmd_port": 50201
     },
     {
       "hardware_id": "f1925da3_1235545",
@@ -44,18 +46,21 @@
       "model": "Npad X1",
       "manufacturer": "N-one",
       "usb_serial": "93020523431940",
-      "screen_width": 1200,
-      "screen_height": 2000,
+      "screen_width": 1920,
+      "screen_height": 1080,
       "screen_density": 213,
       "android_sdk": 33,
       "android_version": "13",
-      "ip_address": "192.168.0.3",
+      "ip_address": "10.178.141.11",
       "apk_version": "2.1.0-audio",
       "wifi_adb_port": 5555,
       "target_fps": 60,
       "preferred_route": "usb",
       "video_bitrate_kbps": 4800,
-      "tcp_port": 50100
+      "tcp_port": 50000,
+      "display_rotation": 180,
+      "cmd_port": 50001,
+      "tcp_host": "10.178.141.11"
     }
   ]
 }
