@@ -6,6 +6,7 @@
 // =============================================================================
 
 #include "gui_init.hpp"
+#include "stream/monitor_lane_client.hpp"
 #include "gui_state.hpp"
 #include "gui_command.hpp"
 #include "mirage_log.hpp"
@@ -35,6 +36,18 @@ namespace mirage::gui::init {
 static std::mutex g_hwport_m;
 static std::unordered_map<std::string, int> g_hw_to_port;
 
+// USB/WiFi frame source switching
+// USB is primary: when USB frames arrive, TCP frames are suppressed.
+// When USB dies (> USB_FRAME_TIMEOUT_MS), TCP takes over automatically.
+static constexpr int64_t USB_FRAME_TIMEOUT_MS = 200;  // USB dead after 200ms of no frames
+static constexpr int64_t USB_RECOVERY_HOLD_MS  = 500;  // wait 500ms stable USB before switching back
+static std::atomic<int64_t> g_usb_frame_last_ms{0};   // last USB frame timestamp
+static std::atomic<bool>    g_usb_active{false};       // currently using USB as primary
+static std::atomic<int64_t> g_usb_recovery_since_ms{0}; // when USB frames resumed
+static std::atomic<int64_t> g_switch_to_wifi_ms{0};   // timestamp of last USB->WiFi switch
+static std::atomic<int64_t> g_switch_to_usb_ms{0};    // timestamp of last WiFi->USB switch
+
+
 
 // =========================================================================
 // Helper: Auto-start MirageCapture ScreenCaptureService on one device
@@ -52,7 +65,7 @@ static void autoStartCaptureService(const std::string& adb_id, const std::string
     MLOG_INFO("gui", "Auto-starting MirageCapture on %s (%s)", display_name.c_str(), adb_id.c_str());
     g_adb_manager->adbCommand(adb_id,
         "shell am start -n com.mirage.capture/.ui.CaptureActivity "
-        "--ez auto_mirror true --es mirror_mode tcp --ei tcp_port " + std::to_string(tcp_port > 0 ? tcp_port : 50100));
+        "--ez auto_mirror true --es mirror_mode tcp --ei tcp_port " + std::to_string(tcp_port > 0 ? tcp_port : 50000));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
@@ -254,6 +267,27 @@ void setupUsbVideoCallback() {
                 }
                 sf->device_id   = resolved_id;
                 sf->source_port = src_port;
+                // Mark USB frame arrival time for failover logic
+                {
+                    int64_t now_ms = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                    g_usb_frame_last_ms.store(now_ms, std::memory_order_relaxed);
+                    if (!g_usb_active.load(std::memory_order_relaxed)) {
+                        // USB just came back: start recovery hold timer
+                        int64_t since = g_usb_recovery_since_ms.load(std::memory_order_relaxed);
+                        if (since == 0) g_usb_recovery_since_ms.store(now_ms, std::memory_order_relaxed);
+                        if ((now_ms - g_usb_recovery_since_ms.load()) >= USB_RECOVERY_HOLD_MS) {
+                            g_usb_active.store(true, std::memory_order_relaxed);
+                            g_switch_to_usb_ms.store(now_ms, std::memory_order_relaxed);
+                            int64_t wifi_ms = g_switch_to_wifi_ms.load(std::memory_order_relaxed);
+                            MLOG_INFO("failover", "[FAILOVER] WiFi -> USB recovered (held %.0fms, wifi_duration=%.0fms)",
+                                (float)(now_ms - g_usb_recovery_since_ms.load()),
+                                wifi_ms > 0 ? (float)(now_ms - wifi_ms) : 0.0f);
+                        }
+                    } else {
+                        g_usb_recovery_since_ms.store(0, std::memory_order_relaxed); // reset recovery timer
+                    }
+                }
                 mirage::dispatcher().dispatchSharedFrame(sf);
             }
         }
@@ -286,6 +320,14 @@ bool initializeMultiReceiver() {
     // MirrorReceiver繧ｹ繝ｭ繝・ヨ蛻晄悄蛹・(繧ｨ繝ｳ繝医Μ菴懈・ + 繝・さ繝ｼ繝貅門ｙ)
     g_multi_receiver->start(mirage::config::getConfig().network.video_base_port);
 
+    // ── Monitor Lane Client (Phase C-5) ─────────────────────────────────
+    // Start MonitorLaneClient for main device (X1 / first device).
+    // Decodes UDP :50202 H.264 → RGBA → gui->stageMonitorFrame()
+    // DISABLED: Monitor lane not needed for VID0-only mode
+    // (stageMonitorFrame was interfering with VID0 recordUpdate slot)
+
+    // ────────────────────────────────────────────────────────────────────
+
     // MirageCapture APK逶ｴ謗･蜿嶺ｿ｡繝｢繝ｼ繝・
     // 蜷・ョ繝舌う繧ｹ縺ｫ adb forward 繧定ｨｭ螳壹＠縲〃ID0 TCP蜿嶺ｿ｡繧帝幕蟋・
     // MirageCapture APK 縺後く繝｣繝励メ繝｣繝ｻ騾∽ｿ｡繧呈球縺・(scrcpy荳堺ｽｿ逕ｨ)
@@ -301,8 +343,8 @@ bool initializeMultiReceiver() {
         return false;
     }
 
-    constexpr int REMOTE_PORT = 50100;  // MirageCapture TcpVideoSender
-    constexpr int BASE_LOCAL_PORT = 50100;
+    constexpr int REMOTE_PORT = 50100;  // MirageCapture TcpVideoSender (on-device fixed port)
+    constexpr int BASE_LOCAL_PORT = 50000;  // +100 per device index
 
     
 
@@ -325,20 +367,27 @@ bool initializeMultiReceiver() {
         }
     } catch (...) {}
 int success = 0;
-    // Zero-copy tiled callback: writes top/bot tiles directly into Vulkan staging.
-    // Saves one 9.6MB memcpy per frame vs compose() intermediate buffer.
-    g_multi_receiver->setTiledCallback([](const std::string& hardware_id,
-        const std::shared_ptr<mirage::SharedFrame>& top,
-        const std::shared_ptr<mirage::SharedFrame>& bot,
-        int slice_h) {
-        if (!top || !top->rgba || !bot || !bot->rgba) return;
-        if (g_gui) {
-            // Pass SharedFrame refs to keep buffers alive during memcpy
-            g_gui->stageTiledFrame(hardware_id, top, bot, slice_h);
+    // TILED_REMOVED: setTiledCallback removed (TileCompositor functionality removed)
+    // g_multi_receiver->setTiledCallback(...);
+
+    // Direct callback: GUI queueFrame only, bypasses EventBus (no AI blocking)
+    g_multi_receiver->setDirectCallback([](const std::string& hardware_id,
+                                           std::shared_ptr<mirage::SharedFrame> frame) {
+        auto gui = g_gui;
+        if (!gui || !frame) return;
+        // Resolve hardware_id -> port for logging
+        int source_port = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_hwport_m);
+            auto it = g_hw_to_port.find(hardware_id);
+            if (it != g_hw_to_port.end()) source_port = it->second;
         }
+        frame->device_id = hardware_id;
+        frame->source_port = source_port;
+        gui->queueFrame(hardware_id, frame);
     });
 
-    g_multi_receiver->setFrameCallback([](const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame) {
+        g_multi_receiver->setFrameCallback([](const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame) {
         // Convert hardware_id to slot_N format for AI engine
         static std::unordered_map<std::string, int> s_hw_slot;
         static std::mutex s_hw_mutex;
@@ -370,10 +419,27 @@ int success = 0;
         }
 
         // SharedFrame direct dispatch (no MirrorFrame::rgba copy)
+        // USB/WiFi failover: suppress TCP frames when USB is active
         {
             frame->device_id   = device_id;
             frame->source_port = source_port;
-            mirage::dispatcher().dispatchSharedFrame(frame);
+            int64_t now_ms = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            int64_t usb_last = g_usb_frame_last_ms.load(std::memory_order_relaxed);
+            bool usb_alive = (usb_last > 0) && ((now_ms - usb_last) < USB_FRAME_TIMEOUT_MS);
+            if (g_usb_active.load(std::memory_order_relaxed) && !usb_alive) {
+                // USB just died: switch to WiFi
+                g_usb_active.store(false, std::memory_order_relaxed);
+                g_usb_recovery_since_ms.store(0, std::memory_order_relaxed);
+                g_switch_to_wifi_ms.store(now_ms, std::memory_order_relaxed);
+                float lag_ms = usb_last > 0 ? (float)(now_ms - usb_last) : 0.0f;
+                MLOG_INFO("failover", "[FAILOVER] USB -> WiFi (lag=%.0fms since last USB frame)", lag_ms);
+            }
+            if (!g_usb_active.load(std::memory_order_relaxed) || !usb_alive) {
+                // WiFi frame: dispatch only when USB is not active
+                mirage::dispatcher().dispatchSharedFrame(frame);
+            }
+            // else: USB is active, TCP frame suppressed
         }
     });
 
@@ -388,13 +454,16 @@ int success = 0;
             local_port = dev.assigned_tcp_port;
         } else {
             // Stable mapping by ADB id (avoids hardware_id mismatch causing port collisions)
-            if (adb_id.find("192.168.0.3") != std::string::npos) local_port = 50100;
-            else if (adb_id.find("192.168.0.6") != std::string::npos || adb_id.find("A9250700956") != std::string::npos) local_port = 50102;
-            else if (adb_id.find("192.168.0.8") != std::string::npos || adb_id.find("A9250700479") != std::string::npos) local_port = 50104;
+            // Port scheme: 50000 + device_index * 100
+            // Each device gets a 100-port block: +0=main, +1=tile, +2=AI(future), ...
+            // X1(192.168.0.3)=50000, A9#956(192.168.0.6)=50100, A9#479(192.168.0.8)=50200
+            if (adb_id.find("192.168.0.3") != std::string::npos) local_port = 50000;
+            else if (adb_id.find("192.168.0.6") != std::string::npos || adb_id.find("A9250700956") != std::string::npos) local_port = 50100;
+            else if (adb_id.find("192.168.0.8") != std::string::npos || adb_id.find("A9250700479") != std::string::npos) local_port = 50200;
             else {
                 auto itp = fixed_port_map.find(dev.hardware_id);
                 if (itp != fixed_port_map.end()) local_port = itp->second;
-                else local_port = BASE_LOCAL_PORT + static_cast<int>(i) * 2;
+                else local_port = BASE_LOCAL_PORT + static_cast<int>(i) * 100;
             }
         }
         {
@@ -455,8 +524,10 @@ int success = 0;
                 started = g_multi_receiver->restart_as_tcp_vid0_tiled(
                     dev.hardware_id, tile_port0, tile_port1, tile_host);
             } else {
-                started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port,
-                    dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address);
+                std::string tcp_host = dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address;
+                { std::string h; if (mirage::config::ExpectedSizeRegistry::instance().getTcpHost(dev.hardware_id, h)) tcp_host = h; }
+                MLOG_INFO("mirror", "VID0 TCP host: %s port=%d for %s", tcp_host.c_str(), local_port, dev.display_name.c_str());
+                started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port, tcp_host);
             }
             if (started) success++;
             else MLOG_ERROR("gui", "VID0 TCP start failed: %s port=%d", dev.display_name.c_str(), local_port);
@@ -482,7 +553,18 @@ void initializeHybridCommand() {
 
     setupUsbVideoCallback();
 
+    g_hybrid_cmd->set_aoa_auto_switch(mirage::config::getConfig().aoa.auto_switch);
+    MLOG_INFO("gui", "AOA auto-switch: %s",
+              mirage::config::getConfig().aoa.auto_switch ? "enabled" : "disabled");
     if (g_hybrid_cmd->start()) {
+        // Always set ADB fallback device (used when USB HID fails e.g. WiFi-only mode)
+        if (auto* fb = g_hybrid_cmd->get_adb_fallback()) {
+            auto devs = g_adb_manager->getUniqueDevices();
+            if (!devs.empty()) {
+                fb->set_device(devs[0].preferred_adb_id);
+                MLOG_INFO("gui", "ADB fallback device set: %s", devs[0].preferred_adb_id.c_str());
+            }
+        }
         auto device_ids = g_hybrid_cmd->get_device_ids();
         if (device_ids.empty()) {
             MLOG_INFO("gui", "USB AOA: 0 devices found (ADB fallback will be used for commands)");
@@ -500,6 +582,29 @@ void initializeHybridCommand() {
         MLOG_WARN("gui", "USB command sender failed to start (ADB fallback will be used)");
         // NOTE: Do NOT reset g_hybrid_cmd here - lambda callbacks may still reference it
         // and cause use-after-free. Keep the object alive; device_count() returns 0.
+    }
+
+    // Register WiFi TCP command senders (Tier 2.5) from devices.json
+    // cmd_port = tcp_port + 1 per device block scheme
+    try {
+        std::vector<std::string> cands = {"devices.json", "../devices.json",
+                                          "../../devices.json", "../../../devices.json"};
+        for (const auto& cand : cands) {
+            std::ifstream fjson(cand);
+            if (!fjson.is_open()) continue;
+            nlohmann::json jd = nlohmann::json::parse(fjson);
+            if (!jd.contains("devices")) break;
+            for (const auto& dj : jd["devices"]) {
+                std::string hw_id = dj.value("hardware_id", "");
+                std::string ip    = dj.value("ip_address", "");
+                int cmd_port      = dj.value("cmd_port", 0);
+                if (hw_id.empty() || ip.empty() || cmd_port <= 0) continue;
+                g_hybrid_cmd->register_wifi_device(hw_id, ip, (uint16_t)cmd_port);
+            }
+            break;
+        }
+    } catch (const std::exception& e) {
+        MLOG_WARN("gui", "WiFi TCP sender init failed: %s", e.what());
     }
 }
 
@@ -571,6 +676,25 @@ static void startRouteEvalThread() {
 // =============================================================================
 // FPS Command Callback
 // =============================================================================
+static void onQualityCommand(const std::string& device_id, int encode_max_size) {
+    // Send ACTION_VIDEO_MAXSIZE broadcast to Android
+    if (!g_adb_manager) return;
+    auto devices = g_adb_manager->getUniqueDevices();
+    for (const auto& dev : devices) {
+        if (dev.hardware_id != device_id && dev.preferred_adb_id != device_id) continue;
+        if (dev.wifi_connections.empty() && dev.preferred_adb_id.empty()) continue;
+        std::string adb_id = dev.wifi_connections.empty() ? dev.preferred_adb_id : dev.wifi_connections[0];
+        std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE"
+                          " -p com.mirage.capture --ei max_size " + std::to_string(encode_max_size);
+        std::thread([adb_id, cmd, device_id, encode_max_size]() {
+            if (g_adb_manager) g_adb_manager->adbCommand(adb_id, cmd);
+            MLOG_INFO("RouteCtrl", "Phase E: max_size=%d sent to %s via %s",
+                      encode_max_size, device_id.c_str(), adb_id.c_str());
+        }).detach();
+        break;
+    }
+}
+
 static void onFpsCommand(const std::string& device_id, int fps) {
     // X1 always uses ADB broadcast (WiFi direct video, serial "93020523431940")
     const bool deviceIsX1 = (device_id.find("93020523431940") != std::string::npos);
@@ -606,7 +730,7 @@ static void onFpsCommand(const std::string& device_id, int fps) {
             int send_fps = fps;
             if (isX1 && send_fps < 90) send_fps = 90;
             std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS -p com.mirage.capture --ei target_fps " + std::to_string(send_fps) + " --ei fps " + std::to_string(send_fps);
-            std::string cmd2 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000" : "";
+            std::string cmd2 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 1800" : "";
             std::string cmd3 = isX1 ? "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture" : "";
             std::thread([adb_id, cmd, cmd2, cmd3, device_id, send_fps]() {
                 if (g_adb_manager) { g_adb_manager->adbCommand(adb_id, cmd); if(!cmd2.empty()) g_adb_manager->adbCommand(adb_id, cmd2); if(!cmd3.empty()) g_adb_manager->adbCommand(adb_id, cmd3); }
@@ -614,6 +738,12 @@ static void onFpsCommand(const std::string& device_id, int fps) {
             }).detach();
             sent_via_adb = true;
         }
+    }
+    const bool is_x1_auto = (device_id.find("93020523431940") != std::string::npos) ||
+                            (device_id.find("f1925da3_1235545") != std::string::npos);
+    if (is_x1_auto) {
+        MLOG_INFO("RouteCtrl", "Skip auto FPS for X1: %s fps=%d", device_id.c_str(), fps);
+        return;
     }
     if (!sent_via_adb && g_hybrid_cmd) {
         g_hybrid_cmd->send_video_fps(device_id, fps);
@@ -733,6 +863,9 @@ void initializeRouting() {
     // FPS command callback
     g_route_controller->setFpsCommandCallback([](const std::string& device_id, int fps) { onFpsCommand(device_id, fps); });
 
+    // Quality command callback (Phase E)
+    g_route_controller->setQualityCommandCallback([](const std::string& device_id, int max_size) { onQualityCommand(device_id, max_size); });
+
     // Route command callback
     g_route_controller->setRouteCommandCallback([](const std::string& device_id, ::gui::RouteController::VideoRoute route, const std::string& host, int port) { onRouteCommand(device_id, route, host, port); });
 
@@ -800,11 +933,8 @@ static void registerEventBusSubscriptions() {
                     MLOG_INFO("ui", "FrameIn: %s", s.c_str());
                 }
             }
-            if (gui) {
-                if (e.frame) {
-                    gui->queueFrame(e.device_id, e.frame);
-                }
-            }
+            // queueFrame now handled by setDirectCallback (bypasses EventBus)
+            // if (gui) { if (e.frame) { gui->queueFrame(e.device_id, e.frame); } }
         });
     sub_frame.release();
 
@@ -893,7 +1023,12 @@ static void onDeviceSelected(const std::string& device_id) {
             std::string hw_id = uid;
             auto it = usb_to_hw.find(uid);
             if (it != usb_to_hw.end()) hw_id = it->second;
+            const bool is_x1_sel = (uid.find("93020523431940") != std::string::npos) || (hw_id.find("f1925da3_1235545") != std::string::npos);
             int target_fps = (hw_id == device_id) ? 60 : 30;
+            if (is_x1_sel) {
+                MLOG_INFO("gui", "Skip selection FPS update for X1 (USB): %s -> %d", uid.c_str(), target_fps);
+                continue;
+            }
             g_hybrid_cmd->send_video_fps(uid, target_fps);
             MLOG_INFO("gui", "FPS update (USB): %s -> %d fps (%s)",
                       uid.c_str(), target_fps,
@@ -907,6 +1042,10 @@ static void onDeviceSelected(const std::string& device_id) {
                 for (const auto& dev : adb_devices) {
                     const bool isX1dev = (dev.hardware_id.find("f1925da3") != std::string::npos);
                     int target_fps = (dev.hardware_id == device_id) ? (isX1dev ? 90 : 60) : 30;
+                    if (isX1dev) {
+                        MLOG_INFO("gui", "Skip selection FPS update for X1 (ADB fallback): %s -> %d", dev.hardware_id.c_str(), target_fps);
+                        continue;
+                    }
                     std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_FPS"
                         " -p com.mirage.capture --ei target_fps " + std::to_string(target_fps)
                         + " --ei fps " + std::to_string(target_fps);
@@ -1049,19 +1188,18 @@ void initializeAI() {
 }
 #endif
 
-#ifdef USE_OCR
+#ifdef MIRAGE_OCR_ENABLED
 void initializeOCR() {
     auto gui = g_gui;
-    g_ocr_engine = std::make_unique<mirage::ocr::OCREngine>();
-    mirage::ocr::OCRConfig ocr_config;
-    ocr_config.language = "eng+jpn";
-
-    std::string ocr_error;
-    if (g_ocr_engine->initialize(ocr_config, ocr_error)) {
-        if (gui) gui->logInfo(u8"OCR engine initialized");
+    g_frame_analyzer = std::make_unique<mirage::FrameAnalyzer>();
+    if (g_frame_analyzer->init("jpn+eng")) {
+        g_frame_analyzer->startCapture();  // EventBus subscribe (x1_canonical)
+        if (gui) gui->logInfo(u8"FrameAnalyzer (Tesseract) initialized");
+        MLOG_INFO("gui", "FrameAnalyzer initialized (jpn+eng)");
     } else {
-        if (gui) gui->logWarning(u8"OCR engine failed: " + ocr_error);
-        g_ocr_engine.reset();
+        if (gui) gui->logWarning(u8"FrameAnalyzer init failed");
+        MLOG_WARN("gui", "FrameAnalyzer init failed");
+        g_frame_analyzer.reset();
     }
 }
 #endif
