@@ -384,6 +384,11 @@ void sendSwipeCommand(const std::string& device_id, int x1, int y1, int x2, int 
 
 void sendKeyCommand(const std::string& device_id, int keycode) {
     if (g_hybrid_cmd) {
+        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+            g_hybrid_cmd->send_key(device_id, keycode);
+            MLOG_INFO("cmd", "WiFi TCP key %d sent to %s", keycode, device_id.c_str());
+            return;
+        }
         std::string usb_id = resolveToUsbId(device_id);
         if (g_hybrid_cmd->is_device_connected(usb_id)) {
             g_hybrid_cmd->send_key(usb_id, keycode);
