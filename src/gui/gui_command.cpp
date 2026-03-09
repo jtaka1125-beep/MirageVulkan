@@ -427,7 +427,15 @@ void sendTapCommandScaled(const std::string& device_id, int x, int y, int src_w,
         sendTapCommand(device_id, x, y);  // fallback: coords as-is
         return;
     }
-    // Resolve hardware_id → USB serial so HID/MIRA USB Tier 1/2 can be used
+
+    if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+        MLOG_INFO("cmd", "[D2] sendTapCommandScaled WIFI first device=%s (%d,%d) src=%dx%d",
+                  device_id.c_str(), x, y, src_w, src_h);
+        uint32_t seq = g_hybrid_cmd->send_tap(device_id, x, y, src_w, src_h);
+        if (seq > 0) return;
+    }
+
+    // Fallback: resolve hardware_id → USB serial so HID/MIRA USB Tier 1/2 can be used
     std::string usb_id = resolveToUsbId(device_id);
     MLOG_INFO("cmd", "[D2] sendTapCommandScaled device=%s usb=%s (%d,%d) src=%dx%d",
               device_id.c_str(), usb_id.c_str(), x, y, src_w, src_h);
