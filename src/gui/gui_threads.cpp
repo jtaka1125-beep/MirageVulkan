@@ -18,6 +18,13 @@
 #include <windows.h>
 #endif
 
+// Forward declarations from gui_init.cpp (must be outside namespace)
+namespace gui {
+    class MultiDeviceReceiver;
+}
+extern std::unique_ptr<::gui::MultiDeviceReceiver> g_multi_receiver;
+namespace mirage::gui::init { bool initializeMultiReceiver(); }
+
 namespace mirage::gui::threads {
 
 namespace {
@@ -50,6 +57,7 @@ int execHidden(const std::string& cmd) {
 } // namespace
 
 using namespace mirage::gui::state;
+
 
 // =============================================================================
 // Slot Stats Structure
@@ -153,23 +161,23 @@ static std::vector<SlotInfo> fetchSlotStats() {
 
 void adbDetectionThread() {
   try {
-    MLOG_INFO("adb", "デバイス検出開始...");
+    MLOG_INFO("adb", "鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬮ｫ・ｶ・つ髫ｲ蟷｢・ｽ・ｷ驛｢譎｢・ｽ・ｻ鬯ｯ・ｮ繝ｻ・｢髯ｷ・ｿ繝ｻ・･郢晢ｽｻ繝ｻ・ｧ驛｢譎｢・ｽ・ｻ..");
     g_adb_manager = std::make_unique<::gui::AdbDeviceManager>();
-    // config.jsonのadb.pathを直接読んでsetAdbPath (PATH不依存)
+    // config.json鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｮadb.path鬩幢ｽ｢繝ｻ・ｧ髯懶ｽ｣繝ｻ・､髯晢ｽｲ繝ｻ・ｩ鬮ｫ・ｰ隴会ｽｦ繝ｻ・ｽ繝ｻ・･鬯ｮ・ｫ繝ｻ・ｱ郢晢ｽｻ繝ｻ・ｭ鬩幢ｽ｢繝ｻ・ｧ鬮ｦ・ｮ陷ｷ・ｶ・つ騾橸ｽｴetAdbPath (PATH鬮｣蛹・ｽｽ・ｳ髯懶ｽ｣繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｾ髫ｴ蜿門ｾ励・・ｽ繝ｻ・ｭ驛｢譎｢・ｽ・ｻ
     {
         std::string adb_path;
-        // まずMIRAGE_ADB_PATH環境変数を確認
+        // 鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｾ鬩搾ｽｵ繝ｻ・ｺ髯ｷ・ｩ繝ｻ・ｺIRAGE_ADB_PATH鬮ｴ謇假ｽｽ・ｺ郢晢ｽｻ繝ｻ・ｰ鬮ｯ貅倥・郢晢ｽｻ郢晢ｽｻ繝ｻ・､鬨ｾ蛹・ｽｽ・ｻ髴取ｺｷ・､繧托ｽｽ・ｹ繝ｻ・ｧ髯懶ｽ｣繝ｻ・､郢晢ｽｻ繝ｻ・｢郢晢ｽｻ繝ｻ・ｺ鬯ｮ・ｫ繝ｻ・ｱ驛｢譎｢・ｽ・ｻ
         if (const char* env = std::getenv("MIRAGE_ADB_PATH")) {
             adb_path = env;
         } else {
-            // config.jsonからadb.pathを読む
+            // config.json鬩搾ｽｵ繝ｻ・ｺ髣包ｽｵ隴趣ｽ｢繝ｻ・ｽ鬯｢諷ｧb.path鬩幢ｽ｢繝ｻ・ｧ髯橸ｽｳ陞滂ｽｲ繝ｻ・ｽ繝ｻ・ｪ郢晢ｽｻ繝ｻ・ｭ鬩幢ｽ｢繝ｻ・ｧ繝ｻ縺､ﾂ
             std::string exe_dir = mirage::config::getExeDirectory();
             std::string cfg_path = exe_dir + "\\config.json";
             std::ifstream cfg_file(cfg_path);
             if (cfg_file.is_open()) {
                 std::string content((std::istreambuf_iterator<char>(cfg_file)),
                                      std::istreambuf_iterator<char>());
-                // "path": "C:/..." を抽出 (adb セクション内)
+                // "path": "C:/..." 鬩幢ｽ｢繝ｻ・ｧ髯ｷ・ｻ陜捺ｻゑｽｽ・ｭ隶鯉ｽ｢隲､蠑ｱ繝ｻ繝ｻ・ｺ (adb 鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｻ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｯ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｷ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｧ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｳ鬮ｯ・ｷ・つ驛｢譎｢・ｽ・ｻ
                 auto adb_pos = content.find("\"adb\"");
                 if (adb_pos != std::string::npos) {
                     auto path_pos = content.find("\"path\"", adb_pos);
@@ -204,14 +212,17 @@ void adbDetectionThread() {
             if (dev.display_name.find("Npad X1") != std::string::npos) {
                 const std::string adb_id = !dev.wifi_connections.empty() ? dev.wifi_connections[0] : (!dev.usb_connections.empty() ? dev.usb_connections[0] : std::string());
                 if (!adb_id.empty()) {
-                    g_adb_manager->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size 2000");
+                    const int target_max = ((std::min(dev.screen_width, dev.screen_height) > 1080) || (std::max(dev.screen_width, dev.screen_height) > 1920))
+                        ? static_cast<int>(std::max(dev.screen_width, dev.screen_height) * 0.90 + 0.5)
+                        : std::max(dev.screen_width, dev.screen_height);
+                    g_adb_manager->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE -p com.mirage.capture --ei max_size " + std::to_string(target_max));
                     g_adb_manager->adbCommand(adb_id, "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_IDR -p com.mirage.capture");
-                    MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", adb_id.c_str());
+                    MLOG_INFO("watchdog", "Force policy max_size=%d on %s native=%dx%d", target_max, adb_id.c_str(), dev.screen_width, dev.screen_height);
                 }
             }
         }
 
-    MLOG_INFO("adb", "%zu 台のデバイスを検出:", devices.size());
+    MLOG_INFO("adb", "%zu 鬮ｯ・ｷ繝ｻ・ｿ郢晢ｽｻ繝ｻ・ｰ鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｮ鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩幢ｽ｢繝ｻ・ｧ髯ｷ・ｻ髣鯉ｽｨ繝ｻ・ｽ繝ｻ・､髫ｲ蟷｢・ｽ・ｷ驛｢譎｢・ｽ・ｻ:", devices.size());
     for (const auto& dev : devices) {
         MLOG_INFO("threads", "  - %s [%s] USB:%zu WiFi:%zu IP:%s", dev.display_name.c_str(),
                 dev.hardware_id.c_str(),
@@ -223,7 +234,7 @@ void adbDetectionThread() {
     // Log to GUI if available
     auto gui = g_gui;
     if (gui) {
-        gui->logInfo(u8"ADB検出: " + std::to_string(devices.size()) + u8"台 (重複排除済)");
+        gui->logInfo(u8"ADB鬮ｫ・ｶ・つ髫ｲ蟷｢・ｽ・ｷ驛｢譎｢・ｽ・ｻ: " + std::to_string(devices.size()) + u8"鬮ｯ・ｷ繝ｻ・ｿ郢晢ｽｻ繝ｻ・ｰ (鬯ｯ・ｩ繝ｻ・･髯晢｣ｰ髮懶ｽ｣繝ｻ・ｽ繝ｻ・､驛｢譎｢・ｽ・ｻ鬮ｮ逕ｻ繝ｻ繝ｻ・ｫ繝ｻ・ｯ郢晢ｽｻ繝ｻ・､鬮ｮ荵晢ｽ・ｹ晢ｽｻ");
         for (const auto& dev : devices) {
             std::string conn_info;
             if (!dev.usb_connections.empty()) conn_info += "USB ";
@@ -232,7 +243,7 @@ void adbDetectionThread() {
         }
     }
 
-    MLOG_INFO("adb", "検出完了");
+    MLOG_INFO("adb", "ADB detection pass completed");
   } catch (const std::exception& e) {
     MLOG_ERROR("adb", "adbDetectionThread exception: %s", e.what());
   } catch (...) {
@@ -241,10 +252,10 @@ void adbDetectionThread() {
 }
 
 // =============================================================================
-// Device Update Thread — Static Helpers
+// Device Update Thread 鬩包ｽｯ繝ｻ・ｶ驛｢譎｢・ｽ・ｻStatic Helpers
 // =============================================================================
 
-// スロットレシーバーからのフレーム取得・AI処理
+// 鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｭ鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｨ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｬ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｷ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴寂・繝ｻ驛｢譎｢・ｽ・ｻ鬩搾ｽｵ繝ｻ・ｺ髣包ｽｵ隴趣ｽ｢繝ｻ・ｽ髢ｾ・･繝ｻ・ｸ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｮ鬩幢ｽ｢隴弱・・ｽ・ｼ鬩･繝ｻ・ｨ謚ｵ・ｽ・ｹ隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴趣ｽ｢繝ｻ・｣繝ｻ・ｰ鬮ｯ・ｷ繝ｻ・ｿ鬯ｮ・｢・つ郢晢ｽｻ繝ｻ・ｾ髯ｷ莨夲ｽｽ・ｱ驛｢譎｢・ｽ・ｻAI鬮ｯ・ｷ郢晢ｽｻ繝ｻ・ｽ繝ｻ・ｦ鬯ｨ・ｾ郢晢ｽｻ郢晢ｽｻ
 static void updateSlotReceiverFrames(const std::shared_ptr<gui::GuiApplication>& gui) {
     for (int i = 0; i < MAX_SLOTS; i++) {
         if (g_receivers[i]) {
@@ -293,7 +304,7 @@ static void updateSlotReceiverFrames(const std::shared_ptr<gui::GuiApplication>&
     }
 }
 
-// USBデバイス登録・フレーム取得・ハイブリッド/マルチレシーバー統計更新
+// USB鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬯ｨ・ｾ陷茨ｽｷ繝ｻ・ｽ繝ｻ・ｻ鬯ｯ・ｪ繝ｻ・ｭ郢晢ｽｻ繝ｻ・ｲ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｻ鬩幢ｽ｢隴弱・・ｽ・ｼ鬩･繝ｻ・ｨ謚ｵ・ｽ・ｹ隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴趣ｽ｢繝ｻ・｣繝ｻ・ｰ鬮ｯ・ｷ繝ｻ・ｿ鬯ｮ・｢・つ郢晢ｽｻ繝ｻ・ｾ髯ｷ莨夲ｽｽ・ｱ驛｢譎｢・ｽ・ｻ鬩幢ｽ｢隴乗・・ｽ・ｸ驗呻ｽｫ遶包ｽｧ鬩幢ｽ｢隴弱・ﾂｧ繝ｻ蜿悶渚繝ｻ・ｹ隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｩ/鬩幢ｽ｢隴弱・・ｽ・ｧ繝ｻ・ｭ繝ｻ蜿門旭繝ｻ・ｹ隴擾ｽｶ郢晢ｽｻ繝ｻ蜿厄ｽｨ謚ｵ・ｽ・ｹ繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｷ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴寂・繝ｻ驛｢譎｢・ｽ・ｻ鬯ｩ謳ｾ・ｽ・ｨ郢晢ｽｻ繝ｻ・ｱ鬯ｮ・ｫ繝ｻ・ｪ髯懈瑳・ｺ・ｷ繝ｻ・ｳ繝ｻ・ｩ鬮ｫ・ｴ郢晢ｽｻ繝ｻ・ｽ繝ｻ・ｰ
 static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplication>& gui) {
     // Update video frames from all USB devices (multi-device mode)
     if (g_hybrid_cmd) {
@@ -381,7 +392,7 @@ static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplicatio
                     g_main_device_set = true;
                 }
             }
-            // スライディングウィンドウFPS計算（1秒間隔で更新）
+            // 鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｩ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驍ｵ・ｺ郢晢ｽｻ繝ｻ・ｹ隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｳ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｦ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・｣鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｳ鬩幢ｽ｢隴取得・ｽ・ｳ繝ｻ・ｨ驍ｵ・ｺ郢晢ｽｻPS鬯ｮ・ｫ繝ｻ・ｪ鬮｢・ｧ繝ｻ・ｲ郢晢ｽｻ繝ｻ・ｮ髫ｴ莨夲ｽｽ・ｦ郢晢ｽｻ繝ｻ・ｼ驛｢譎｢・ｽ・ｻ鬯ｩ遨ゑｽｼ諛ｶ・ｽ・ｸ隴乗・・ｽ・ｿ繝ｻ・｣鬯ｯ・ｮ繝ｻ・ｫ髫ｴ竏ｬ繝ｻ・つ陞ｳ螟ｲ・ｽ・ｭ陷ｴ繝ｻ・ｽ・ｽ繝ｻ・ｴ鬮ｫ・ｴ郢晢ｽｻ繝ｻ・ｽ繝ｻ・ｰ驛｢譎｢・ｽ・ｻ驛｢譎｢・ｽ・ｻ
             float fps = 0.0f;
             {
                 struct FpsState {
@@ -426,7 +437,7 @@ static void registerAndUpdateUsbDevices(const std::shared_ptr<gui::GuiApplicatio
     }
 }
 
-// TCPビデオレシーバーからのフレーム取得（ADB forwardモード）
+// TCP鬩幢ｽ｢隴寂或・ｾ・ｭ驛｢譎｢・ｽ・ｧ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｪ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｬ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｷ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴寂・繝ｻ驛｢譎｢・ｽ・ｻ鬩搾ｽｵ繝ｻ・ｺ髣包ｽｵ隴趣ｽ｢繝ｻ・ｽ髢ｾ・･繝ｻ・ｸ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｮ鬩幢ｽ｢隴弱・・ｽ・ｼ鬩･繝ｻ・ｨ謚ｵ・ｽ・ｹ隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴趣ｽ｢繝ｻ・｣繝ｻ・ｰ鬮ｯ・ｷ繝ｻ・ｿ鬯ｮ・｢・つ郢晢ｽｻ繝ｻ・ｾ髫ｴ莨夲ｽｽ・ｦ郢晢ｽｻ繝ｻ・ｼ驛｢譎｢・ｽ・ｻDB forward鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・｢鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴乗・・ｽ・ｼ陞滂ｽｲ繝ｻ・ｽ繝ｻ・ｼ驛｢譎｢・ｽ・ｻ
 static void updateTcpReceiverFrames([[maybe_unused]] const std::shared_ptr<gui::GuiApplication>& gui) {
 }
 
@@ -502,7 +513,7 @@ void deviceUpdateThread() {
                     g_receivers[slot.slot] = std::make_unique<::gui::MirrorReceiver>();
                     g_receivers[slot.slot]->start(port);
 
-                    gui->logInfo(u8"デバイス接続: " + slot.serial + " (スロット" + std::to_string(slot.slot) + ")");
+                    gui->logInfo(u8"鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬮ｫ・ｰ隴会ｽｦ繝ｻ・ｽ繝ｻ・･鬯ｩ謳ｾ・ｽ・ｯ驛｢譎｢・ｽ・ｻ " + slot.serial + " (鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｭ鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｨ" + std::to_string(slot.slot) + ")");
                 }
 
                 // Update status based on KPIs
@@ -538,7 +549,7 @@ void deviceUpdateThread() {
                             g_receivers[i].reset();
                         }
 
-                        gui->logWarning(u8"デバイス切断: スロット" + std::to_string(i));
+                        gui->logWarning(u8"鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬮ｯ蜈ｷ・ｽ・ｻ驛｢譎｢・ｽ・ｻ髯橸ｽｯ郢晢ｽｻ 鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩幢ｽ｢隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｭ鬩幢ｽ｢隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｨ" + std::to_string(i));
                     }
                 }
             }
@@ -602,33 +613,34 @@ void wifiAdbWatchdogThread() {
                 }
             }
 
-            // A) A9系デバイス（Npad以外）のA11y自動設定
-            if (!dev.wifi_connections.empty() &&
-                dev.display_name.find("Npad") == std::string::npos) {
+            // A) WiFi ADB鬮ｫ・ｰ隴会ｽｦ繝ｻ・ｽ繝ｻ・･鬯ｩ謳ｾ・ｽ・ｯ髯橸ｽ｢繝ｻ・ｹ驛｢譎｢・ｽ・ｧ鬩幢ｽ｢隴寂・繝ｻ驍ｵ・ｺ郢晢ｽｻ繝ｻ・ｹ繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｮA11y鬯ｮ・｢繝ｻ・ｾ郢晢ｽｻ繝ｻ・ｪ鬮ｯ・ｷ髢ｧ・ｴ郢晢ｽｻ郢晢ｽｻ繝ｻ・ｨ郢晢ｽｻ繝ｻ・ｭ鬮ｯ讖ｸ・ｽ・ｳ髯樊ｻゑｽｽ・ｲ郢晢ｽｻ繝ｻ・ｼ驛｢譎｢・ｽ・ｻ1鬮ｯ・ｷ繝ｻ・ｷ郢晢ｽｻ繝ｻ・ｫ鬩幢ｽ｢繝ｻ・ｧ繝ｻ縺､ﾂ驛｢譎｢・ｽ・ｻ驛｢譎｢・ｽ・ｻ
+            if (!dev.wifi_connections.empty()) {
                 const auto& wifi_id = dev.wifi_connections[0];
                 std::string a11y = g_adb_manager->adbCommand(wifi_id,
                     "shell settings get secure enabled_accessibility_services");
                 if (a11y.find("MirageAccessibilityService") == std::string::npos) {
                     g_adb_manager->adbCommand(wifi_id,
                         "shell settings put secure enabled_accessibility_services "
-                        "com.mirage.accessory/.access.MirageAccessibilityService");
+                        "com.mirage.capture/.access.MirageAccessibilityService");
                     g_adb_manager->adbCommand(wifi_id,
                         "shell settings put secure accessibility_enabled 1");
                     MLOG_INFO("watchdog", "A11y re-enabled on %s", dev.display_name.c_str());
                 }
             }
 
-            // B) Npad X1のmax_sizeブロードキャスト（adaptive downscale防止）
-            if (dev.display_name.find("Npad X1") != std::string::npos &&
-                !dev.wifi_connections.empty()) {
+            // B) Npad X1鬩搾ｽｵ繝ｻ・ｺ郢晢ｽｻ繝ｻ・ｮmax_size鬩幢ｽ｢隴弱・ﾂｧ繝ｻ蜿厄ｽｺ・ｽ繝ｻ・ｹ隴趣ｽ｢繝ｻ・ｽ繝ｻ・ｼ鬩幢ｽ｢隴取得・ｽ・ｳ繝ｻ・ｨ驍ｵ・ｺ陷證ｦ・ｽ・ｹ隴趣ｽ｢繝ｻ・ｽ繝ｻ・｣鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩幢ｽ｢隴寂握縺狗ｹ晢ｽｻ繝ｻ・ｼ驛｢譎｢・ｽ・ｻdaptive downscale鬯ｯ・ｮ繝ｻ・ｦ郢晢ｽｻ繝ｻ・ｲ鬮ｮ蠑ｱ繝ｻ繝ｻ・ｽ繝ｻ・｢驛｢譎｢・ｽ・ｻ驛｢譎｢・ｽ・ｻ
+            if (!dev.wifi_connections.empty()) {
                 const auto& wifi_id = dev.wifi_connections[0];
+                const int target_max = ((std::min(dev.screen_width, dev.screen_height) > 1080) || (std::max(dev.screen_width, dev.screen_height) > 1920))
+                    ? static_cast<int>(std::max(dev.screen_width, dev.screen_height) * 0.90 + 0.5)
+                    : std::max(dev.screen_width, dev.screen_height);
                 g_adb_manager->adbCommand(wifi_id,
                     "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE "
-                    "-p com.mirage.capture --ei max_size 2000");
-                MLOG_INFO("watchdog", "Force X1 max_size=2000 on %s", wifi_id.c_str());
+                    "-p com.mirage.capture --ei max_size " + std::to_string(target_max));
+                MLOG_INFO("watchdog", "Force policy max_size=%d on %s native=%dx%d", target_max, wifi_id.c_str(), dev.screen_width, dev.screen_height);
             }
 
-            // C) ScreenCaptureService 死活監視
+            // C) ScreenCaptureService 鬮ｮ蠑ｱ繝ｻ繝ｻ・ｽ繝ｻ・ｻ鬮ｮ雜｣・ｽ・｢郢晢ｽｻ繝ｻ・ｻ鬯ｨ・ｾ繝ｻ・ｶ郢晢ｽｻ繝ｻ・｣鬯ｮ・ｫ髴域鱒繝ｻ
             if (!dev.wifi_connections.empty()) {
                 const auto& wifi_id = dev.wifi_connections[0];
                 std::string svc = g_adb_manager->adbCommand(wifi_id,
@@ -644,6 +656,13 @@ void wifiAdbWatchdogThread() {
                 }
             }
         }
+
+        // D) MultiReceiver鬮ｫ・ｴ陝ｷ・｢繝ｻ・ｽ繝ｻ・ｪ鬮ｯ蜈ｷ・ｽ・ｻ髫ｴ蠑ｱ繝ｻ繝ｻ繝ｻ蛻ｹ繝ｻ・ｹ髫ｰ雋ｻ・ｽ・ｶ驍ｵ・ｲ陜｣・､繝ｻ・ｹ隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩搾ｽｵ繝ｻ・ｺ髫ｰ逍ｲ・ｻ繧托ｽｽ・ｽ繝ｻ・ｭ髣費ｽｨ隲帛､ｷ蟶昴＠繝ｻ・ｺ髯ｷ・ｷ繝ｻ・ｶ郢晢ｽｻ驍・戟謐礼ｹ晢ｽｻ繝ｻ・ｴ鬮ｯ・ｷ繝ｻ・ｷ髯具ｽｹ繝ｻ・ｻ驛｢譎｢・ｽ・ｻ鬮ｯ・ｷ・つ髫ｶ螳茨ｽｿ・ｫ郢晢ｽｻ鬮ｫ・ｴ陝ｶ・ｶ繝ｻ・ｺ繝ｻ・ｷ髯懈ｻゑｽｽ・ｧ
+        if (!g_multi_receiver && !devices.empty()) {
+            MLOG_INFO("watchdog", "MultiReceiver uninitialized but %zu device(s) found 鬩包ｽｯ繝ｻ・ｶ驛｢譎｢・ｽ・ｻre-initializing",
+                      devices.size());
+            mirage::gui::init::initializeMultiReceiver();
+        }
     }
     MLOG_INFO("watchdog", "WiFi ADB watchdog stopped");
   } catch (const std::exception& e) {
@@ -654,3 +673,4 @@ void wifiAdbWatchdogThread() {
 }
 
 } // namespace mirage::gui::threads
+

@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem - TCP Video Receiver (ADB Forward Mode)
 // =============================================================================
 
@@ -106,38 +106,54 @@ std::string execCommandHidden(const std::string& cmd) {
 
     return result;
 }
+static int computePolicyMaxSizeFromNative(int native_w, int native_h, bool reduced_mode) {
+    const int short_side = std::min(native_w, native_h);
+    const int long_side = std::max(native_w, native_h);
+    if (short_side <= 0 || long_side <= 0) return reduced_mode ? 1800 : 2000;
+
+    const bool exceeds_fhd = (short_side > 1080) || (long_side > 1920);
+    if (!exceeds_fhd) {
+        return long_side;
+    }
+
+    const double scale = 0.90;
+    int scaled = static_cast<int>(long_side * scale + 0.5);
+    if (scaled < 1440) scaled = 1440;
+    if (scaled > long_side) scaled = long_side;
+    return scaled;
+}
 } // anonymous namespace
 
-// ScreenCaptureServiceが動いているかチェック
+// ScreenCaptureService縺悟虚縺・※縺・ｋ縺九メ繧ｧ繝・け
 bool TcpVideoReceiver::isCaptureServiceRunning(const std::string& adb_serial) {
     std::string cmd = "adb -s " + adb_serial + " shell \"dumpsys activity services com.mirage.capture 2>/dev/null\"";
     std::string result = execCommandHidden(cmd);
     return result.find("ScreenCaptureService") != std::string::npos;
 }
 
-// MirageCapture TCPミラーモードをintentで起動
+// MirageCapture TCP繝溘Λ繝ｼ繝｢繝ｼ繝峨ｒintent縺ｧ襍ｷ蜍・
 void TcpVideoReceiver::launchCaptureTcpMirror(const std::string& adb_serial) {
     // Determine device native size and pass max_size to MirageCapture to avoid implicit downscale.
     // Many capture stacks default to max_size=1440, which turns 1200x2000 -> 864x1440.
+    int native_w = 0, native_h = 0;
     int max_side = 0;
     {
         std::string cmd = "adb -s " + adb_serial + " shell wm size";
         std::string out = execCommandHidden(cmd);
-        // Parse "Physical size: WxH" or "Override size: WxH"
         auto parseWH = [&](const std::string& s) {
             int w=0,h=0;
             if (sscanf(s.c_str(), "%*[^0-9]%dx%d", &w, &h) == 2) {
-                max_side = std::max(w, h);
+                native_w = w; native_h = h;
+                max_side = computePolicyMaxSizeFromNative(w, h, false);
             }
         };
-        // Prefer Physical size if present
         size_t pos = out.find("Physical size");
         if (pos != std::string::npos) {
             parseWH(out.substr(pos));
         } else {
             parseWH(out);
         }
-        if (max_side <= 0) max_side = 2000; // safe default for Npad X1
+        if (max_side <= 0) max_side = 1800;
     }
 
     // Launch MirageCapture in TCP mirror mode.
@@ -148,8 +164,9 @@ void TcpVideoReceiver::launchCaptureTcpMirror(const std::string& adb_serial) {
         " --es mirror_mode tcp"
         " --ei max_size " + std::to_string(max_side);
     execCommandHidden(cmd);
-    MLOG_INFO("tcpvideo", "Launched MirageCapture TCP mirror (serial=%s, max_size=%d)", adb_serial.c_str(), max_side);
+    MLOG_INFO("tcpvideo", "Launched MirageCapture TCP mirror (serial=%s, max_size=%d native=%dx%d)", adb_serial.c_str(), max_side, native_w, native_h);
 }
+
 
 TcpVideoReceiver::TcpVideoReceiver() = default;
 TcpVideoReceiver::~TcpVideoReceiver() { stop(); }
@@ -260,14 +277,14 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
 
     int reconnect_delay_ms = RECONNECT_INIT_MS;
     int no_data_count = 0;
-    bool forward_established = false;  // forwardが外れた可能性があるので次回再設定
+    bool forward_established = false;  // forward縺悟､悶ｌ縺溷庄閭ｽ諤ｧ縺後≠繧九・縺ｧ谺｡蝗槫・險ｭ螳・
     auto jittered_delay = [](int delay_ms) -> int {
         int jitter = delay_ms * (rand() % 40 - 20) / 100;
         return delay_ms + jitter;
     };
 
     while (running_.load()) {
-        // forward_established: 成功済みなら毎回 adb forward コマンドを叩かない
+        // forward_established: 謌仙粥貂医∩縺ｪ繧画ｯ主屓 adb forward 繧ｳ繝槭Φ繝峨ｒ蜿ｩ縺九↑縺・
         if (!forward_established) {
             if (!setupAdbForward(serial, local_port)) {
                 MLOG_WARN("tcpvideo", "ADB forward failed for %s, retry in %dms", hardware_id.c_str(), reconnect_delay_ms);
@@ -286,11 +303,11 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
             continue;
         }
 
-        // SO_LINGER(linger=0): RST即断でTIME_WAIT回避
+        // SO_LINGER(linger=0): RST蜊ｳ譁ｭ縺ｧTIME_WAIT蝗樣∩
         struct linger lin = {1, 0};
         setsockopt(sock, SOL_SOCKET, SO_LINGER, (const char*)&lin, sizeof(lin));
 
-        // Enlarge socket buffers: 4MB each → absorb WiFi jitter, reduce frame loss
+        // Enlarge socket buffers: 4MB each 竊・absorb WiFi jitter, reduce frame loss
         // 12Mbps tile = 1.5MB/s; 4MB buffer = ~2.7s headroom for burst absorption
         {
             int buf_size = 4 * 1024 * 1024;  // 4MB
@@ -321,9 +338,9 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                       hardware_id.c_str(), local_port, reconnect_delay_ms);
             MLOG_WARN("tcpvideo", "connect() errno=%d for %s", err, hardware_id.c_str());
             closesocket(sock);
-                        forward_established = false;  // forwardが外れた可能性があるので次回再設定
+                        forward_established = false;  // forward縺悟､悶ｌ縺溷庄閭ｽ諤ｧ縺後≠繧九・縺ｧ谺｡蝗槫・險ｭ螳・
 
-            // ScreenCaptureServiceが停止していれば自動起動
+            // ScreenCaptureService縺悟●豁｢縺励※縺・ｌ縺ｰ閾ｪ蜍戊ｵｷ蜍・
             if (!isCaptureServiceRunning(serial)) {
                 MLOG_INFO("tcpvideo", "ScreenCaptureService not running on %s, sending auto_mirror intent", serial.c_str());
                 launchCaptureTcpMirror(serial);
@@ -376,7 +393,7 @@ void TcpVideoReceiver::receiverThread(const std::string& hardware_id,
                 MLOG_INFO("tcpvideo", "No data from %s (attempt %d), backoff %dms",
                           hardware_id.c_str(), no_data_count, reconnect_delay_ms);
 
-                // ScreenCaptureServiceが停止していれば自動起動を試みる
+                // ScreenCaptureService縺悟●豁｢縺励※縺・ｌ縺ｰ閾ｪ蜍戊ｵｷ蜍輔ｒ隧ｦ縺ｿ繧・
                 if (no_data_count >= 1 && !isCaptureServiceRunning(serial)) {
                     MLOG_INFO("tcpvideo", "ScreenCaptureService not running on %s, sending auto_mirror intent", serial.c_str());
                     launchCaptureTcpMirror(serial);
@@ -429,3 +446,5 @@ void TcpVideoReceiver::parseVid0Stream(const std::string& hardware_id,
 // =============================================================================
 
 } // namespace gui
+
+

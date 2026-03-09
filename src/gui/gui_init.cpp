@@ -676,20 +676,44 @@ static void startRouteEvalThread() {
 // =============================================================================
 // FPS Command Callback
 // =============================================================================
+
+static int computePolicyMaxSizeFromNative(int native_w, int native_h, bool reduced_mode) {
+    const int short_side = std::min(native_w, native_h);
+    const int long_side = std::max(native_w, native_h);
+    if (short_side <= 0 || long_side <= 0) return reduced_mode ? 1800 : 2000;
+
+    const bool exceeds_fhd = (short_side > 1080) || (long_side > 1920);
+    if (!exceeds_fhd) {
+        return long_side;  // FHD以下はネイティブ維持
+    }
+
+    // FHD超えは百分率縮小。現在は90%ルール。
+    const double scale = reduced_mode ? 0.90 : 0.90;
+    int scaled = static_cast<int>(long_side * scale + 0.5);
+    if (scaled < 1440) scaled = 1440;
+    if (scaled > long_side) scaled = long_side;
+    return scaled;
+}
+
 static void onQualityCommand(const std::string& device_id, int encode_max_size) {
-    // Send ACTION_VIDEO_MAXSIZE broadcast to Android
+    // Send ACTION_VIDEO_MAXSIZE broadcast to Android using common policy:
+    // native > FHD => percentage downscale, FHD-or-less => native resolution.
     if (!g_adb_manager) return;
+    const bool reduced_mode = (encode_max_size <= 1500);
     auto devices = g_adb_manager->getUniqueDevices();
     for (const auto& dev : devices) {
         if (dev.hardware_id != device_id && dev.preferred_adb_id != device_id) continue;
         if (dev.wifi_connections.empty() && dev.preferred_adb_id.empty()) continue;
         std::string adb_id = dev.wifi_connections.empty() ? dev.preferred_adb_id : dev.wifi_connections[0];
+        const int native_w = dev.screen_width;
+        const int native_h = dev.screen_height;
+        const int target_max_size = computePolicyMaxSizeFromNative(native_w, native_h, reduced_mode);
         std::string cmd = "shell am broadcast -a com.mirage.capture.ACTION_VIDEO_MAXSIZE"
-                          " -p com.mirage.capture --ei max_size " + std::to_string(encode_max_size);
-        std::thread([adb_id, cmd, device_id, encode_max_size]() {
+                          " -p com.mirage.capture --ei max_size " + std::to_string(target_max_size);
+        std::thread([adb_id, cmd, device_id, target_max_size, native_w, native_h, reduced_mode]() {
             if (g_adb_manager) g_adb_manager->adbCommand(adb_id, cmd);
-            MLOG_INFO("RouteCtrl", "Phase E: max_size=%d sent to %s via %s",
-                      encode_max_size, device_id.c_str(), adb_id.c_str());
+            MLOG_INFO("RouteCtrl", "Phase E: max_size=%d sent to %s via %s (native=%dx%d reduced=%d)",
+                      target_max_size, device_id.c_str(), adb_id.c_str(), native_w, native_h, reduced_mode ? 1 : 0);
         }).detach();
         break;
     }
