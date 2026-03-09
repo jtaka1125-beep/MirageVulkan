@@ -123,6 +123,47 @@ static std::string resolveToUsbId(const std::string& device_id) {
         }
     }
 
+    // Tier 4: use usb_serial field. If empty, try hybrid_cmd's own device list
+    // to find a USB serial that matches this device (by checking if any USB serial
+    // was resolved for this hardware_id via ro.serialno lookup).
+    if (g_adb_manager && g_hybrid_cmd) {
+        auto devices = g_adb_manager->getUniqueDevices();
+        for (const auto& dev : devices) {
+            if (dev.hardware_id != device_id) continue;
+
+            // Case A: usb_serial already populated
+            if (!dev.usb_serial.empty() &&
+                g_hybrid_cmd->is_device_connected(dev.usb_serial)) {
+                MLOG_INFO("cmd", "Resolved %s -> %s (usb_serial field, AOA mode)",
+                          device_id.c_str(), dev.usb_serial.c_str());
+                return dev.usb_serial;
+            }
+
+            // Case B: usb_serial is empty — cross-check against hybridcmd's device list.
+            // Iterate USB serials known to hybridcmd; if any matches ro.serialno for
+            // one of this device's ADB IDs, we can use it.
+            {
+                auto usb_ids = g_hybrid_cmd->get_device_ids();
+                // Collect all ADB IDs for this unique device
+                std::vector<std::string> adb_ids;
+                adb_ids.insert(adb_ids.end(), dev.usb_connections.begin(), dev.usb_connections.end());
+                adb_ids.insert(adb_ids.end(), dev.wifi_connections.begin(), dev.wifi_connections.end());
+                if (!dev.preferred_adb_id.empty()) adb_ids.push_back(dev.preferred_adb_id);
+
+                for (const auto& uid : usb_ids) {
+                    // Check if hybridcmd's USB serial is associated with this hw_id:
+                    // Try asking adb_manager to resolve uid -> hw_id
+                    auto resolved_hw = g_adb_manager->resolveUsbSerial(uid);
+                    if (resolved_hw == device_id) {
+                        MLOG_INFO("cmd", "Resolved %s -> %s (hybridcmd crosscheck, AOA mode)",
+                                  device_id.c_str(), uid.c_str());
+                        return uid;
+                    }
+                }
+            }
+        }
+    }
+
     MLOG_INFO("cmd", "Could not resolve %s to USB ID", device_id.c_str());
     return device_id;  // Return as-is, let caller handle
 
@@ -182,12 +223,25 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
     auto gui = g_gui;
 
     if (g_hybrid_cmd) {
+        int screen_w = 0, screen_h = 0;
+        if (g_gui) { auto [sw,sh] = g_gui->getDeviceNativeSize(device_id); screen_w=sw; screen_h=sh; }
+
+        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+            g_hybrid_cmd->send_tap(device_id, x, y, screen_w, screen_h);
+            MLOG_INFO("cmd", "WiFi TCP tap sent to %s!", device_id.c_str());
+            if (gui) {
+                gui->logInfo(u8"WiFi タップ " + device_id +
+                             " (" + std::to_string(x) + ", " + std::to_string(y) + ")");
+            }
+            return;
+        }
+
         std::string usb_id = resolveToUsbId(device_id);
         bool connected = g_hybrid_cmd->is_device_connected(usb_id);
         MLOG_INFO("cmd", "resolved='%s' connected=%s", usb_id.c_str(), connected ? "yes" : "no");
 
         if (connected) {
-            g_hybrid_cmd->send_tap(usb_id, x, y);
+            g_hybrid_cmd->send_tap(usb_id, x, y, screen_w, screen_h);
             MLOG_INFO("cmd", "USB tap sent to %s!", usb_id.c_str());
             if (gui) {
                 gui->logInfo(u8"USB タップ " + device_id +
@@ -253,12 +307,26 @@ void sendSwipeCommand(const std::string& device_id, int x1, int y1, int x2, int 
     auto gui = g_gui;
 
     if (g_hybrid_cmd) {
+        int screen_w=0,screen_h=0;
+        if(g_gui){auto[sw,sh]=g_gui->getDeviceNativeSize(device_id);screen_w=sw;screen_h=sh;}
+
+        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
+            g_hybrid_cmd->send_swipe(device_id, x1, y1, x2, y2, duration_ms, screen_w, screen_h);
+            MLOG_INFO("cmd", "WiFi TCP swipe sent to %s!", device_id.c_str());
+            if (gui) {
+                gui->logInfo(u8"WiFi スワイプ " + device_id +
+                             " (" + std::to_string(x1) + "," + std::to_string(y1) +
+                             ") -> (" + std::to_string(x2) + "," + std::to_string(y2) + ")");
+            }
+            return;
+        }
+
         std::string usb_id = resolveToUsbId(device_id);
         bool connected = g_hybrid_cmd->is_device_connected(usb_id);
         MLOG_INFO("cmd", "resolved='%s' connected=%s", usb_id.c_str(), connected ? "yes" : "no");
 
         if (connected) {
-            g_hybrid_cmd->send_swipe(usb_id, x1, y1, x2, y2, duration_ms);
+            g_hybrid_cmd->send_swipe(usb_id, x1, y1, x2, y2, duration_ms, screen_w, screen_h);
             MLOG_INFO("cmd", "USB swipe sent to %s!", usb_id.c_str());
             if (gui) {
                 gui->logInfo(u8"USB スワイプ " + device_id +
@@ -351,6 +419,24 @@ std::string getDeviceIdFromSlot(int slot) {
         return device_ids[slot];
     }
     return "";
+}
+
+void sendTapCommandScaled(const std::string& device_id, int x, int y, int src_w, int src_h) {
+    if (!g_hybrid_cmd) {
+        MLOG_WARN("cmd", "sendTapCommandScaled: no hybrid_cmd");
+        sendTapCommand(device_id, x, y);  // fallback: coords as-is
+        return;
+    }
+    // Resolve hardware_id → USB serial so HID/MIRA USB Tier 1/2 can be used
+    std::string usb_id = resolveToUsbId(device_id);
+    MLOG_INFO("cmd", "[D2] sendTapCommandScaled device=%s usb=%s (%d,%d) src=%dx%d",
+              device_id.c_str(), usb_id.c_str(), x, y, src_w, src_h);
+
+    uint32_t seq = g_hybrid_cmd->send_tap(usb_id, x, y, src_w, src_h);
+    if (seq == 0) {
+        MLOG_WARN("cmd", "[D2] All Tiers failed for %s, retrying via ADB direct", device_id.c_str());
+        sendTapCommand(device_id, x, y);  // last resort: no scaling, raw coords
+    }
 }
 
 } // namespace mirage::gui::command
