@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', function() {
   workspace.addChangeListener(function(event) {
     if (event.isUiEvent) return;
     updateCodePreview();
+    refreshNormalizationIndicators();
   });
 
   window.addEventListener('resize', function() {
@@ -41,6 +42,36 @@ document.addEventListener('DOMContentLoaded', function() {
   registerContextMenu();
   waitForPywebview();
 });
+
+
+function isTouchBlockNeedingNormalization(block) {
+  return block && (block.type === 'adb_tap' || block.type === 'adb_swipe' || block.type === 'adb_long_press');
+}
+
+function hasNormalizedCoordData(block) {
+  if (!block || !block.data) return false;
+  try {
+    var meta = JSON.parse(block.data);
+    return meta && meta.coord_basis === 'native_normalized';
+  } catch (e) {
+    return false;
+  }
+}
+
+function refreshNormalizationIndicators() {
+  if (!workspace) return;
+  const blocks = workspace.getAllBlocks(false);
+  for (const block of blocks) {
+    if (!isTouchBlockNeedingNormalization(block)) continue;
+    if (hasNormalizedCoordData(block)) {
+      block.setWarningText(null);
+      block.setCommentText('normalized');
+    } else {
+      block.setCommentText(null);
+      block.setWarningText('座標未正規化');
+    }
+  }
+}
 
 // Wait for pywebview JS bridge to be ready
 function waitForPywebview() {
@@ -67,6 +98,7 @@ function waitForPywebview() {
 function onBridgeReady() {
   refreshDevices();
   startDeviceMonitor();
+  refreshNormalizationIndicators();
 }
 
 function updateCodePreview() {
@@ -659,6 +691,7 @@ async function createContainerFromRecording() {
   containerBlock.render();
   containerBlock.setCollapsed(true);
   workspace.render();
+  refreshNormalizationIndicators();
   recordedActions = [];
 }
 
@@ -731,6 +764,7 @@ async function normalizeCurrentBlocks(options) {
   }
 
   updateCodePreview();
+  refreshNormalizationIndicators();
   if (!silent) alert('正規化したブロック数: ' + touched);
   return touched;
 }
@@ -765,6 +799,7 @@ async function loadMacro() {
   if (!data) return;
   var ws = data.workspace ? data.workspace : data;
   Blockly.serialization.workspaces.load(ws, workspace);
+  refreshNormalizationIndicators();
 }
 
 function exportCode() {
