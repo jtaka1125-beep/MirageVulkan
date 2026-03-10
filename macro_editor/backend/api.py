@@ -351,6 +351,16 @@ class MacroEditorAPI:
         macro_path.mkdir(exist_ok=True)
         (macro_path / 'workspace.json').write_text(
             json.dumps(workspace_json, indent=2, ensure_ascii=False), encoding='utf-8')
+        if isinstance(workspace_json, dict):
+            meta = {
+                'schema_version': workspace_json.get('schema_version', 1),
+                'coord_policy': workspace_json.get('coord_policy', 'unspecified'),
+                'editor_basis': workspace_json.get('editor_basis', 'unspecified'),
+                'saved_at': workspace_json.get('saved_at'),
+                'selected_device': workspace_json.get('selected_device'),
+                'normalization_stats': workspace_json.get('normalization_stats', {})
+            }
+            (macro_path / 'meta.json').write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding='utf-8')
         (macro_path / f'{name}.py').write_text(python_code, encoding='utf-8')
         return {'status': 'ok', 'path': str(macro_path)}
 

@@ -71,6 +71,7 @@ function refreshNormalizationIndicators() {
       block.setWarningText('座標未正規化');
     }
   }
+  refreshNormalizationSummaryUI();
 }
 
 
@@ -130,6 +131,36 @@ function clearSingleBlockNormalization(block) {
   refreshNormalizationIndicators();
   updateCodePreview();
   return true;
+}
+
+
+function collectNormalizationStats() {
+  if (!workspace) return {touch_total: 0, normalized: 0, unnormalized: 0};
+  let touch_total = 0;
+  let normalized = 0;
+  for (const block of workspace.getAllBlocks(false)) {
+    if (!isTouchBlockNeedingNormalization(block)) continue;
+    touch_total++;
+    if (hasNormalizedCoordData(block)) normalized++;
+  }
+  return {
+    touch_total: touch_total,
+    normalized: normalized,
+    unnormalized: Math.max(0, touch_total - normalized)
+  };
+}
+
+function refreshNormalizationSummaryUI() {
+  const stats = collectNormalizationStats();
+  let el = document.getElementById('norm-status');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'norm-status';
+    el.style.cssText = 'font-size:12px;padding:4px 8px;border-radius:4px;background:rgba(137,180,250,0.12);color:#89b4fa;';
+    const toolbar = document.getElementById('toolbar-buttons');
+    if (toolbar) toolbar.appendChild(el);
+  }
+  el.textContent = '座標 正規化 ' + stats.normalized + '/' + stats.touch_total + '  未 ' + stats.unnormalized;
 }
 
 // Wait for pywebview JS bridge to be ready
@@ -866,12 +897,14 @@ async function saveMacro() {
   var ws = Blockly.serialization.workspaces.save(workspace);
   var code = Blockly.Python.workspaceToCode(workspace);
   var serial = document.getElementById('device-select') ? document.getElementById('device-select').value : '';
+  var normStats = collectNormalizationStats();
   var payload = {
     schema_version: 2,
     coord_policy: 'native_normalized',
     editor_basis: 'preview_preferred',
     saved_at: new Date().toISOString(),
     selected_device: serial || null,
+    normalization_stats: normStats,
     workspace: ws
   };
   var r = await window.pywebview.api.save_macro(name, payload, code);
