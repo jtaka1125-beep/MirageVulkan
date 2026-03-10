@@ -3,14 +3,33 @@
   var python = Blockly.Python;
 
   python.forBlock['adb_tap'] = function(block) {
+    try {
+      var meta = block.data ? JSON.parse(block.data) : null;
+      if (meta && meta.coord_basis === 'native_normalized' && meta.x_norm != null && meta.y_norm != null) {
+        return 'device.tap_norm(' + meta.x_norm + ', ' + meta.y_norm + ')  # bid:' + block.id + '\n';
+      }
+    } catch (e) {}
     return 'device.tap(' + block.getFieldValue('X') + ', ' + block.getFieldValue('Y') + ')  # bid:' + block.id + '\n';
   };
   python.forBlock['adb_swipe'] = function(block) {
+    try {
+      var meta = block.data ? JSON.parse(block.data) : null;
+      if (meta && meta.coord_basis === 'native_normalized' && meta.x1_norm != null && meta.y1_norm != null && meta.x2_norm != null && meta.y2_norm != null) {
+        return 'device.swipe_norm(' + meta.x1_norm + ', ' + meta.y1_norm + ', ' + meta.x2_norm + ', ' + meta.y2_norm + ', '
+          + block.getFieldValue('DURATION') + ')  # bid:' + block.id + '\n';
+      }
+    } catch (e) {}
     return 'device.swipe(' + block.getFieldValue('X1') + ', ' + block.getFieldValue('Y1') + ', '
       + block.getFieldValue('X2') + ', ' + block.getFieldValue('Y2') + ', '
       + block.getFieldValue('DURATION') + ')  # bid:' + block.id + '\n';
   };
   python.forBlock['adb_long_press'] = function(block) {
+    try {
+      var meta = block.data ? JSON.parse(block.data) : null;
+      if (meta && meta.coord_basis === 'native_normalized' && meta.x_norm != null && meta.y_norm != null) {
+        return 'device.long_press_norm(' + meta.x_norm + ', ' + meta.y_norm + ', ' + block.getFieldValue('DURATION') + ')  # bid:' + block.id + '\n';
+      }
+    } catch (e) {}
     return 'device.long_press(' + block.getFieldValue('X') + ', ' + block.getFieldValue('Y')
       + ', ' + block.getFieldValue('DURATION') + ')  # bid:' + block.id + '\n';
   };

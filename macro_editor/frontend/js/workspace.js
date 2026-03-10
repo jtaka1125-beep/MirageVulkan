@@ -453,6 +453,16 @@ async function showScreenPicker(serial) {
 }
 
 function openPickerModal(imgData, serial) {
+  currentPickerMeta = {
+    serial: serial,
+    basis_w: imgData.width || imgData.preview_w || imgData.native_w || 0,
+    basis_h: imgData.height || imgData.preview_h || imgData.native_h || 0,
+    preview_w: imgData.preview_w || imgData.width || 0,
+    preview_h: imgData.preview_h || imgData.height || 0,
+    native_w: imgData.native_w || 0,
+    native_h: imgData.native_h || 0,
+    coord_space: imgData.coord_space || 'preview'
+  };
   var old = document.getElementById('screen-picker-overlay');
   if (old) old.remove();
 
@@ -502,13 +512,14 @@ function openPickerModal(imgData, serial) {
 }
 
 var swipeStart = null;
+var currentPickerMeta = null;
 
 function handlePickerClick(x, y, action, event) {
   if (action === 'tap') {
-    recordedActions.push({type: 'tap', x: x, y: y});
+    recordedActions.push({type: 'tap', x: x, y: y, meta: currentPickerMeta});
     showClickMarker(event.clientX, event.clientY, 'TAP');
   } else if (action === 'long_press') {
-    recordedActions.push({type: 'long_press', x: x, y: y, duration: 1000});
+    recordedActions.push({type: 'long_press', x: x, y: y, duration: 1000, meta: currentPickerMeta});
     showClickMarker(event.clientX, event.clientY, 'LONG');
   } else if (action === 'swipe_start') {
     if (!swipeStart) {
@@ -527,7 +538,7 @@ function handlePickerClick(x, y, action, event) {
     if (swipeStart) {
       recordedActions.push({
         type: 'swipe', x1: swipeStart.x, y1: swipeStart.y,
-        x2: x, y2: y, duration: 300
+        x2: x, y2: y, duration: 300, meta: currentPickerMeta
       });
       showClickMarker(event.clientX, event.clientY, 'S2');
       swipeStart = null;
@@ -565,7 +576,7 @@ async function refreshScreenPicker(serial) {
 }
 
 // ==================== Container Creation ====================
-function createContainerFromRecording() {
+async function createContainerFromRecording() {
   var name = prompt('コンテナ名を入力:', '録画_' + new Date().toLocaleTimeString());
   if (!name) name = '録画結果';
 
@@ -574,12 +585,24 @@ function createContainerFromRecording() {
   containerBlock.initSvg();
 
   var prevBlock = null;
-  recordedActions.forEach(function(action) {
+  for (const action of recordedActions) {
     var block = null;
     if (action.type === 'tap') {
       block = workspace.newBlock('adb_tap');
       block.setFieldValue(action.x, 'X');
       block.setFieldValue(action.y, 'Y');
+      if (action.meta && action.meta.serial && action.meta.basis_w > 0 && action.meta.basis_h > 0) {
+        try {
+          var norm = await window.pywebview.api.normalize_coords(action.meta.serial, action.x, action.y, action.meta.basis_w, action.meta.basis_h);
+          if (norm && norm.status === 'ok') {
+            block.data = JSON.stringify({
+              coord_basis: 'native_normalized',
+              x_norm: norm.x_norm,
+              y_norm: norm.y_norm
+            });
+          }
+        } catch (e) { console.log('normalize tap failed', e); }
+      }
     } else if (action.type === 'swipe') {
       block = workspace.newBlock('adb_swipe');
       block.setFieldValue(action.x1, 'X1');
@@ -587,11 +610,38 @@ function createContainerFromRecording() {
       block.setFieldValue(action.x2, 'X2');
       block.setFieldValue(action.y2, 'Y2');
       block.setFieldValue(action.duration, 'DURATION');
+      if (action.meta && action.meta.serial && action.meta.basis_w > 0 && action.meta.basis_h > 0) {
+        try {
+          var n1 = await window.pywebview.api.normalize_coords(action.meta.serial, action.x1, action.y1, action.meta.basis_w, action.meta.basis_h);
+          var n2 = await window.pywebview.api.normalize_coords(action.meta.serial, action.x2, action.y2, action.meta.basis_w, action.meta.basis_h);
+          if (n1 && n1.status === 'ok' && n2 && n2.status === 'ok') {
+            block.data = JSON.stringify({
+              coord_basis: 'native_normalized',
+              x1_norm: n1.x_norm,
+              y1_norm: n1.y_norm,
+              x2_norm: n2.x_norm,
+              y2_norm: n2.y_norm
+            });
+          }
+        } catch (e) { console.log('normalize swipe failed', e); }
+      }
     } else if (action.type === 'long_press') {
       block = workspace.newBlock('adb_long_press');
       block.setFieldValue(action.x, 'X');
       block.setFieldValue(action.y, 'Y');
       block.setFieldValue(action.duration, 'DURATION');
+      if (action.meta && action.meta.serial && action.meta.basis_w > 0 && action.meta.basis_h > 0) {
+        try {
+          var normlp = await window.pywebview.api.normalize_coords(action.meta.serial, action.x, action.y, action.meta.basis_w, action.meta.basis_h);
+          if (normlp && normlp.status === 'ok') {
+            block.data = JSON.stringify({
+              coord_basis: 'native_normalized',
+              x_norm: normlp.x_norm,
+              y_norm: normlp.y_norm
+            });
+          }
+        } catch (e) { console.log('normalize long_press failed', e); }
+      }
     }
 
     if (block) {
@@ -603,7 +653,7 @@ function createContainerFromRecording() {
       }
       prevBlock = block;
     }
-  });
+  }
 
   containerBlock.moveTo(new Blockly.utils.Coordinate(50, 50));
   containerBlock.render();
@@ -614,21 +664,34 @@ function createContainerFromRecording() {
 
 // ==================== Save / Load / Export ====================
 async function saveMacro() {
-  var name = prompt('マクロ名を入力:', 'my_macro');
+  var name = prompt('繝槭け繝ｭ蜷阪ｒ蛟､蜉', 'my_macro');
   if (!name) return;
   var ws = Blockly.serialization.workspaces.save(workspace);
   var code = Blockly.Python.workspaceToCode(workspace);
-  var r = await window.pywebview.api.save_macro(name, ws, code);
-  alert('保存完了: ' + r.path);
+  var serial = document.getElementById('device-select') ? document.getElementById('device-select').value : '';
+  var payload = {
+    schema_version: 2,
+    coord_policy: 'native_normalized',
+    editor_basis: 'preview_preferred',
+    saved_at: new Date().toISOString(),
+    selected_device: serial || null,
+    workspace: ws
+  };
+  var r = await window.pywebview.api.save_macro(name, payload, code);
+  alert('菫晄戟蜿ｯ逶ｴ ' + r.path);
 }
 
 async function loadMacro() {
   var macros = await window.pywebview.api.list_macros();
-  if (!macros || macros.length === 0) { alert('保存マクロなし'); return; }
-  var name = prompt('読み込むマクロ:\n' + macros.join('\n'));
+  if (!macros || macros.length === 0) { alert('菫晄戟蛟､蜉縺後≠繧翫∪縺帙ｓ); return; }
+  var name = prompt('隱ｯ縺ｿ霎ｼ縺ｿ繝槭け繝ｭ:
+' + macros.join('
+'));
   if (!name) return;
-  var ws = await window.pywebview.api.load_macro(name);
-  if (ws) Blockly.serialization.workspaces.load(ws, workspace);
+  var data = await window.pywebview.api.load_macro(name);
+  if (!data) return;
+  var ws = data.workspace ? data.workspace : data;
+  Blockly.serialization.workspaces.load(ws, workspace);
 }
 
 function exportCode() {

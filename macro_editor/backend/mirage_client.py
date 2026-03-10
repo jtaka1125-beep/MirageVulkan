@@ -223,14 +223,39 @@ class _DeviceProxy:
         self._r.log_lines.append(f"tap({x}, {y})")
         return self._r.client.tap(self._r.device_id, x, y)
 
+    def tap_norm(self, x_norm: float, y_norm: float):
+        self._step()
+        resolved = self._r.client.resolve_coords(self._r.device_id, x_norm, y_norm, 'preview')
+        x = int(resolved.get('x', 0))
+        y = int(resolved.get('y', 0))
+        self._r.log_lines.append(f"tap_norm({x_norm:.4f}, {y_norm:.4f}) -> tap({x}, {y})")
+        return self._r.client.tap(self._r.device_id, x, y)
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration: int = 300):
         self._step()
         self._r.log_lines.append(f"swipe({x1},{y1}->{x2},{y2}, {duration}ms)")
         return self._r.client.swipe(self._r.device_id, x1, y1, x2, y2, duration)
 
+    def swipe_norm(self, x1_norm: float, y1_norm: float, x2_norm: float, y2_norm: float, duration: int = 300):
+        self._step()
+        p1 = self._r.client.resolve_coords(self._r.device_id, x1_norm, y1_norm, 'preview')
+        p2 = self._r.client.resolve_coords(self._r.device_id, x2_norm, y2_norm, 'preview')
+        x1 = int(p1.get('x', 0)); y1 = int(p1.get('y', 0))
+        x2 = int(p2.get('x', 0)); y2 = int(p2.get('y', 0))
+        self._r.log_lines.append(f"swipe_norm({x1_norm:.4f},{y1_norm:.4f}->{x2_norm:.4f},{y2_norm:.4f}) -> swipe({x1},{y1}->{x2},{y2}, {duration}ms)")
+        return self._r.client.swipe(self._r.device_id, x1, y1, x2, y2, duration)
+
     def long_press(self, x: int, y: int, duration: int = 1000):
         self._step()
         self._r.log_lines.append(f"long_press({x}, {y}, {duration}ms)")
+        return self._r.client.long_press(self._r.device_id, x, y, duration)
+
+    def long_press_norm(self, x_norm: float, y_norm: float, duration: int = 1000):
+        self._step()
+        resolved = self._r.client.resolve_coords(self._r.device_id, x_norm, y_norm, 'preview')
+        x = int(resolved.get('x', 0))
+        y = int(resolved.get('y', 0))
+        self._r.log_lines.append(f"long_press_norm({x_norm:.4f}, {y_norm:.4f}, {duration}ms) -> long_press({x}, {y})")
         return self._r.client.long_press(self._r.device_id, x, y, duration)
 
     def key(self, keycode: int):
