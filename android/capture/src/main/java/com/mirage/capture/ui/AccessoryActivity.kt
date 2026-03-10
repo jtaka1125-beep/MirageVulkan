@@ -110,8 +110,10 @@ class AccessoryActivity : AppCompatActivity() {
         val usbMgr = getSystemService(UsbManager::class.java)
         val accessories = usbMgr.accessoryList
         currentAccessory = accessories?.firstOrNull()
+        val perm = try { currentAccessory?.let { usbMgr.hasPermission(it) } ?: false } catch (_: Exception) { false }
         val g3 = currentAccessory != null
         val g4 = isServiceRunning(AccessoryIoService::class.java)
+        Log.i(TAG, "updateStatus: accessories=${accessories?.size ?: 0} hasAccessory=$g3 hasPermission=$perm serviceRunning=$g4 pendingPermission=$pendingPermission")
 
         setGate(gate1Icon, g1)
         setGate(gate2Icon, g2)
@@ -121,9 +123,11 @@ class AccessoryActivity : AppCompatActivity() {
         // Auto-start if connected but service not running
         if (g3 && !g4 && !pendingPermission && currentAccessory != null) {
             if (usbMgr.hasPermission(currentAccessory)) {
+                Log.i(TAG, "updateStatus: has permission, starting AccessoryIoService")
                 startAccessoryService(currentAccessory!!)
             } else {
                 pendingPermission = true
+                Log.i(TAG, "updateStatus: requesting USB permission")
                 val pi = PendingIntent.getBroadcast(this, 0,
                     Intent(ACTION_USB_PERMISSION).apply { setPackage(packageName) },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

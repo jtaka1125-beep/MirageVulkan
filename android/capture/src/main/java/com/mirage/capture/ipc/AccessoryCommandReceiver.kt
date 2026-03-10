@@ -83,12 +83,23 @@ class AccessoryCommandReceiver : BroadcastReceiver() {
                 val host = intent.getStringExtra(EXTRA_HOST) ?: ""
                 val port = intent.getIntExtra(EXTRA_PORT, 0)
                 Log.i(TAG, "Route: mode=$mode host=$host port=$port")
-                val modeStr = if (mode == VIDEO_ROUTE_USB) {
-                    ScreenCaptureService.MIRROR_MODE_USB
-                } else {
-                    ScreenCaptureService.MIRROR_MODE_UDP
+                when (mode) {
+                    VIDEO_ROUTE_USB -> {
+                        try {
+                            if (com.mirage.capture.usb.AccessoryIoService.instance == null) {
+                                context?.startForegroundService(android.content.Intent(context, com.mirage.capture.usb.AccessoryIoService::class.java))
+                                Log.i(TAG, "AccessoryIoService start requested for USB video route")
+                                Thread.sleep(300)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "AccessoryIoService start failed", e)
+                        }
+                        Log.i(TAG, "VIDEO_ROUTE_USB: requesting connectVideoSocket")
+                        connectVideoSocket(svc)
+                    }
+                    2 -> svc?.switchSender(ScreenCaptureService.MIRROR_MODE_TCP, null, port)
+                    else -> svc?.switchSender(ScreenCaptureService.MIRROR_MODE_UDP, host, port)
                 }
-                svc?.switchSender(modeStr, host, port)
             }
             ACTION_USB_CONNECTED -> {
                 Log.i(TAG, "USB connected → connecting video socket")
@@ -128,6 +139,7 @@ class AccessoryCommandReceiver : BroadcastReceiver() {
                     videoSocket = s
                     Log.i(TAG, "probeExistingUsb: connected (attempt=$attempt)")
                     svc.attachUsbStream(s.getOutputStream())
+                    Log.i(TAG, "probeExistingUsb: attachUsbStream invoked")
                     return@Thread
                 } catch (_: Exception) {
                     if (attempt < 8) Thread.sleep(250)
@@ -170,6 +182,7 @@ class AccessoryCommandReceiver : BroadcastReceiver() {
                 videoSocket = socket
                 Log.i(TAG, "Video TCP socket connected to localhost:$VIDEO_TCP_PORT")
                 svc.attachUsbStream(socket.getOutputStream())
+                Log.i(TAG, "connectVideoSocket: attachUsbStream invoked")
             } catch (e: Exception) {
                 Log.e(TAG, "Video TCP connect failed", e)
             }

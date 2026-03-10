@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import com.mirage.capture.ipc.WifiCommandService
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -66,6 +67,7 @@ class CaptureActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_capture)
+        ensureWifiCommandService()
 
         // Restore pending mode after activity recreation
         pendingMode = savedInstanceState?.getString(KEY_PENDING_MODE)
@@ -132,7 +134,24 @@ class CaptureActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
+        ensureWifiCommandService()
         intent?.let { handleAutoStart(it) }
+    }
+
+    private fun ensureWifiCommandService() {
+        // tcp_port is passed by PC via intent extra; cmd_port = tcp_port + 1
+        val tcpPort = intent?.getIntExtra("tcp_port", 50000) ?: 50000
+        val cmdPort = tcpPort + 1
+        val running = com.mirage.capture.ipc.WifiCommandService.instance
+        if (running != null && com.mirage.capture.ipc.WifiCommandServer.cmdPort == cmdPort) return
+        try {
+            val svcIntent = android.content.Intent(this, WifiCommandService::class.java)
+                .putExtra("cmd_port", cmdPort)
+            startForegroundService(svcIntent)
+            Log.i(TAG, "WifiCommandService start requested (cmd_port=$cmdPort, tcp_port=$tcpPort)")
+        } catch (e: Exception) {
+            Log.e(TAG, "WifiCommandService start failed", e)
+        }
     }
 
     private fun handleAutoStart(intent: Intent) {
@@ -140,7 +159,7 @@ class CaptureActivity : AppCompatActivity() {
         if (autoMirror) {
             val mode = intent.getStringExtra("mirror_mode") ?: MODE_TCP  // Default to TCP
             val host = intent.getStringExtra("mirror_host") ?: ""
-            val port = intent.getIntExtra("mirror_port", 50100)
+            val port = intent.getIntExtra("tcp_port", 50000)
 
             if (mode == MODE_UDP && host.isEmpty()) {
                 Log.e(TAG, "Auto mirror: UDP mode requires mirror_host")
@@ -189,7 +208,7 @@ class CaptureActivity : AppCompatActivity() {
         }
         Log.i(TAG, "startForegroundService: TCP")
         startForegroundService(i)
-        statusText.text = "TCP on :50100"
+        statusText.text = "TCP mirror started"
     }
 
     private fun startAudioCapture(resultCode: Int, data: Intent) {

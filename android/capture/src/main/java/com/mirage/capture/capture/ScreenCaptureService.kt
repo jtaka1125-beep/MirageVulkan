@@ -1,4 +1,4 @@
-﻿package com.mirage.capture.capture
+package com.mirage.capture.capture
 
 import android.app.Activity
 import android.app.Notification
@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.mirage.capture.ipc.AccessoryCommandReceiver
+import com.mirage.capture.util.RouteTrace
 import java.io.OutputStream
 
 /**
@@ -62,7 +63,7 @@ class ScreenCaptureService : Service() {
         const val MIRROR_MODE_USB = "usb"
         const val MIRROR_MODE_TCP = "tcp"
 
-        const val DEFAULT_TCP_PORT = 50100
+        const val DEFAULT_TCP_PORT = 50000
         const val ACTION_SET_FPS = "com.mirage.capture.SET_FPS"
 
         @Volatile
@@ -358,6 +359,7 @@ class ScreenCaptureService : Service() {
         synchronized(encoderLock) {
             // We prefer WiFi tiles over USB H264 for the X1 tiled path
             Log.i(TAG, "attachUsbStream: switching to USB mode (was $mirrorMode)")
+            RouteTrace.append(this, "attachUsbStream: switching to USB mode (was $mirrorMode)")
             stopTcpSecondary()
             encoder?.stop()
             videoSender?.close()
@@ -367,7 +369,33 @@ class ScreenCaptureService : Service() {
             encoder?.start()
             startTcpSecondary()
             Log.i(TAG, "attachUsbStream: USB mode active, encoder started")
+            RouteTrace.append(this, "attachUsbStream: USB mode active, encoder started")
         }
+    }
+
+    fun ensureUsbVideoRoute() {
+        Log.i(TAG, "ensureUsbVideoRoute: enter ipcReceiver=${ipcReceiver != null} accInstance=${com.mirage.capture.usb.AccessoryIoService.instance != null}")
+        RouteTrace.append(this, "ensureUsbVideoRoute: enter ipcReceiver=${ipcReceiver != null} accInstance=${com.mirage.capture.usb.AccessoryIoService.instance != null}")
+        try {
+            startForegroundService(android.content.Intent(this, com.mirage.capture.usb.AccessoryIoService::class.java))
+            Log.i(TAG, "ensureUsbVideoRoute: AccessoryIoService start requested (forced)")
+            RouteTrace.append(this, "ensureUsbVideoRoute: AccessoryIoService start requested (forced)")
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureUsbVideoRoute: failed to start AccessoryIoService", e)
+        }
+        Log.i(TAG, "ensureUsbVideoRoute: scheduling probeExistingUsb")
+        RouteTrace.append(this, "ensureUsbVideoRoute: scheduling probeExistingUsb")
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            Log.i(TAG, "ensureUsbVideoRoute: postDelayed fired ipcReceiver=${ipcReceiver != null}")
+            RouteTrace.append(this, "ensureUsbVideoRoute: postDelayed fired ipcReceiver=${ipcReceiver != null}")
+            try {
+                ipcReceiver?.probeExistingUsb(this)
+                Log.i(TAG, "ensureUsbVideoRoute: probeExistingUsb requested")
+                RouteTrace.append(this, "ensureUsbVideoRoute: probeExistingUsb requested")
+            } catch (e: Exception) {
+                Log.e(TAG, "ensureUsbVideoRoute: probeExistingUsb failed", e)
+            }
+        }, 400)
     }
 
     fun detachUsbStream() {
@@ -417,7 +445,11 @@ class ScreenCaptureService : Service() {
         if (fpsRestartPending) return
         fpsRestartPending = true
         // debounce small bursts
+        Log.i(TAG, "ensureUsbVideoRoute: scheduling probeExistingUsb")
+        RouteTrace.append(this, "ensureUsbVideoRoute: scheduling probeExistingUsb")
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            Log.i(TAG, "ensureUsbVideoRoute: postDelayed fired ipcReceiver=${ipcReceiver != null}")
+            RouteTrace.append(this, "ensureUsbVideoRoute: postDelayed fired ipcReceiver=${ipcReceiver != null}")
             try {
                 val proj = projection ?: return@postDelayed
                 val sender = videoSender ?: return@postDelayed

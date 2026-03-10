@@ -7,6 +7,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -25,13 +26,13 @@ import java.util.concurrent.atomic.AtomicLong
  * - Writer thread dequeues and writes packets to the connected client
  */
 class TcpVideoSender(
-    private val port: Int = 50100,
+    private val port: Int = 50000,
     private val onClientConnected: (() -> Unit)? = null
 ) : VideoSender {
 
     companion object {
         private const val TAG = "TcpVideoSender"
-        private const val QUEUE_CAPACITY = 256
+        private const val QUEUE_CAPACITY = 4096
         private const val STATS_INTERVAL = 100L
         private const val REBIND_MAX_ATTEMPTS = 5
         private const val REBIND_DELAY_MS = 2000L
@@ -40,6 +41,7 @@ class TcpVideoSender(
     private val active = AtomicBoolean(true)
     private val packetsSent = AtomicLong(0)
     private val bytesSent = AtomicLong(0)
+    private val packetsDropped = AtomicLong(0)
 
     private val sendQueue = ArrayBlockingQueue<ByteArray>(QUEUE_CAPACITY)
 
@@ -110,9 +112,11 @@ class TcpVideoSender(
 
         val vid0Packet = Protocol.buildVideoFrame(rtpPacket)
 
-        if (!sendQueue.offer(vid0Packet)) {
-            sendQueue.poll()
-            sendQueue.offer(vid0Packet)
+        if (!sendQueue.offer(vid0Packet, 20, TimeUnit.MILLISECONDS)) {
+            val dropped = packetsDropped.incrementAndGet()
+            if (dropped <= 20 || (dropped % 100L) == 0L) {
+                Log.w(TAG, "sendQueue full, dropping newest packet (drops=$dropped q=${sendQueue.size})")
+            }
         }
     }
 
@@ -124,7 +128,7 @@ class TcpVideoSender(
         if (!active.getAndSet(false)) return
 
         Log.i(TAG, "Closing TCP video sender. Stats: ${packetsSent.get()} packets, " +
-                "${bytesSent.get() / 1024} KB")
+                "${bytesSent.get() / 1024} KB, dropped=${packetsDropped.get()}")
 
         sendQueue.clear()
         closeClient()
@@ -205,7 +209,7 @@ class TcpVideoSender(
                     bytesSent.addAndGet(packet.size.toLong())
 
                     if (count % STATS_INTERVAL == 0L) {
-                        Log.d(TAG, "Sent $count packets, ${bytesSent.get() / 1024} KB")
+                        Log.d(TAG, "Sent $count packets, ${bytesSent.get() / 1024} KB q=${sendQueue.size} dropped=${packetsDropped.get()}")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Write failed, client disconnected: ${e.message}")

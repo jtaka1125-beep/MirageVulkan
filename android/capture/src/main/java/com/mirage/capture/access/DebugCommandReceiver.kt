@@ -1,9 +1,10 @@
-﻿package com.mirage.capture.access
+package com.mirage.capture.access
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.mirage.capture.ipc.WifiCommandService
 
 /**
  * Debug receiver for testing AccessibilityService gestures via ADB shell.
@@ -57,6 +58,15 @@ class DebugCommandReceiver : BroadcastReceiver() {
             "back" -> {
                 Log.i(TAG, "BACK")
                 a11y.performBack(0)
+            }
+            "start_wifi_cmd" -> {
+                Log.i(TAG, "Starting WifiCommandService")
+                try {
+                    context?.startForegroundService(android.content.Intent(context, WifiCommandService::class.java))
+                    Log.i(TAG, "WifiCommandService start requested")
+                } catch (e: Exception) {
+                    Log.e(TAG, "WifiCommandService start failed", e)
+                }
             }
             "pinch" -> {
                 val cx = intent.getIntExtra("cx", 400)

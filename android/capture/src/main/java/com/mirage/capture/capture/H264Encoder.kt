@@ -178,8 +178,8 @@ class H264Encoder(
     fun start() {
         val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
         val (rawWidth, rawHeight) = physicalScreenSize()
-        val captureWidth = maxOf(rawWidth, rawHeight)
-        val captureHeight = minOf(rawWidth, rawHeight)
+        val captureWidth = minOf(rawWidth, rawHeight)
+        val captureHeight = maxOf(rawWidth, rawHeight)
         val metrics: DisplayMetrics = ctx.resources.displayMetrics
         val dpi = metrics.densityDpi
         val fps = targetFps.get()
