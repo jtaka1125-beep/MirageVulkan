@@ -663,6 +663,75 @@ async function createContainerFromRecording() {
 }
 
 // ==================== Save / Load / Export ====================
+
+async function normalizeCurrentBlocks() {
+  var serial = document.getElementById('device-select') ? document.getElementById('device-select').value : '';
+  if (!serial) { alert('デバイスを選択してください'); return; }
+
+  let imgData = null;
+  try {
+    imgData = await window.pywebview.api.capture_screen(serial);
+  } catch (e) {
+    alert('画面基準の取得に失敗: ' + e);
+    return;
+  }
+  if (!imgData || imgData.error) {
+    alert('画面基準の取得に失敗: ' + (imgData ? imgData.error : 'unknown'));
+    return;
+  }
+
+  const basis_w = imgData.width || imgData.preview_w || imgData.native_w || 0;
+  const basis_h = imgData.height || imgData.preview_h || imgData.native_h || 0;
+  if (!(basis_w > 0 && basis_h > 0)) {
+    alert('有効な座標基準がありません');
+    return;
+  }
+
+  let touched = 0;
+  const blocks = workspace.getAllBlocks(false);
+  for (const block of blocks) {
+    try {
+      if (block.type === 'adb_tap') {
+        const x = Number(block.getFieldValue('X'));
+        const y = Number(block.getFieldValue('Y'));
+        const norm = await window.pywebview.api.normalize_coords(serial, x, y, basis_w, basis_h);
+        if (norm && norm.status === 'ok') {
+          block.data = JSON.stringify({ coord_basis: 'native_normalized', x_norm: norm.x_norm, y_norm: norm.y_norm });
+          touched++;
+        }
+      } else if (block.type === 'adb_swipe') {
+        const x1 = Number(block.getFieldValue('X1'));
+        const y1 = Number(block.getFieldValue('Y1'));
+        const x2 = Number(block.getFieldValue('X2'));
+        const y2 = Number(block.getFieldValue('Y2'));
+        const n1 = await window.pywebview.api.normalize_coords(serial, x1, y1, basis_w, basis_h);
+        const n2 = await window.pywebview.api.normalize_coords(serial, x2, y2, basis_w, basis_h);
+        if (n1 && n1.status === 'ok' && n2 && n2.status === 'ok') {
+          block.data = JSON.stringify({
+            coord_basis: 'native_normalized',
+            x1_norm: n1.x_norm, y1_norm: n1.y_norm,
+            x2_norm: n2.x_norm, y2_norm: n2.y_norm
+          });
+          touched++;
+        }
+      } else if (block.type === 'adb_long_press') {
+        const x = Number(block.getFieldValue('X'));
+        const y = Number(block.getFieldValue('Y'));
+        const norm = await window.pywebview.api.normalize_coords(serial, x, y, basis_w, basis_h);
+        if (norm && norm.status === 'ok') {
+          block.data = JSON.stringify({ coord_basis: 'native_normalized', x_norm: norm.x_norm, y_norm: norm.y_norm });
+          touched++;
+        }
+      }
+    } catch (e) {
+      console.log('normalize block failed', block.type, e);
+    }
+  }
+
+  updateCodePreview();
+  alert('正規化したブロック数: ' + touched);
+}
+
 async function saveMacro() {
   var name = prompt('繝槭け繝ｭ蜷阪ｒ蛟､蜉', 'my_macro');
   if (!name) return;
