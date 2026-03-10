@@ -674,13 +674,23 @@ std::string MacroApiServer::handle_tap(const std::string& device_id, int x, int 
         std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
         std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
         int sw = 0, sh = 0;
-        if (auto* mgr = ctx().adb_manager.get()) {
-            auto devices = mgr->getUniqueDevices();
-            for (const auto& ud : devices) {
-                if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
-                    if (ud.screen_width > 0) sw = ud.screen_width;
-                    if (ud.screen_height > 0) sh = ud.screen_height;
-                    break;
+        {
+            std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+            auto jit = jpeg_cache_.find(hw_id);
+            if (jit != jpeg_cache_.end() && jit->second.width > 0 && jit->second.height > 0) {
+                sw = jit->second.width;
+                sh = jit->second.height;
+            }
+        }
+        if (sw <= 0 || sh <= 0) {
+            if (auto* mgr = ctx().adb_manager.get()) {
+                auto devices = mgr->getUniqueDevices();
+                for (const auto& ud : devices) {
+                    if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
+                        if (ud.screen_width > 0) sw = ud.screen_width;
+                        if (ud.screen_height > 0) sh = ud.screen_height;
+                        break;
+                    }
                 }
             }
         }
@@ -706,13 +716,23 @@ std::string MacroApiServer::handle_swipe(const std::string& device_id,
         std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
         std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
         int sw = 0, sh = 0;
-        if (auto* mgr = ctx().adb_manager.get()) {
-            auto devices = mgr->getUniqueDevices();
-            for (const auto& ud : devices) {
-                if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
-                    if (ud.screen_width > 0) sw = ud.screen_width;
-                    if (ud.screen_height > 0) sh = ud.screen_height;
-                    break;
+        {
+            std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+            auto jit = jpeg_cache_.find(hw_id);
+            if (jit != jpeg_cache_.end() && jit->second.width > 0 && jit->second.height > 0) {
+                sw = jit->second.width;
+                sh = jit->second.height;
+            }
+        }
+        if (sw <= 0 || sh <= 0) {
+            if (auto* mgr = ctx().adb_manager.get()) {
+                auto devices = mgr->getUniqueDevices();
+                for (const auto& ud : devices) {
+                    if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
+                        if (ud.screen_width > 0) sw = ud.screen_width;
+                        if (ud.screen_height > 0) sh = ud.screen_height;
+                        break;
+                    }
                 }
             }
         }
@@ -740,13 +760,23 @@ std::string MacroApiServer::handle_long_press(const std::string& device_id,
         std::string usb_key = resolve_to_usb_serial(strip_route_prefix(device_id));
         std::string route_key = wants_wifi_route(device_id) ? hw_id : (wants_usb_route(device_id) ? usb_key : (hybrid->is_device_connected(usb_key) ? usb_key : hw_id));
         int sw = 0, sh = 0;
-        if (auto* mgr = ctx().adb_manager.get()) {
-            auto devices = mgr->getUniqueDevices();
-            for (const auto& ud : devices) {
-                if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
-                    if (ud.screen_width > 0) sw = ud.screen_width;
-                    if (ud.screen_height > 0) sh = ud.screen_height;
-                    break;
+        {
+            std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+            auto jit = jpeg_cache_.find(hw_id);
+            if (jit != jpeg_cache_.end() && jit->second.width > 0 && jit->second.height > 0) {
+                sw = jit->second.width;
+                sh = jit->second.height;
+            }
+        }
+        if (sw <= 0 || sh <= 0) {
+            if (auto* mgr = ctx().adb_manager.get()) {
+                auto devices = mgr->getUniqueDevices();
+                for (const auto& ud : devices) {
+                    if (ud.hardware_id == hw_id || ud.preferred_adb_id == strip_route_prefix(device_id)) {
+                        if (ud.screen_width > 0) sw = ud.screen_width;
+                        if (ud.screen_height > 0) sh = ud.screen_height;
+                        break;
+                    }
                 }
             }
         }
@@ -776,9 +806,18 @@ std::string MacroApiServer::handle_multi_touch(const std::string& device_id,
         return R"({"status":"error","message":"multi_touch requires AOA HID - device not connected"})";
     }
 
-    // Get device screen size for HID coordinate scaling
+    // Use preview/cache size when available so editor coordinates match the GUI preview.
     int sw = 1080, sh = 1920;
     {
+        std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
+        std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+        auto jit = jpeg_cache_.find(hw_id);
+        if (jit != jpeg_cache_.end() && jit->second.width > 0 && jit->second.height > 0) {
+            sw = jit->second.width;
+            sh = jit->second.height;
+        }
+    }
+    if ((sw == 1080 && sh == 1920)) {
         auto& mgr = ctx().adb_manager;
         if (!mgr) return {};
         auto devices = mgr->getUniqueDevices();
@@ -810,9 +849,19 @@ std::string MacroApiServer::handle_pinch(const std::string& device_id,
     const std::string& direction, int cx, int cy, int d_start, int d_end) {
     auto& hybrid = ctx().hybrid_cmd;
 
-    // Use existing send_pinch which drives AoaHidTouch internally
+    // Use existing send_pinch which drives AoaHidTouch internally.
+    // Prefer preview/cache size so editor coordinates match the GUI preview.
     int sw = 1080, sh = 1920;
     {
+        std::string hw_id = resolve_hw_id(strip_route_prefix(device_id));
+        std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+        auto jit = jpeg_cache_.find(hw_id);
+        if (jit != jpeg_cache_.end() && jit->second.width > 0 && jit->second.height > 0) {
+            sw = jit->second.width;
+            sh = jit->second.height;
+        }
+    }
+    if ((sw == 1080 && sh == 1920)) {
         auto& mgr = ctx().adb_manager;
         if (!mgr) return {};
         auto devices = mgr->getUniqueDevices();
