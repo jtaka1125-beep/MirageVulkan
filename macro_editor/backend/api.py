@@ -64,21 +64,19 @@ class MacroEditorAPI:
             client.connect()
             result = client.screenshot(serial)
             client.disconnect()
-            if result and result.get('path'):
-                path = result['path']
-                if os.path.exists(path):
-                    with open(path, 'rb') as f:
-                        b64 = base64.b64encode(f.read()).decode('ascii')
-                    try:
-                        c2 = MirageClient(timeout=3.0)
-                        c2.connect()
-                        info = c2.device_info(serial)
-                        c2.disconnect()
-                        w = info.get('screen_width', 1080)
-                        h = info.get('screen_height', 1920)
-                    except Exception:
-                        w, h = 1080, 1920
-                    return {'base64': b64, 'width': w, 'height': h}
+            if result and result.get('base64'):
+                return {
+                    'base64': result.get('base64'),
+                    'width': result.get('width', result.get('preview_w', 1080)),
+                    'height': result.get('height', result.get('preview_h', 1920)),
+                    'preview_w': result.get('preview_w', result.get('width', 0)),
+                    'preview_h': result.get('preview_h', result.get('height', 0)),
+                    'native_w': result.get('native_w', 0),
+                    'native_h': result.get('native_h', 0),
+                    'coord_space': result.get('coord_space', 'preview'),
+                    'coord_basis': result.get('coord_basis', 'macro_editor_should_use_returned_width_height'),
+                    'via': result.get('via', 'mirage')
+                }
         except Exception:
             pass
         try:
@@ -105,6 +103,26 @@ class MacroEditorAPI:
             return {'base64': b64, 'width': width, 'height': height}
         except Exception as e:
             return {'error': str(e)}
+
+    def normalize_coords(self, serial, x, y, basis_w, basis_h):
+        try:
+            client = MirageClient(timeout=5.0)
+            client.connect()
+            result = client.normalize_coords(serial, int(x), int(y), int(basis_w), int(basis_h))
+            client.disconnect()
+            return result
+        except Exception as e:
+            return {'status': 'error', 'error': str(e)}
+
+    def resolve_coords(self, serial, x_norm, y_norm, prefer_space='preview'):
+        try:
+            client = MirageClient(timeout=5.0)
+            client.connect()
+            result = client.resolve_coords(serial, float(x_norm), float(y_norm), str(prefer_space))
+            client.disconnect()
+            return result
+        except Exception as e:
+            return {'status': 'error', 'error': str(e)}
 
     # ==================== Screen Analysis ====================
 

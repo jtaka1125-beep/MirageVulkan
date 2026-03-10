@@ -90,6 +90,12 @@ class MirageClient:
     def force_stop(self, device_id: str, package: str) -> dict: return self._call("force_stop", {"device_id": device_id, "package": package})
     def screenshot(self, device_id: str) -> dict: return self._call("screenshot", {"device_id": device_id})
 
+    def normalize_coords(self, device_id: str, x: int, y: int, basis_w: int, basis_h: int) -> dict:
+        return self._call("normalize_coords", {"device_id": device_id, "x": x, "y": y, "basis_w": basis_w, "basis_h": basis_h})
+
+    def resolve_coords(self, device_id: str, x_norm: float, y_norm: float, prefer_space: str = "preview") -> dict:
+        return self._call("resolve_coords", {"device_id": device_id, "x_norm": x_norm, "y_norm": y_norm, "prefer_space": prefer_space})
+
     # ---- OCR API (requires USE_OCR=ON in MirageVulkan) ----
     def ocr_analyze(self, device_id: str) -> dict: return self._call("ocr_analyze", {"device_id": device_id})
     def ocr_find_text(self, device_id: str, query: str) -> dict: return self._call("ocr_find_text", {"device_id": device_id, "query": query})
