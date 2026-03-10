@@ -362,3 +362,94 @@ Use the following rule consistently:
 - **Runtime execution:** recalculate from current dimensions, then send via MirageGUI command path
 
 This keeps the editor intuitive while making stored macros resilient to preview scaling changes.
+
+
+### 8.6 Coordinate transform RPCs
+
+To support preview-based editing with native-normalized persistence, MacroApiServer now provides two helper RPCs.
+
+#### `normalize_coords`
+
+Purpose:
+- Convert editor-space coordinates (`x`, `y`, `basis_w`, `basis_h`) into normalized storage values.
+
+Example request:
+
+```json
+{
+  "id": 101,
+  "method": "normalize_coords",
+  "params": {
+    "device_id": "device_hw_001",
+    "x": 540,
+    "y": 270,
+    "basis_w": 1080,
+    "basis_h": 1800
+  }
+}
+```
+
+Example result:
+
+```json
+{
+  "status": "ok",
+  "coord_basis": "native_normalized",
+  "x_norm": 0.5,
+  "y_norm": 0.15,
+  "source_basis_w": 1080,
+  "source_basis_h": 1800,
+  "native_w": 1200,
+  "native_h": 2000
+}
+```
+
+#### `resolve_coords`
+
+Purpose:
+- Convert normalized macro coordinates back into current runtime coordinates.
+- Prefer preview space for editor/runtime overlays when available.
+
+Example request:
+
+```json
+{
+  "id": 102,
+  "method": "resolve_coords",
+  "params": {
+    "device_id": "device_hw_001",
+    "x_norm": 0.5,
+    "y_norm": 0.15,
+    "prefer_space": "preview"
+  }
+}
+```
+
+Example result:
+
+```json
+{
+  "status": "ok",
+  "coord_space": "preview",
+  "x": 540,
+  "y": 270,
+  "basis_w": 1080,
+  "basis_h": 1800,
+  "preview_w": 1080,
+  "preview_h": 1800,
+  "native_w": 1200,
+  "native_h": 2000,
+  "coord_basis": "resolved_from_native_normalized"
+}
+```
+
+### 8.7 Recommended save / run flow
+
+1. User clicks on live preview image
+2. Editor uses screenshot response `width` / `height` as the immediate editing basis
+3. Editor calls `normalize_coords` before saving
+4. Saved macro stores `x_norm` / `y_norm`
+5. Before execution, editor calls `resolve_coords`
+6. Editor sends the resolved runtime coordinates to `tap` / `swipe`
+
+This keeps saved macros stable even if preview scaling changes later.
