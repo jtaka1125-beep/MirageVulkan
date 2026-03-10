@@ -65,8 +65,8 @@
     "ollama": {
         "host": "127.0.0.1",
         "port": 11434,
-        "model": "qwen2.5vl:3b",
-        "timeout_ms": 30000,
+        "model": "llava:7b",
+        "timeout_ms": 120000,
         "max_tokens": 64
     }
 }

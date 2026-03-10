@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // =============================================================================
 // OllamaVision - Layer 3 Popup Detection via Local LLM
 // =============================================================================
@@ -11,6 +11,8 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <thread>
+#include <atomic>
 
 namespace mirage::ai {
 
@@ -53,12 +55,18 @@ public:
     // Ollamaサーバーの接続確認
     bool isAvailable();
 
+    // CLIPエンコーダーをウォームアップ（非同期。初回呼び出し前にバックグラウンドで呼ぶ）
+    // 最初の画像推論で38sかかるのを防ぐため、ダミー画像でCLIPをプリロード
+    void warmupAsync();
+
     // 設定変更
     void setConfig(const OllamaVisionConfig& config) { config_ = config; }
     const OllamaVisionConfig& config() const { return config_; }
 
 private:
     OllamaVisionConfig config_;
+    std::atomic<bool> warmup_done_{false};
+    std::thread warmup_thread_;
 
     // RGBAをBase64 PNG文字列に変換
     std::string encodeRgbaToPngBase64(const uint8_t* rgba, int width, int height);

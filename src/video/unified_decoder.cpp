@@ -411,7 +411,7 @@ void UnifiedDecoder::onVulkanFrame(VkImage nv12_image, VkImageView nv12_view,
         frame.pts = pts;
         frame.backend = DecoderBackend::VulkanVideo;
 
-        callback_copy(frame);
+        frame_callback_(frame);
     }
 
     frames_decoded_++;
@@ -426,12 +426,10 @@ void UnifiedDecoder::onFFmpegFrame(const uint8_t* rgba_data, uint32_t width, uin
     current_width_ = width;
     current_height_ = height;
 
-    DecodedFrameCallback callback_copy;
-    {
-        std::lock_guard<std::mutex> lock(decode_mutex_);
-        callback_copy = frame_callback_;
-    }
-    if (callback_copy) {
+    // NOTE: Don't lock decode_mutex_ here! This is called from within decode()
+    // which already holds the lock. Using the lock would cause deadlock.
+    // frame_callback_ is set once during init and never changes, so this is safe.
+    if (frame_callback_) {
         DecodedFrame frame;
         frame.rgba_data = rgba_data;
         frame.owns_data = false;  // Data owned by FFmpeg decoder
@@ -440,7 +438,7 @@ void UnifiedDecoder::onFFmpegFrame(const uint8_t* rgba_data, uint32_t width, uin
         frame.pts = pts;
         frame.backend = backend_;
 
-        callback_copy(frame);
+        frame_callback_(frame);
     }
 
     frames_decoded_++;

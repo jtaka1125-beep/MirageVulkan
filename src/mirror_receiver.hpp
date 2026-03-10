@@ -271,6 +271,7 @@ private:
   bool stream_is_hevc_ = false;
 
   // SPS/PPS cache for stream recovery
+  std::vector<uint8_t> cached_vps_;
   std::vector<uint8_t> cached_sps_;
   std::vector<uint8_t> cached_pps_;
   bool sps_logged_ = false;

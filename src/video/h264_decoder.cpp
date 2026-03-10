@@ -1,4 +1,5 @@
 ﻿#include "h264_decoder.hpp"
+#include <chrono>
 
 #include "../mirage_log.hpp"
 #include <mutex>
@@ -123,8 +124,8 @@ bool H264Decoder::init(bool use_hevc) {
 
   if (!hw_enabled_) {
     MLOG_INFO("h264", "No HW acceleration available, using CPU decode");
-    codec_ctx_->thread_count = 4;  // CPU decode: 4繧ｹ繝ｬ繝・ラ ﾃ・2繧ｿ繧､繝ｫ = 8繧ｹ繝ｬ繝・ラ菴ｿ逕ｨ
-    codec_ctx_->thread_type = FF_THREAD_SLICE;  // 繧ｹ繝ｩ繧､繧ｹ荳ｦ蛻暦ｼ井ｽ朱≦蟒ｶ繝ｻ繝輔Ξ繝ｼ繝驕・ｻｶ縺ｪ縺暦ｼ・
+    codec_ctx_->thread_count = 0;  // 0 = auto (all logical CPUs; Ryzen 7840HS has 16)
+    codec_ctx_->thread_type = FF_THREAD_SLICE;  // slice-level: low latency, no frame delay
   }
 
   AVDictionary* opts = nullptr;
@@ -223,7 +224,15 @@ int H264Decoder::decode_packet(AVPacket* pkt) {
       sw_frame = sw_frame_;
     }
 
-    convert_frame_to_rgba(sw_frame);
+    {
+        auto _t0 = std::chrono::steady_clock::now();
+        convert_frame_to_rgba(sw_frame);
+        long long _us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - _t0).count();
+        if (frames_decoded_ < 5 || frames_decoded_ % 100 == 0)
+            MLOG_INFO("h264", "conv_rgba #%llu: %lldus",
+                (unsigned long long)frames_decoded_, _us);
+    }
     frames_out++;
     frames_decoded_++;
     av_frame_unref(frame_);
@@ -264,7 +273,15 @@ int H264Decoder::flush() {
       sw_frame = sw_frame_;
     }
 
-    convert_frame_to_rgba(sw_frame);
+    {
+        auto _t0 = std::chrono::steady_clock::now();
+        convert_frame_to_rgba(sw_frame);
+        long long _us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - _t0).count();
+        if (frames_decoded_ < 5 || frames_decoded_ % 100 == 0)
+            MLOG_INFO("h264", "conv_rgba #%llu: %lldus",
+                (unsigned long long)frames_decoded_, _us);
+    }
     frames_out++;
     frames_decoded_++;
     av_frame_unref(frame_);
@@ -274,7 +291,10 @@ int H264Decoder::flush() {
 }
 
 void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
-  if (!frame_callback_) return;
+  if (!frame_callback_) {
+    if (frames_decoded_ < 5) MLOG_WARN("h264", "frame_callback_ not set, skip frame");
+    return;
+  }
 
   int width = frame->width;
   int height = frame->height;
@@ -296,8 +316,25 @@ void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
     return;
   }
 
-  // Reinitialize SwsContext if dimensions changed
-  if (width != last_width_ || height != last_height_ || !sws_ctx_) {
+  // Quick center-pixel YUV sample (first 5 frames + every 300)
+  if (frames_decoded_ < 5 || frames_decoded_ % 300 == 0) {
+    if (frame->data[0] && frame->data[1] && frame->data[2]) {
+      int cy = frame->height/2, cx = frame->width/2;
+      uint8_t yv = frame->data[0][cy * frame->linesize[0] + cx];
+      uint8_t uv = frame->data[1][(cy/2) * frame->linesize[1] + cx/2];
+      uint8_t vv = frame->data[2][(cy/2) * frame->linesize[2] + cx/2];
+      MLOG_INFO("yuvsamp", "fd=%u Y=%d U=%d V=%d range=%d fmt=%d",
+                frames_decoded_, yv, uv, vv, frame->color_range, frame->format);
+    }
+  }
+  // Reinitialize SwsContext if dimensions, format, or color properties changed
+  bool need_reinit = !sws_ctx_ ||
+                     width != last_width_ ||
+                     height != last_height_ ||
+                     frame->format != last_format_ ||
+                     frame->color_range != last_color_range_ ||
+                     frame->colorspace != last_colorspace_;
+  if (need_reinit) {
     if (sws_ctx_) {
       sws_freeContext(sws_ctx_);
       sws_ctx_ = nullptr;
@@ -313,6 +350,30 @@ void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
       SWS_POINT, nullptr, nullptr, nullptr
     );
 
+    // Set color space conversion for proper HEVC/H.264 color handling
+    if (sws_ctx_) {
+      // Determine colorspace from frame metadata, fallback to resolution-based heuristic
+      int cs = SWS_CS_DEFAULT;
+      if (frame->colorspace == AVCOL_SPC_BT709) {
+        cs = SWS_CS_ITU709;
+      } else if (frame->colorspace == AVCOL_SPC_BT470BG || frame->colorspace == AVCOL_SPC_SMPTE170M) {
+        cs = SWS_CS_ITU601;
+      } else {
+        // Fallback: HD uses BT.709, SD uses BT.601
+        cs = (height >= 720) ? SWS_CS_ITU709 : SWS_CS_ITU601;
+      }
+      const int* coefs = sws_getCoefficients(cs);
+      // MediaTek HEVC encoder reports MPEG range but actually outputs full range.
+      // Force full range (srcRange=1) for all HEVC to fix washed-out colors.
+      // For H.264, use frame's actual color_range.
+      int srcRange = is_hevc_ ? 1 : ((frame->color_range == AVCOL_RANGE_JPEG) ? 1 : 0);
+      sws_setColorspaceDetails(sws_ctx_, coefs, srcRange, coefs, 1, 0, 1 << 16, 1 << 16);
+      if (frames_decoded_ < 5 || (frames_decoded_ % 500 == 0)) {
+        MLOG_INFO("h264", "SwsContext: %dx%d fmt=%d cs=%d range=%d srcRange=%d (hevc=%d) -> RGBA",
+                  width, height, (int)frame->format, frame->colorspace, frame->color_range, srcRange, is_hevc_ ? 1 : 0);
+      }
+    }
+
     if (!sws_ctx_) {
       MLOG_ERROR("h264", "Failed to create SwsContext for %dx%d fmt=%d -> %dx%d RGBA",
                  width, height, (int)frame->format, out_width_, out_height_);
@@ -320,31 +381,22 @@ void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
       return;
     }
 
-    // Allocate RGBA frame buffer
-    av_frame_unref(frame_rgba_);
-    frame_rgba_->format = AV_PIX_FMT_RGBA;
-    frame_rgba_->width = out_width_;
-    frame_rgba_->height = out_height_;
-    if (av_frame_get_buffer(frame_rgba_, 32) < 0) {
-      MLOG_ERROR("h264", "Failed to allocate RGBA frame buffer");
-      error_count_++;
-      // Reset frame_rgba_ to prevent use of partially initialized state
-      av_frame_unref(frame_rgba_);
-      sws_freeContext(sws_ctx_);
-      sws_ctx_ = nullptr;
-      last_width_ = 0;
-      last_height_ = 0;
-      return;
-    }
-
-    // Pre-allocate persistent RGBA buffer for padded frames
+    // av_frame_get_buffer は AMD iGPU D3D11VA パスでハングする既知の問題。
+    // rgba_buffer_ を直接使用して回避する。
     size_t buffer_size = static_cast<size_t>(out_width_) * out_height_ * 4;
-    if (rgba_buffer_.size() < buffer_size) {
-      rgba_buffer_.resize(buffer_size);
-    }
+    if (rgba_buffer_.size() < buffer_size) rgba_buffer_.resize(buffer_size);
+    av_frame_unref(frame_rgba_);
+    frame_rgba_->format      = AV_PIX_FMT_RGBA;
+    frame_rgba_->width       = out_width_;
+    frame_rgba_->height      = out_height_;
+    frame_rgba_->data[0]     = rgba_buffer_.data();
+    frame_rgba_->linesize[0] = out_width_ * 4;
 
     last_width_ = width;
     last_height_ = height;
+    last_format_ = frame->format;
+    last_color_range_ = frame->color_range;
+    last_colorspace_ = frame->colorspace;
   }
 
   // Convert to RGBA
@@ -362,22 +414,9 @@ void H264Decoder::convert_frame_to_rgba(AVFrame* frame) {
 
   // Call callback with RGBA data
   // Note: linesize might have padding, so we need to handle that
-  if (frame_rgba_->linesize[0] == out_width_ * 4) {
-    // No padding, can use directly
-    // Callback receives pointer to internal buffer - valid only during callback
-    frame_callback_(frame_rgba_->data[0], out_width_, out_height_, frame->pts);
-  } else {
-    // Has padding, copy to persistent buffer (avoids allocation per frame)
-    uint8_t* dst = rgba_buffer_.data();
-    uint8_t* src = frame_rgba_->data[0];
-    for (int y = 0; y < out_height_; y++) {
-      memcpy(dst, src, out_width_ * 4);
-      dst += out_width_ * 4;
-      src += frame_rgba_->linesize[0];
-    }
-    // Callback receives pointer to persistent buffer - valid only during callback
-    frame_callback_(rgba_buffer_.data(), out_width_, out_height_, frame->pts);
-  }
+  if (frames_decoded_ < 5) MLOG_INFO("h264", "Calling frame_callback_ for frame %llu (%dx%d)", (unsigned long long)(frames_decoded_ + 1), out_width_, out_height_);
+  frame_callback_(rgba_buffer_.data(), out_width_, out_height_, frame->pts);
+  if (frames_decoded_ < 5) MLOG_INFO("h264", "frame_callback_ returned");
 }
 
 // Static member definition

@@ -10,8 +10,11 @@
 
 #include <cstring>
 #include <algorithm>
+#include <mutex>
 
 namespace mirage::video {
+
+static std::mutex g_vulkan_queue_submit_mutex;
 
 DecodeResult VulkanVideoDecoder::decodeSlice(const uint8_t* nal_data, size_t nal_size, int64_t pts) {
     DecodeResult result;
@@ -275,6 +278,7 @@ DecodeResult VulkanVideoDecoder::decodeSlice(const uint8_t* nal_data, size_t nal
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = &timeline_semaphore_;
 
+    std::lock_guard<std::mutex> qlk(g_vulkan_queue_submit_mutex);
     VkResult vk_result = vkQueueSubmit(video_queue_, 1, &submit_info, VK_NULL_HANDLE);
     if (vk_result != VK_SUCCESS) {
         result.error_message = "Failed to submit decode command";

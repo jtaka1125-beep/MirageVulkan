@@ -56,6 +56,10 @@ struct AiConfig {
     int  vde_layer3_cooldown_ms     = 30000;
 };
 
+struct AoaConfig {
+    bool auto_switch = true;  // false: AOA自動切り替え無効（USB ADB維持）
+};
+
 struct OcrConfig {
     bool enabled = false;
     std::string language = "eng+jpn";
@@ -78,6 +82,7 @@ struct AppConfig {
     UsbTetherConfig usb_tether;
     GuiConfig gui;
     AiConfig ai;
+    AoaConfig aoa;
     OcrConfig ocr;
     LogConfig log;
     OllamaConfig ollama;
@@ -202,6 +207,8 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ollama.timeout_ms = jsonGet<int>        (j, "ollama", "timeout_ms", 120000);
         config.ollama.max_tokens = jsonGet<int>        (j, "ollama", "max_tokens", 64);
 
+        config.aoa.auto_switch = jsonGet<bool>(j, "aoa", "auto_switch", true);
+
         config.ocr.enabled = jsonGet<bool>(j, "ocr", "enabled", false);
         config.ocr.language = jsonGet<std::string>(j, "ocr", "language", "eng+jpn");
 
@@ -273,6 +280,8 @@ struct ExpectedDeviceSpec {
     int screen_height = 0;
     int screen_density = 0;
     int tcp_port = 0;
+    std::string tcp_host;  // override host for TCP video (e.g. "127.0.0.1" for ADB forward)
+    int display_rotation = 0;  // GUI display rotation offset (0/90/180/270 CW)
 };
 
 class ExpectedSizeRegistry {
@@ -306,6 +315,8 @@ public:
                 spec.screen_height = dev.value("screen_height", 0);
                 spec.screen_density = dev.value("screen_density", 0);
                 spec.tcp_port = dev.value("tcp_port", 0);
+                spec.tcp_host = dev.value("tcp_host", "");
+                spec.display_rotation = dev.value("display_rotation", 0);
 
                 if (!spec.hardware_id.empty() && spec.screen_width > 0 && spec.screen_height > 0) {
                     devices_[spec.hardware_id] = spec;
@@ -340,6 +351,24 @@ public:
         auto it = devices_.find(hardware_id);
         if (it != devices_.end() && it->second.tcp_port > 0) {
             out_port = it->second.tcp_port;
+            return true;
+        }
+        return false;
+    }
+
+    bool getTcpHost(const std::string& hardware_id, std::string& out_host) const {
+        auto it = devices_.find(hardware_id);
+        if (it != devices_.end() && !it->second.tcp_host.empty()) {
+            out_host = it->second.tcp_host;
+            return true;
+        }
+        return false;
+    }
+
+    bool getDisplayRotation(const std::string& hardware_id, int& out_rotation) const {
+        auto it = devices_.find(hardware_id);
+        if (it != devices_.end()) {
+            out_rotation = it->second.display_rotation;
             return true;
         }
         return false;

@@ -330,6 +330,39 @@ bool OllamaVision::isAvailable() {
     return WinHttpReceiveResponse(hRequest.get(), nullptr) != FALSE;
 }
 
+void OllamaVision::warmupAsync() {
+    // バックグラウンドスレッドでCLIPエンコーダーをプリロード。
+    // llava:7b の初回画像推論は ~45s（CLIP warm後は ~3.7s）。
+    // 起動直後にダミー1x1画像を投げておくことでCLIPをウォーム化。
+    if (warmup_done_.load()) return;
+
+    if (warmup_thread_.joinable()) warmup_thread_.detach();
+
+    warmup_thread_ = std::thread([this]() {
+        MLOG_INFO("ollama", "warmup開始: CLIPエンコーダープリロード (model=%s)", config_.model.c_str());
+
+        // 1x1 透明PNGをダミー画像として使用
+        static const uint8_t dummy_rgba[4] = {128, 128, 128, 255};
+        std::string b64 = encodeRgbaToPngBase64(dummy_rgba, 1, 1);
+        if (b64.empty()) {
+            MLOG_WARN("ollama", "warmup: PNG encode失敗");
+            return;
+        }
+
+        auto t0 = std::chrono::steady_clock::now();
+        auto result = callOllamaApi("ok", b64);
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+
+        if (result) {
+            warmup_done_.store(true);
+            MLOG_INFO("ollama", "warmup完了: %lldms (CLIPウォーム済み)", (long long)elapsed);
+        } else {
+            MLOG_WARN("ollama", "warmup失敗: %lldms — 初回推論は遅い可能性あり", (long long)elapsed);
+        }
+    });
+}
+
 // =============================================================================
 // Private Methods
 // =============================================================================
@@ -405,7 +438,7 @@ std::optional<std::string> OllamaVision::callOllamaApi(const std::string& prompt
         {"num_predict", config_.max_tokens},
         {"num_ctx", 512}
     };
-    req_json["keep_alive"] = 300;  // 5分アイドルでモデルをアンロード（SSDスワップ軽減）
+    req_json["keep_alive"] = 3600; // 1時間アイドルで解放（warmup効果を持続させるため長めに設定）
 
     std::string body = req_json.dump();
 

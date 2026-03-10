@@ -86,6 +86,9 @@ private:
   int out_width_ = 0;
   int out_height_ = 0;
   int last_height_ = 0;
+  int last_format_ = -1;
+  int last_color_range_ = -1;
+  int last_colorspace_ = -1;
 
   FrameCallback frame_callback_;
 
