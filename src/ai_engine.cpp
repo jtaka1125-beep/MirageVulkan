@@ -11275,38 +11275,8 @@ if (decision.should_act && can_send) {
 
 
 
-        // AI frame rate throttle: 10 FPS cap (100ms interval per slot)
-
-
-        {
-
-
-            using clock = std::chrono::steady_clock;
-
-
-            static std::array<clock::time_point, kMaxAsyncSlots> s_last{};
-
-
-            auto now = clock::now();
-
-
-            auto& last = s_last[slot];
-
-
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last).count() < 100) {
-
-
-                return;  // drop frame, throttled to 10 FPS
-
-
-            }
-
-
-            last = now;
-
-
-        }
-
+        // Upstream onFrameReady() already applies the global AI load-spreading policy.
+        // Keep enqueue path lightweight and avoid adding another per-slot throttle here.
 
         AsyncFrameJob job;
 
@@ -11340,7 +11310,7 @@ if (decision.should_act && can_send) {
 
 
 
-            while (async_queues_[slot].size() >= 2) async_queues_[slot].pop();
+            while (async_queues_[slot].size() >= 1) async_queues_[slot].pop();
 
 
 
