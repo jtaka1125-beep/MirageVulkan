@@ -68,6 +68,9 @@ private:
     std::string handle_launch_app(const std::string& device_id, const std::string& package);
     std::string handle_force_stop(const std::string& device_id, const std::string& package);
     std::string handle_screenshot(const std::string& device_id);
+    std::string handle_normalize_coords(const std::string& device_id, int x, int y, int basis_w, int basis_h);
+    std::string handle_resolve_coords(const std::string& device_id, double x_norm, double y_norm, const std::string& prefer_space);
+    std::string handle_video_route(const std::string& device_id, const std::string& route, const std::string& host, int port);
 
         // UiFinder - ADB fallback for click_text/click_id
     std::string handle_ui_find(const std::string& device_id, const std::string& query, const std::string& strategy);
