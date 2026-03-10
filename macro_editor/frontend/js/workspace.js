@@ -156,9 +156,16 @@ function refreshNormalizationSummaryUI() {
   if (!el) {
     el = document.createElement('span');
     el.id = 'norm-status';
-    el.style.cssText = 'font-size:12px;padding:4px 8px;border-radius:4px;background:rgba(137,180,250,0.12);color:#89b4fa;';
+    el.style.cssText = 'font-size:12px;padding:4px 8px;border-radius:4px;';
     const toolbar = document.getElementById('toolbar-buttons');
     if (toolbar) toolbar.appendChild(el);
+  }
+  if (stats.unnormalized === 0) {
+    el.style.background = 'rgba(166,227,161,0.15)';
+    el.style.color = '#a6e3a1';
+  } else {
+    el.style.background = 'rgba(249,226,175,0.15)';
+    el.style.color = '#f9e2af';
   }
   el.textContent = '座標 正規化 ' + stats.normalized + '/' + stats.touch_total + '  未 ' + stats.unnormalized;
 }
@@ -892,6 +899,10 @@ async function normalizeCurrentBlocks(options) {
 
 async function saveMacro() {
   await normalizeCurrentBlocks({silent: true});
+  var postNormStats = collectNormalizationStats();
+  if (postNormStats.unnormalized > 0) {
+    alert('未正規化ブロックが ' + postNormStats.unnormalized + ' 件残っています');
+  }
   var name = prompt('繝槭け繝ｭ蜷阪ｒ蛟､蜉', 'my_macro');
   if (!name) return;
   var ws = Blockly.serialization.workspaces.save(workspace);
@@ -927,6 +938,10 @@ async function loadMacro() {
 
 async function exportCode() {
   await normalizeCurrentBlocks({silent: true});
+  var postNormStats = collectNormalizationStats();
+  if (postNormStats.unnormalized > 0) {
+    alert('未正規化ブロックが ' + postNormStats.unnormalized + ' 件残っています');
+  }
   var code = Blockly.Python.workspaceToCode(workspace);
   var blob = new Blob([code], {type: 'text/plain'});
   var a = document.createElement('a');
