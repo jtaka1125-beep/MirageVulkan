@@ -12053,8 +12053,10 @@ private:
 
 
 
-    // AI FPS throttle: last processed timestamp per slot (milliseconds)
+    // AI shared-rate throttle: last processed timestamp per slot (milliseconds).
+    // Effective per-slot interval = 100ms * active_device_count.
     std::array<int64_t, kMaxAsyncSlots> last_ai_frame_ms_ = {};
+    std::atomic<int> active_ai_devices_{1};
 
   public:
     // Phase 2: canonical only mode
@@ -12261,6 +12263,7 @@ private:
 
 
                 s_ai_slot_by_device.emplace(did, next);
+                active_ai_devices_.store(static_cast<int>(s_ai_slot_by_device.size()), std::memory_order_relaxed);
 
 
 
@@ -12268,7 +12271,7 @@ private:
 
 
 
-                MLOG_INFO("ai", "FrameReadyEvent GUI path mapped device=%s -> slot_%d", did.c_str(), slot);
+                MLOG_INFO("ai", "FrameReadyEvent GUI path mapped device=%s -> slot_%d (active=%d)", did.c_str(), slot, active_ai_devices_.load());
 
 
 
@@ -12294,15 +12297,27 @@ private:
 
 
 
-        // --- AI FPS throttle: max 10 fps per slot (display pipeline unaffected) ---
+        // --- AI rate limit: shared budget across all active devices ---
 
-        static constexpr int64_t kAiMinIntervalMs = 100; // 1000ms / 10fps
-
+        // Policy: AI is not real-time critical. Keep total analysis around 10 FPS,
+        // and distribute that budget across active devices uniformly.
+        // Example: 1 device -> ~10 FPS, 5 devices -> ~2 FPS each.
         auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 
             std::chrono::steady_clock::now().time_since_epoch()).count();
 
-        if (now_ms - last_ai_frame_ms_[slot] < kAiMinIntervalMs) return;
+        int active_devices = 1;
+        {
+            static std::mutex s_ai_slot_mutex_for_count;
+            static std::unordered_map<std::string, int> s_dummy;
+            (void)s_dummy;
+        }
+        active_devices = std::max(1, active_ai_devices_.load());
+
+        static constexpr int64_t kAiGlobalFrameBudgetMs = 100; // total ~10 FPS
+        const int64_t per_device_interval_ms = kAiGlobalFrameBudgetMs * active_devices;
+
+        if (now_ms - last_ai_frame_ms_[slot] < per_device_interval_ms) return;
 
         last_ai_frame_ms_[slot] = now_ms;
 
