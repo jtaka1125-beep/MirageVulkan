@@ -611,9 +611,25 @@ std::string MacroApiServer::handle_device_info(const std::string& device_id) {
             d["ip"]       = ud.ip_address;
             d["screen_w"] = ud.screen_width;
             d["screen_h"] = ud.screen_height;
+            d["native_w"] = ud.screen_width;
+            d["native_h"] = ud.screen_height;
             d["density"]  = ud.screen_density;
             d["android"]  = ud.android_version;
             d["sdk"]      = ud.sdk_level;
+
+            int preview_w = 0, preview_h = 0;
+            {
+                std::lock_guard<std::mutex> lk(jpeg_cache_mutex_);
+                auto jit = jpeg_cache_.find(ud.hardware_id);
+                if (jit != jpeg_cache_.end()) {
+                    preview_w = jit->second.width;
+                    preview_h = jit->second.height;
+                }
+            }
+            d["preview_w"] = preview_w;
+            d["preview_h"] = preview_h;
+            d["coord_space"] = (preview_w > 0 && preview_h > 0) ? "preview" : "native";
+            d["coord_basis"] = "macro_editor_should_use_preview_if_available";
             return d.dump();
         }
     }
@@ -1028,6 +1044,18 @@ std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
             json r;
             r["status"]="ok"; r["base64"]=enc;
             r["width"]=it->second.width; r["height"]=it->second.height;
+            r["preview_w"]=it->second.width; r["preview_h"]=it->second.height;
+            r["coord_space"]="preview";
+            r["coord_basis"]="macro_editor_should_use_returned_width_height";
+            if (mgr) {
+                for (auto& ud : mgr->getUniqueDevices()) {
+                    if (ud.hardware_id == hw_id || ud.preferred_adb_id == device_id) {
+                        r["native_w"] = ud.screen_width;
+                        r["native_h"] = ud.screen_height;
+                        break;
+                    }
+                }
+            }
             r["via"]="mirror_receiver";
             r["fps"]=0;
             return r.dump();
@@ -1036,6 +1064,7 @@ std::string MacroApiServer::handle_screenshot(const std::string& device_id) {
         json r_wait;
         r_wait["status"] = "no_frame_yet";
         r_wait["via"]    = "mirror_receiver_pending";
+        r_wait["coord_basis"] = "wait_for_preview_frame_or_fallback_to_native";
         r_wait["fps"]    = 0;
         return r_wait.dump();
     }
