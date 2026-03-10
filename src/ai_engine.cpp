@@ -5628,6 +5628,8 @@ public:
 
 
 
+
+
         if (!initialized_) { action.reason = "未初期化"; return action; }
 
 
@@ -7149,10 +7151,17 @@ if (decision.should_act && can_send) {
 
 
                         if (vision_engine_->shouldTriggerLayer3(device_id)) {
-
-
-
-                            vision_engine_->launchLayer3Async(device_id, rgba, width, height);
+                            static std::mutex s_l3_cd_mu1;
+                            static std::unordered_map<std::string, int64_t> s_last_l3_ms1;
+                            const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch()).count();
+                            bool allow_l3 = false;
+                            {
+                                std::lock_guard<std::mutex> lk(s_l3_cd_mu1);
+                                int64_t &last = s_last_l3_ms1[device_id];
+                                if (now_ms - last >= 2000) { last = now_ms; allow_l3 = true; }
+                            }
+                            if (allow_l3) vision_engine_->launchLayer3Async(device_id, rgba, width, height);
 
 
 
@@ -14037,6 +14046,23 @@ private:
 
 
         action.type = AIAction::Type::NONE;
+
+        // Heavy-path cooldown: OCR fallback is intentionally low-frequency.
+        // AI is not real-time critical; reusing fresher future frames is preferable.
+        {
+            static std::mutex s_ocr_cd_mu;
+            static std::unordered_map<std::string, int64_t> s_last_ocr_ms;
+            const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            std::lock_guard<std::mutex> lk(s_ocr_cd_mu);
+            int64_t &last = s_last_ocr_ms[device_id];
+            if (now_ms - last < 1200) {
+                action.type = AIAction::Type::WAIT;
+                action.reason = "OCR cooldown";
+                return action;
+            }
+            last = now_ms;
+        }
 
 
 
