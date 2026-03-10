@@ -12053,9 +12053,11 @@ private:
 
 
 
-    // AI shared-rate throttle: last processed timestamp per slot (milliseconds).
-    // Effective per-slot interval = 100ms * active_device_count.
+    // AI relaxed load spreading.
+    // - last_ai_global_frame_ms_: total analysis budget (~10 FPS overall)
+    // - last_ai_frame_ms_: light anti-monopoly guard per slot
     std::array<int64_t, kMaxAsyncSlots> last_ai_frame_ms_ = {};
+    std::atomic<int64_t> last_ai_global_frame_ms_{0};
     std::atomic<int> active_ai_devices_{1};
 
   public:
@@ -12297,29 +12299,24 @@ private:
 
 
 
-        // --- AI rate limit: shared budget across all active devices ---
+        // --- AI rate limit: relaxed global load spreading ---
 
-        // Policy: AI is not real-time critical. Keep total analysis around 10 FPS,
-        // and distribute that budget across active devices uniformly.
-        // Example: 1 device -> ~10 FPS, 5 devices -> ~2 FPS each.
+        // Policy: AI is not real-time critical.
+        // Keep the TOTAL analysis rate around 10 FPS, but do not try to equalize devices strictly.
+        // If a slot is idle and budget is available, let it run. Small skew across devices is acceptable.
         auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 
             std::chrono::steady_clock::now().time_since_epoch()).count();
 
-        int active_devices = 1;
-        {
-            static std::mutex s_ai_slot_mutex_for_count;
-            static std::unordered_map<std::string, int> s_dummy;
-            (void)s_dummy;
-        }
-        active_devices = std::max(1, active_ai_devices_.load());
+        static constexpr int64_t kAiGlobalFrameBudgetMs = 100;   // total ~10 FPS
+        static constexpr int64_t kAiPerSlotMinIntervalMs = 250;  // avoid one slot monopolizing everything
 
-        static constexpr int64_t kAiGlobalFrameBudgetMs = 100; // total ~10 FPS
-        const int64_t per_device_interval_ms = kAiGlobalFrameBudgetMs * active_devices;
-
-        if (now_ms - last_ai_frame_ms_[slot] < per_device_interval_ms) return;
+        int64_t global_last = last_ai_global_frame_ms_.load(std::memory_order_relaxed);
+        if (now_ms - global_last < kAiGlobalFrameBudgetMs) return;
+        if (now_ms - last_ai_frame_ms_[slot] < kAiPerSlotMinIntervalMs) return;
 
         last_ai_frame_ms_[slot] = now_ms;
+        last_ai_global_frame_ms_.store(now_ms, std::memory_order_relaxed);
 
         // -----------------------------------------------------------------------
 
