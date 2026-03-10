@@ -1,6 +1,5 @@
 #pragma once
 #include "mirror_receiver.hpp"
-#include "tile_compositor.hpp"
 #include "adb_device_manager.hpp"
 #include <vulkan/vulkan.h>
 #include <memory>
@@ -38,11 +37,7 @@ public:
     };
 
     using FrameCallback = std::function<void(const std::string& hardware_id, std::shared_ptr<mirage::SharedFrame> frame)>;
-    using TiledCallback = std::function<void(
-        const std::string& hardware_id,
-        const std::shared_ptr<mirage::SharedFrame>& top,
-        const std::shared_ptr<mirage::SharedFrame>& bot,
-        int slice_h)>;
+    // TILED_REMOVED: ..TiledCallback typedef..
 
     MultiDeviceReceiver();
     ~MultiDeviceReceiver();
@@ -77,7 +72,9 @@ public:
     // Frame callback (called when new frame received for any device)
     // コールバック設定時にフレームポーリングスレッドを開始
     void setFrameCallback(FrameCallback cb);
-    void setTiledCallback(TiledCallback cb);
+    // Direct (lightweight) callback: fired by framePollThread before EventBus publish
+    void setDirectCallback(FrameCallback cb);
+    // TILED_REMOVED: void setTiledCallback(TiledCallback cb);
 
     // Get all hardware IDs of managed devices
     std::vector<std::string> getDeviceIds() const;
@@ -87,7 +84,7 @@ public:
     bool restart_as_tcp(const std::string& hardware_id, uint16_t tcp_port);
 
     // Restart a device receiver in VID0 TCP mode (MirageCapture TcpVideoSender)
-    bool restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port);
+    bool restart_as_tcp_vid0(const std::string& hardware_id, uint16_t tcp_port, const std::string& host = "127.0.0.1");
     // Tiled mode: 2 ports (port0=top, port1=bottom), compositor thread merges frames
     // host: IP address (default 127.0.0.1 for adb forward, or device Wi-Fi IP for direct)
     bool restart_as_tcp_vid0_tiled(const std::string& hardware_id,
@@ -99,8 +96,8 @@ public:
         std::lock_guard<std::mutex> lock(receivers_mutex_);
         auto it = receivers_.find(hardware_id);
         if (it == receivers_.end()) return false;
-        return it->second.tile_compositor != nullptr
-            && it->second.tile_compositor->running();
+        return false; // TILED_REMOVED
+
     }
 
     // Feed RTP packet to the first device's receiver (for USB video)
@@ -112,7 +109,7 @@ public:
 private:
     struct ReceiverEntry {
         std::unique_ptr<MirrorReceiver> receiver;
-        std::unique_ptr<TileCompositor> tile_compositor;  // non-null if tiled mode
+// TILED_REMOVED: TileCompositor field
         std::string hardware_id;
         std::string display_name;
         int port = 0;
@@ -145,7 +142,8 @@ private:
     std::map<int, std::string> port_to_device_;       // port -> hardware_id
 
     FrameCallback frame_callback_;
-    TiledCallback tiled_callback_;
+    FrameCallback direct_callback_;  // GUI-direct, no EventBus overhead
+    // TILED_REMOVED: TiledCallback tiled_callback_;
 
     // フレームポーリングスレッド（各デバイスのget_latest_frame()を定期呼び出し）
     std::thread frame_poll_thread_;

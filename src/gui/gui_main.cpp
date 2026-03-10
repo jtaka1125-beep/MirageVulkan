@@ -49,21 +49,49 @@ static LONG WINAPI mirageUnhandledExceptionFilter(EXCEPTION_POINTERS* ep) {
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                    LPSTR /*lpCmdLine*/, int nCmdShow) {
 
+    // === SESSION1 DIAG: very first line of WinMain ===
+    { FILE* _cf = fopen("C:\\MirageWork\\s1_diag2.log", "a");
+      if (_cf) { fprintf(_cf, "[STEP1] WinMain entered\n"); fclose(_cf); } }
+
+    // Windows timer resolution 1ms: prevents sleep_for(13ms) from sleeping 31ms
+
+    // Windows timer resolution 1ms: prevents sleep_for(13ms) from sleeping 31ms
+
+    // Windows timer: 1ms precision (default 15.6ms causes sleep_for(13ms) to sleep 31ms -> 22fps)
+    { HMODULE h=LoadLibraryA("winmm.dll"); if(h){ typedef UINT(__stdcall*FP)(UINT); FP f=(FP)GetProcAddress(h,"timeBeginPeriod"); if(f)f(1); } }
+
     // Initialize Winsock
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
+    { FILE* _cf = fopen("C:\\MirageWork\\s1_diag2.log", "a");
+      if (_cf) { fprintf(_cf, "[STEP2] WSAStartup OK\n"); fclose(_cf); } }
 
     // Initialize configuration and open log file
     auto& sys_config = mirage::config::getSystemConfig();
+    { FILE* _cf = fopen("C:\\MirageWork\\s1_diag2.log", "a");
+      if (_cf) { fprintf(_cf, "[STEP3] getSystemConfig OK\n"); fclose(_cf); } }
     mirage::config::applyEnvironmentOverrides(sys_config);
     std::string log_path = sys_config.log_directory + "\\" + sys_config.log_filename;
+    { FILE* _cf = fopen("C:\\MirageWork\\s1_diag2.log", "a");
+      if (_cf) { fprintf(_cf, "[STEP4] logpath=%s\n", log_path.c_str()); fclose(_cf); } }
     mirage::log::startAsyncLogger();  // Start async log writer before any MLOG calls
+    { FILE* _cf = fopen("C:\\MirageWork\\s1_diag2.log", "a");
+      if (_cf) { fprintf(_cf, "[STEP5] startAsyncLogger OK\n"); fclose(_cf); } }
     mirage::log::openLogFile(log_path.c_str());
+    { FILE* _cf = fopen("C:\\MirageWork\\s1_diag2.log", "a");
+      if (_cf) { fprintf(_cf, "[STEP6] openLogFile OK\n"); fclose(_cf); } }
 
     try {
 
     // Initialize state
+    // Debug: log startup progress to crash file (helps diagnose Session 1 failures)
+    if (FILE* cf = fopen("C:\\MirageWork\\s1_crash.log", "a")) {
+        fprintf(cf, "WinMain started, about to initializeState\n"); fclose(cf);
+    }
     initializeState();
+    if (FILE* cf = fopen("C:\\MirageWork\\s1_crash.log", "a")) {
+        fprintf(cf, "initializeState OK\n"); fclose(cf);
+    }
 
     // Start ADB detection
     std::thread adbThread(adbDetectionThread);
@@ -198,11 +226,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     mirage::gui::ai_panel::init();
 #endif
 
-#ifdef USE_OCR
+#ifdef MIRAGE_OCR_ENABLED
     initializeOCR();
 #endif
 
-#if defined(USE_AI) && defined(USE_OCR)
+#if defined(USE_AI) && defined(MIRAGE_OCR_ENABLED)
     // FrameAnalyzer -> AIEngine 接続 (OCRフォールバック有効化)
     if (g_ai_engine) {
         g_ai_engine->setFrameAnalyzer(&mirage::analyzer());
@@ -300,9 +328,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
 
     } catch (const std::exception& e) {
         MLOG_ERROR("gui", "FATAL unhandled exception: %s", e.what());
+        // Write to crash log (absolute path, works even if log system failed to init)
+        if (FILE* cf = fopen("C:\\MirageWork\\s1_crash.log", "a")) {
+            fprintf(cf, "EXCEPTION: %s\n", e.what()); fclose(cf);
+        }
         MessageBoxA(nullptr, e.what(), "MirageSystem Fatal Error", MB_OK | MB_ICONERROR);
     } catch (...) {
         MLOG_ERROR("gui", "FATAL unknown exception");
+        if (FILE* cf = fopen("C:\\MirageWork\\s1_crash.log", "a")) {
+            fprintf(cf, "UNKNOWN_EXCEPTION\n"); fclose(cf);
+        }
         MessageBoxA(nullptr, "Unknown fatal error", "MirageSystem Fatal Error", MB_OK | MB_ICONERROR);
     }
 

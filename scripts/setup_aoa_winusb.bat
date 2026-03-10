@@ -20,7 +20,7 @@ set FOUND=0
 for /L %%i in (1,1,15) do (
     if !FOUND!==0 (
         timeout /t 1 /nobreak >nul
-        powershell -NoProfile -Command "if (Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like '*VID_18D1*PID_2D0*' }) { exit 0 } else { exit 1 }" >nul 2>&1
+        powershell -NoProfile -Command "if (Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like '*VID_18D1*PID_2D0*' -or $_.InstanceId -like '*VID_0E8D*PID_201C*' -or $_.InstanceId -like '*VID_0E8D*PID_2005*' }) { exit 0 } else { exit 1 }" >nul 2>&1
         if !errorlevel!==0 (
             echo   AOA device detected!
             set FOUND=1
@@ -31,7 +31,7 @@ for /L %%i in (1,1,15) do (
 )
 
 if !FOUND!==0 (
-    echo [FAIL] AOA device not found after 15 seconds
+    echo [FAIL] AOA device not found after 15 seconds (18D1/2D0x or 0E8D/201C,2005)
     pause
     exit /b 1
 )

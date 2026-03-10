@@ -40,6 +40,7 @@ inline auto& g_slot_active            = mirage::ctx().slot_active;
 inline auto& g_hybrid_receiver        = mirage::ctx().hybrid_receiver;
 inline auto& g_hybrid_cmd             = mirage::ctx().hybrid_cmd;
 inline auto& g_multi_receiver         = mirage::ctx().multi_receiver;
+inline auto& g_monitor_lane_client    = mirage::ctx().monitor_lane_client;
 inline auto& g_usb_video_receiver     = mirage::ctx().usb_video_receiver;
 inline auto& g_tcp_video_receiver     = mirage::ctx().tcp_video_receiver;
 inline auto& g_usb_decoders           = mirage::ctx().usb_decoders;
@@ -66,8 +67,8 @@ inline auto& g_ai_enabled             = mirage::ctx().ai_enabled;
 inline auto& g_learning_mode          = mirage::ctx().learning_mode;
 #endif
 
-#ifdef USE_OCR
-inline auto& g_ocr_engine             = mirage::ctx().ocr_engine;
+#ifdef MIRAGE_OCR_ENABLED
+inline auto& g_frame_analyzer         = mirage::ctx().frame_analyzer;
 inline auto& g_ocr_enabled            = mirage::ctx().ocr_enabled;
 #endif
 

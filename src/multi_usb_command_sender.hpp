@@ -150,6 +150,7 @@ public:
     // This is where HID devices must be registered (AOA v2 requirement)
     using PreStartCallback = std::function<bool(libusb_device_handle* handle, int aoa_version)>;
     void set_pre_start_callback(PreStartCallback cb) { pre_start_callback_ = cb; }
+    void set_aoa_auto_switch(bool enabled) { aoa_auto_switch_ = enabled; }
 
     // Callback invoked after a device is opened post re-enumeration
     using DeviceOpenedCallback = std::function<void(const std::string& usb_id, libusb_device_handle* handle)>;
@@ -269,6 +270,7 @@ private:
 #endif
 
     std::atomic<bool> running_{false};
+    bool aoa_auto_switch_ = true;  // false: AOA自動切り替え無効
     std::atomic<bool> stopping_{false};  // Prevent concurrent stop() calls
     std::thread send_thread_;
     std::thread recv_thread_;

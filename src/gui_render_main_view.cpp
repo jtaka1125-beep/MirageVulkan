@@ -63,21 +63,6 @@ void GuiApplication::renderCenterPanel() {
     }
 
     if (has_main) {
-        // MAINVIEW diag (periodic): verify main selection + texture descriptor + recency
-        static std::atomic<uint32_t> s_mainview_diag{0};
-        uint32_t dn = s_mainview_diag.fetch_add(1);
-        if (false && (dn % 300) == 0) {  // DISABLED: causes log mutex contention on main thread
-            uint64_t now = getCurrentTimeMs();
-            uint64_t last_tex = main_device.last_texture_update_ms.load(std::memory_order_relaxed);
-            MLOG_INFO("ui",
-                      "MAINVIEW diag: main=%s name=%s tex=%dx%d ds=%p lastTexAge=%llums fps=%.1f lat=%.0fms",
-                      main_id.c_str(), main_device.name.c_str(),
-                      main_device.texture_width, main_device.texture_height,
-                      (void*)main_device.vk_texture_ds,
-                      (unsigned long long)(last_tex > 0 ? (now - last_tex) : 0),
-                      main_device.fps, main_device.latency_ms);
-        }
-
         // Header
         ImGui::Text(u8"\u30e1\u30a4\u30f3: %s", main_device.name.c_str());
         if (config_.show_fps) {
@@ -245,16 +230,8 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
     // Clip all drawing to the allocated container rect
     draw_list->PushClipRect(ImVec2(x, y), ImVec2(x + w, y + h), true);
 
-    // Fill container background so letterbox/padding is visible per-device
-    draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(10, 10, 12, 255));
-
-
     if (device.vk_texture_ds && device.texture_width > 0 && device.texture_height > 0) {
-        // GPU-rotated: swap aspect so layout treats landscape texture as portrait
-        const bool gpu_rotated = (device.transform.rotation == 90);
-        float aspect = gpu_rotated
-            ? static_cast<float>(device.texture_height) / device.texture_width
-            : static_cast<float>(device.texture_width)  / device.texture_height;
+        float aspect = static_cast<float>(device.texture_width) / device.texture_height;
         float container_aspect = w / h;  // Safe: h > 0 guaranteed above
 
         if (aspect > container_aspect) {
@@ -277,39 +254,27 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
         if (view_x + view_w > x + w) view_w = x + w - view_x;
         if (view_y + view_h > y + h) view_h = y + h - view_y;
 
-        // If the decoded frame is nav-bar-cropped (height shorter than native),
-        // render it inside a native-aspect view with bottom padding.
-        float img_x = view_x;
-        float img_y = view_y;
-        float img_w = view_w;
-        float img_h = view_h;
+        // Nav-bar-cropped frame handling
+        float img_x = view_x, img_y = view_y, img_w = view_w, img_h = view_h;
         {
             const int exp_w = device.expected_width;
             const int exp_h = device.expected_height;
             const int tex_w = device.texture_width;
             const int tex_h = device.texture_height;
             const int tol = 200;
-            float cropped_height_ratio = 1.0f;
             bool cropped = false;
-            // Normal orientation: width matches, height is shorter within tolerance
+            float cropped_height_ratio = 1.0f;
             if (exp_w > 0 && exp_h > 0 && tex_w == exp_w && tex_h > 0 && tex_h < exp_h && (exp_h - tex_h) <= tol) {
                 cropped = true;
                 cropped_height_ratio = static_cast<float>(tex_h) / static_cast<float>(exp_h);
-            }
-            // Rotated orientation: swapped width/height
-            else if (exp_w > 0 && exp_h > 0 && tex_w == exp_h && tex_h > 0 && tex_h < exp_w && (exp_w - tex_h) <= tol) {
+            } else if (exp_w > 0 && exp_h > 0 && tex_w == exp_h && tex_h > 0 && tex_h < exp_w && (exp_w - tex_h) <= tol) {
                 cropped = true;
                 cropped_height_ratio = static_cast<float>(tex_h) / static_cast<float>(exp_w);
             }
-            if (cropped) {
-                img_h = view_h * cropped_height_ratio;
-                // Align to top (missing area is typically bottom nav/task bar)
-                img_y = view_y;
-            }
+            if (cropped) { img_h = view_h * cropped_height_ratio; img_y = view_y; }
         }
 
         // Store main view rect for input processing (thread-safe)
-        // Use the exact image rect (img_*) so taps ignore letterbox/padding.
         if (is_main) {
             std::lock_guard<std::mutex> rect_lock(view_rect_mutex_);
             main_view_rect_.x = img_x;
@@ -319,26 +284,12 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
             main_view_rect_.valid = true;
         }
 
-        // Draw texture (GPU rotation via UV for 90°CW, zero CPU copy)
-        if (gpu_rotated) {
-            draw_list->AddImageQuad(
-                reinterpret_cast<ImTextureID>(device.vk_texture_ds),
-                ImVec2(img_x,       img_y),        // p1 top-left
-                ImVec2(img_x+img_w, img_y),        // p2 top-right
-                ImVec2(img_x+img_w, img_y+img_h), // p3 bottom-right
-                ImVec2(img_x,       img_y+img_h), // p4 bottom-left
-                ImVec2(0.0f, 1.0f),               // uv1: tex bottom-left
-                ImVec2(0.0f, 0.0f),               // uv2: tex top-left
-                ImVec2(1.0f, 0.0f),               // uv3: tex top-right
-                ImVec2(1.0f, 1.0f)                // uv4: tex bottom-right
-            );
-        } else {
-            draw_list->AddImage(
-                reinterpret_cast<ImTextureID>(device.vk_texture_ds),
-                ImVec2(img_x, img_y),
-                ImVec2(img_x + img_w, img_y + img_h)
-            );
-        }
+        // Draw texture
+        draw_list->AddImage(
+            reinterpret_cast<ImTextureID>(device.vk_texture_ds),
+            ImVec2(img_x, img_y),
+            ImVec2(img_x + img_w, img_y + img_h)
+        );
 
 
 

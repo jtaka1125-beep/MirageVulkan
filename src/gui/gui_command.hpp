@@ -14,6 +14,8 @@ void shutdown();
 // Tap commands
 void sendTapCommandToAll(int x, int y);
 void sendTapCommand(const std::string& device_id, int x, int y);
+// Tap with explicit source resolution (src_w/h); resolves device ID via USB/HID path.
+void sendTapCommandScaled(const std::string& device_id, int x, int y, int src_w, int src_h);
 
 // Swipe commands
 void sendSwipeCommandToAll(int x1, int y1, int x2, int y2, int duration_ms);

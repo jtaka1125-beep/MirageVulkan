@@ -3,6 +3,7 @@
 #include "aoa_hid_touch.hpp"
 #include "adb_touch_fallback.hpp"
 #include "rtt_tracker.hpp"
+#include "wifi_command_sender.hpp"
 #include <memory>
 #include <functional>
 #include <map>
@@ -23,7 +24,7 @@ public:
     using VideoDataCallback = std::function<void(const std::string& device_id, const uint8_t* data, size_t len)>;
 
     // Touch input mode tracking
-    enum class TouchMode { AOA_HID, MIRA_USB, ADB_FALLBACK };
+    enum class TouchMode { AOA_HID, MIRA_USB, WIFI_TCP, ADB_FALLBACK };
 
     HybridCommandSender();
     ~HybridCommandSender();
@@ -51,6 +52,7 @@ public:
 
     // Set callback for video data from USB
     void set_video_callback(VideoDataCallback cb);
+    void set_aoa_auto_switch(bool enabled);
 
     // Send commands to specific device
     uint32_t send_ping(const std::string& device_id);
@@ -61,6 +63,13 @@ public:
     uint32_t send_ui_tree_req(const std::string& device_id);
         uint32_t send_click_id(const std::string& device_id, const std::string& resource_id);
     uint32_t send_click_text(const std::string& device_id, const std::string& text);
+
+    // Register WiFi TCP command sender (Tier 2.5)
+    // key: hardware_id from devices.json, ip: device IP, cmd_port: tcp_port+1
+    void register_wifi_device(const std::string& hardware_id,
+                               const std::string& ip, uint16_t cmd_port);
+    void unregister_wifi_device(const std::string& hardware_id);
+    bool has_wifi_sender(const std::string& hardware_id) const;
 
     // Long press and pinch (only available via HID or ADB)
     bool send_long_press(const std::string& device_id, int x, int y, int screen_w, int screen_h, int hold_ms = 500);
@@ -108,13 +117,23 @@ public:
 
     // Video control commands
     uint32_t send_video_fps(const std::string& device_id, int fps) {
-        return usb_sender_ ? usb_sender_->send_video_fps(device_id, fps) : 0;
+        if (usb_sender_ && usb_sender_->is_device_connected(device_id)) return usb_sender_->send_video_fps(device_id, fps);
+        if (auto ws = get_wifi_sender(device_id)) return ws->send_video_fps(fps);
+        return 0;
     }
     uint32_t send_video_route(const std::string& device_id, uint8_t mode, const std::string& host, int port) {
-        return usb_sender_ ? usb_sender_->send_video_route(device_id, mode, host, port) : 0;
+        if (usb_sender_ && usb_sender_->is_device_connected(device_id)) {
+            return usb_sender_->send_video_route(device_id, mode, host, port);
+        }
+        if (auto ws = get_wifi_sender(device_id)) {
+            return ws->send_video_route(mode, host, port);
+        }
+        return 0;
     }
     uint32_t send_video_idr(const std::string& device_id) {
-        return usb_sender_ ? usb_sender_->send_video_idr(device_id) : 0;
+        if (usb_sender_ && usb_sender_->is_device_connected(device_id)) return usb_sender_->send_video_idr(device_id);
+        if (auto ws = get_wifi_sender(device_id)) return ws->send_video_idr();
+        return 0;
     }
     uint64_t total_bytes_received() const {
         return usb_sender_ ? usb_sender_->total_bytes_received() : 0;
@@ -143,8 +162,16 @@ private:
     // Touch input mode tracking
     std::atomic<TouchMode> current_touch_mode_{TouchMode::MIRA_USB};
 
-    // RTT計測
+    // RTT髫ｪ蝓滂ｽｸ・ｬ
     mirage::RttTracker rtt_tracker_;
+
+    // WiFi TCP command senders (Tier 2.5): hardware_id -> sender
+    std::map<std::string, std::shared_ptr<gui::WifiCommandSender>> wifi_senders_;
+    mutable std::mutex wifi_sender_mutex_;
+
+    // Lookup: resolve any device_id to a WiFi sender
+    std::shared_ptr<gui::WifiCommandSender> get_wifi_sender(
+            const std::string& device_id) const;
 
     // Internal: try AOA HID tap/swipe for a specific device, return true if succeeded
     bool try_hid_tap(const std::string& device_id, int x, int y, int screen_w, int screen_h);

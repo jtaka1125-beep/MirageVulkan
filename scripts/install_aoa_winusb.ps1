@@ -81,11 +81,11 @@ Write-Host "============================================"
 # Step 1: AOAデバイス確認
 Write-Host "`n[1/3] Checking for AOA devices..."
 $aoaDevices = Get-PnpDevice -PresentOnly | Where-Object { 
-    $_.InstanceId -like "*VID_18D1*PID_2D0*" 
+    $_.InstanceId -like "*VID_18D1*PID_2D0*" -or $_.InstanceId -like "*VID_0E8D*PID_201C*" -or $_.InstanceId -like "*VID_0E8D*PID_2005*"
 }
 
 if (-not $aoaDevices) {
-    Write-Result -Success $false -Message "No AOA device found (VID_18D1, PID_2D0x)"
+    Write-Result -Success $false -Message "No AOA device found (VID_18D1 PID_2D0x / VID_0E8D PID_201C/2005)"
     exit 1
 }
 
@@ -119,24 +119,30 @@ if (-not $WdiExeResolved -or -not (Test-Path $WdiExeResolved)) {
 }
 
 # PID_2D01 (AOA+ADB) と PID_2D00 (AOA only) の両方にインストール
-$pids = @("0x2D01", "0x2D00")
+$targets = @(
+    @{ vid = "0x18D1"; pid = "0x2D01"; name = "Android Accessory (AOA)" },
+    @{ vid = "0x18D1"; pid = "0x2D00"; name = "Android Accessory (AOA)" },
+    @{ vid = "0x0E8D"; pid = "0x201C"; name = "MediaTek AOA Composite" },
+    @{ vid = "0x0E8D"; pid = "0x2005"; name = "MediaTek AOA" }
+)
 $installed = 0
 $errors = @()
 
 foreach ($pid in $pids) {
     # このPIDのデバイスが存在するか確認
     $pidHex = $pid -replace "0x", ""
-    $exists = $aoaDevices | Where-Object { $_.InstanceId -like "*PID_$pidHex*" }
+    $vidHex = $vid -replace "0x", ""
+    $exists = $aoaDevices | Where-Object { $_.InstanceId -like "*VID_$vidHex*PID_$pidHex*" }
     if (-not $exists) { continue }
     
-    Write-Host "  Installing for VID=0x18D1 PID=$pid..."
+    Write-Host "  Installing for VID=$vid PID=$pid ($devName)..."
     
     # wdi-simpleを一時ディレクトリで実行（ファイルロック回避）
     $tempDir = "$env:TEMP\mirage_wdi_$pidHex"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     
     $proc = Start-Process -FilePath $WdiExeResolved `
-        -ArgumentList "--vid 0x18D1 --pid $pid --type 0 --name `"Android Accessory (AOA)`" --silent" `
+        -ArgumentList "--vid $vid --pid $pid --type 0 --name `"$devName`" --silent" `
         -WorkingDirectory $tempDir `
         -NoNewWindow -Wait -PassThru
     
@@ -158,7 +164,7 @@ Write-Host "`n[3/3] Verifying installation..."
 Start-Sleep -Seconds 2
 
 $allOk = $true
-$aoaDevices2 = Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like "*VID_18D1*PID_2D0*" }
+$aoaDevices2 = Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like "*VID_18D1*PID_2D0*" -or $_.InstanceId -like "*VID_0E8D*PID_201C*" -or $_.InstanceId -like "*VID_0E8D*PID_2005*" }
 foreach ($dev in $aoaDevices2) {
     $svc = (Get-PnpDeviceProperty -InstanceId $dev.InstanceId -KeyName "DEVPKEY_Device_Service" -ErrorAction SilentlyContinue).Data
     $status = $dev.Status

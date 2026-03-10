@@ -2,6 +2,7 @@
 // MirageSystem v2 - MirageContext Implementation
 // =============================================================================
 #include "mirage_context.hpp"
+#include "stream/monitor_lane_client.hpp"
 #include "mirage_log.hpp"
 
 namespace mirage {
@@ -93,11 +94,11 @@ void MirageContext::shutdown() {
     }
 #endif
 
-    // Shutdown OCR
-#ifdef USE_OCR
-    if (ocr_engine) {
-        ocr_engine->shutdown();
-        ocr_engine.reset();
+    // Shutdown OCR (FrameAnalyzer)
+#ifdef MIRAGE_OCR_ENABLED
+    if (frame_analyzer) {
+        frame_analyzer->stopCapture();
+        frame_analyzer.reset();
     }
 #endif
 

@@ -54,7 +54,9 @@ struct SharedFrame {
     uint64_t frame_id = 0;
     std::string device_id;
     int source_port = 0;
-    uint64_t pts_us = 0;  // presentation timestamp (us)
+    uint64_t pts_us = 0;       // presentation timestamp (us) = Android capture time
+    uint64_t decode_done_us = 0; // PC-side: JPEG decode 完了 (monotonic)
+    uint64_t publish_us = 0;     // PC-side: EventBus publish 直前 (monotonic)
 
     // Convenience accessor for legacy raw pointer APIs (temporary, for migration)
     const uint8_t* data() const { return rgba.get(); }

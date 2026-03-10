@@ -61,10 +61,11 @@ GuiApplication::SubGridLayout GuiApplication::calculateSubGrid(
     // 3-5 devices: 2x2
     // 6-10 devices: 3x3
 
-    if (device_count <= 2) {
+    // サブデバイス数ベース: 1→1x1, 2-4→2x2, 5-9→3x3
+    if (device_count <= 1) {
         layout.cols = 1;
         layout.rows = 1;
-    } else if (device_count <= 5) {
+    } else if (device_count <= 4) {
         layout.cols = 2;
         layout.rows = 2;
     } else {

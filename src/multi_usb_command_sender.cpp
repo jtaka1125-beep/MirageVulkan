@@ -515,6 +515,11 @@ void MultiUsbCommandSender::device_receive_thread(const std::string& device_id) 
             // Not an ACK - treat as video data
             if (video_callback_) {
                 try {
+                    static thread_local int video_log_count = 0;
+                    if (video_log_count < 20 || (video_log_count % 100) == 0) {
+                        MLOG_INFO("multicmd", "[%s] video_callback bytes=%d", device_id.c_str(), transferred);
+                    }
+                    video_log_count++;
                     video_callback_(device_id, buf, transferred);
                 } catch (const std::exception& e) {
                     MLOG_INFO("multicmd", "[%s] Video callback exception: %s", device_id.c_str(), e.what());

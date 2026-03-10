@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // MirageSystem v2 - GUI Implementation Part 1
 // =============================================================================
 // Vulkan initialization, ImGui setup, resource management
@@ -144,6 +144,12 @@ void GuiApplication::addDevice(const std::string& id, const std::string& name) {
             MLOG_INFO("app", "Device %s expected resolution: %dx%d", id.c_str(), exp_w, exp_h);
         } else {
             MLOG_WARN("app", "Device %s not in registry, accepting any resolution", id.c_str());
+        }
+        // Set display rotation offset from registry
+        int disp_rot = 0;
+        if (mirage::config::ExpectedSizeRegistry::instance().getDisplayRotation(id, disp_rot)) {
+            info.transform.display_rotation_offset = disp_rot;
+            MLOG_INFO("app", "Device %s display_rotation_offset: %d", id.c_str(), disp_rot);
         }
 
         devices_[id] = std::move(info);
@@ -319,17 +325,6 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
     // Allow rotation / re-mapping without touching the original pointer
     const uint8_t* rgba_ptr = rgba_data;
 
-    bool x1_rotated = false;
-    // GPU rotation: X1 landscape frame detected, skip CPU RotateRgba90CW.
-    // Texture uploaded as landscape; render applies AddImageQuad UV 90°CW.
-    {
-        const bool isX1 = (id.find("f1925da3_") != std::string::npos);
-        const bool frameLandscape = (width > height);
-        if (isX1 && frameLandscape) {
-            x1_rotated = true;
-            // No CPU copy: rotation handled in gui_render_main_view via UV transform
-        }
-    }
 
 
     // Expected resolution check: accept native or nav-bar-cropped frames
@@ -399,7 +394,6 @@ void GuiApplication::updateDeviceFrame(const std::string& id,
     } else {
         device.transform.rotation = 0;
     }
-    if (x1_rotated) device.transform.rotation = 90;
     device.transform.recalculate();
 
     // Log transform when it changes (once per device per change)

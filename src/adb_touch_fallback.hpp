@@ -63,7 +63,15 @@ public:
     void set_enabled(bool en) { enabled_.store(en); }
     bool is_enabled() const { return enabled_.load(); }
 
+    // Device screen size (cached). 0 if not yet queried or query failed.
+    int device_width();
+    int device_height();
+
 private:
+    // Cache for device screen resolution
+    mutable std::mutex screen_size_mutex_;
+    int cached_device_w_ = 0;
+    int cached_device_h_ = 0;
     // Persistent shell (Windows only). If unavailable, falls back to spawning adb per command.
     bool start_shell_if_needed();
     void stop_shell();

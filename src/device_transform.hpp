@@ -26,6 +26,11 @@ struct DeviceTransform {
     // Rotation: 0, 90, 180, 270 (video->native), clockwise degrees
     int rotation = 0;
 
+    // GUI display-only rotation offset (0/90/180/270 CW).
+    // Applied on top of 'rotation' for rendering only - does NOT affect touch coordinate mapping.
+    // Loaded from devices.json "display_rotation" key.
+    int display_rotation_offset = 0;
+
     // Scale + offset (video->native, post-rotation)
     float scale_x = 1.0f;
     float scale_y = 1.0f;

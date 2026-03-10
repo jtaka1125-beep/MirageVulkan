@@ -35,7 +35,7 @@ public:
     ~WifiCommandSender();
 
     // Set target Android device
-    void setTarget(const std::string& ip, uint16_t port = 60001);
+    void setTarget(const std::string& ip, uint16_t port = 50001);
 
     // Start/stop sender
     bool start();
@@ -55,6 +55,11 @@ public:
     uint32_t send_key(int keycode);
     uint32_t send_click_id(const std::string& resource_id);
     uint32_t send_click_text(const std::string& text);
+
+    // Video control commands
+    uint32_t send_video_fps(int fps);
+    uint32_t send_video_route(uint8_t mode, const std::string& host, int port);
+    uint32_t send_video_idr();
 
     // Stats
     uint64_t commands_sent() const { return commands_sent_.load(); }
@@ -77,7 +82,7 @@ private:
 
     // Target address
     std::string target_ip_;
-    uint16_t target_port_ = 60001;
+    uint16_t target_port_ = 50001;
 
     // Socket
 #ifdef _WIN32

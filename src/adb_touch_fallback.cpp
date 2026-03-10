@@ -303,4 +303,45 @@ bool AdbTouchFallback::back() {
     return key(4); // KEYCODE_BACK = 4
 }
 
+// Query device screen size via "adb shell wm size", cache result.
+static void parse_wm_size(const std::string& out, int& w, int& h) {
+    // Expected: "Physical size: 1200x2000" or "Override size: ..."
+    w = h = 0;
+    auto find_wh = [&](const std::string& prefix) {
+        auto pos = out.find(prefix);
+        if (pos == std::string::npos) return false;
+        pos += prefix.size();
+        int tw = 0, th = 0;
+        if (sscanf(out.c_str() + pos, "%dx%d", &tw, &th) == 2 && tw > 0 && th > 0) {
+            w = tw; h = th; return true;
+        }
+        return false;
+    };
+    if (!find_wh("Override size: ")) find_wh("Physical size: ");
+}
+
+int AdbTouchFallback::device_width() {
+    std::lock_guard<std::mutex> lk(screen_size_mutex_);
+    if (cached_device_w_ > 0) return cached_device_w_;
+    // Query via adb shell wm size (synchronous)
+    std::string prefix = adb_prefix();
+    std::string cmd = prefix + " shell wm size 2>&1";
+    char buf[256] = {};
+    FILE* p = _popen(cmd.c_str(), "r");
+    if (!p) return 0;
+    std::string out;
+    while (fgets(buf, sizeof(buf), p)) out += buf;
+    _pclose(p);
+    parse_wm_size(out, cached_device_w_, cached_device_h_);
+    if (cached_device_w_ > 0)
+        MLOG_INFO("adb_touch", "Device screen size: %dx%d", cached_device_w_, cached_device_h_);
+    return cached_device_w_;
+}
+
+int AdbTouchFallback::device_height() {
+    device_width();  // populates both fields
+    std::lock_guard<std::mutex> lk(screen_size_mutex_);
+    return cached_device_h_;
+}
+
 } // namespace mirage

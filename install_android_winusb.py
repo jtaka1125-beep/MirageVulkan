@@ -191,7 +191,7 @@ def main():
     needs_install = []
     for dev in devices:
         service = dev.get("service", "")
-        if service != "WinUSB" and service != "WinUsb":
+        if service not in ("WinUSB", "WinUsb"):
             needs_install.append(dev)
             print(f"  - VID={dev['vid']} PID={dev['pid']}: Service={service or 'None'} -> WinUSB が必要")
         else:

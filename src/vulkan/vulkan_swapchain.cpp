@@ -51,7 +51,17 @@ bool VulkanSwapchain::createSwapchain(int w, int h) {
     // Retry briefly to avoid transient startup freezes / init failures.
     // Single attempt: caller (createVulkanResources) handles retry loop.
     // Keeps each createSwapchain call fast so the outer loop can pump messages.
-    capsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface_, &caps);
+    // AMD driver on integrated GPU (Session 1) transiently returns VK_ERROR_SURFACE_LOST_KHR
+    // for ~300ms after surface creation (DWM registration race). Retry up to 2s.
+    for (int _retry = 0; _retry < 40; ++_retry) {
+        capsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface_, &caps);
+        if (capsResult == VK_SUCCESS) break;
+        // Retry on SURFACE_LOST and UNKNOWN (AMD integrated GPU returns VK_ERROR_UNKNOWN=-13
+        // transiently for ~300ms after surface creation due to DWM registration race)
+        if (capsResult != VK_ERROR_SURFACE_LOST_KHR && capsResult != VK_ERROR_UNKNOWN) break;
+        if (_retry == 0) MLOG_INFO("VkSwap", "getSurfaceCaps transient %d, retrying...", (int)capsResult);
+        Sleep(50);
+    }
     if (capsResult != VK_SUCCESS) {
         MLOG_ERROR("VkSwap", "getSurfaceCaps failed after retry: %d", (int)capsResult);
         return false;

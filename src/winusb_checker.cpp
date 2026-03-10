@@ -190,6 +190,28 @@ foreach ($dev in $devices) {
 
     auto results = parseDeviceOutput(output);
 
+    // Fallback: some composite AOA nodes (e.g. MediaTek VID_0E8D PID_201C/2005)
+    // may be visible to pnputil but omitted from Get-PnpDevice -PresentOnly.
+    if (results.empty()) {
+        const char* ps_fallback = R"PS(
+$lines = pnputil /enum-devices /connected 2>$null
+$inst = ""
+foreach ($line in $lines) {
+    if ($line -match '^Instance ID:\s+(USB\\VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4}).*)$') {
+        $inst = $Matches[1]
+        $vid = $Matches[2].ToUpper()
+        $pid = $Matches[3].ToUpper()
+        $svc = "Unknown"
+        Write-Output "$vid|$pid|Connected USB Device|$inst|$svc"
+    }
+}
+)PS";
+        std::string cmd2 = "powershell -NoProfile -NoLogo -Command \"" + std::string(ps_fallback) + "\"";
+        auto out2 = execCommandHidden(cmd2);
+        auto fb = parseDeviceOutput(out2);
+        results.insert(results.end(), fb.begin(), fb.end());
+    }
+
     // Log each device
     for (const auto& s : results) {
         MLOG_INFO("winusb", "Device VID=%s PID=%s (%s) driver=%s %s",

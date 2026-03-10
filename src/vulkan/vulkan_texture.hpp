@@ -2,6 +2,7 @@
 
 #include "vulkan_context.hpp"
 #include <mutex>
+#include <atomic>
 
 namespace mirage::vk {
 
@@ -31,7 +32,7 @@ public:
     int width()  const { return width_; }
     int height() const { return height_; }
     bool valid()  const { return image_ != VK_NULL_HANDLE; }
-    bool hasPendingUpload()     const { return has_pending_upload_; }
+    bool hasPendingUpload()     const { return has_pending_upload_.load(std::memory_order_acquire); }
     bool isLayoutInitialized()  const { return layout_initialized_; }
 
 private:
@@ -62,7 +63,7 @@ private:
     uint64_t last_submit_ms_ = 0;
     uint32_t skipped_updates_ = 0;
     uint32_t update_count_ = 0;
-    bool has_pending_upload_ = false;
+    std::atomic<bool> has_pending_upload_{false};
 };
 
 } // namespace mirage::vk

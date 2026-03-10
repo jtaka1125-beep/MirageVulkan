@@ -9,25 +9,6 @@
 
 
 // === Debug: lightweight RGBA hash to detect frozen input ===
-static uint64_t QuickRgbaHash(const uint8_t* rgba, int w, int h) {
-    if (!rgba || w <= 0 || h <= 0) return 0;
-    const int sx = 6;
-    const int sy = 6;
-    uint64_t hash = 1469598103934665603ull;
-    for (int y = 0; y < sy; y++) {
-        int py = (h - 1) * y / (sy - 1);
-        for (int x = 0; x < sx; x++) {
-            int px = (w - 1) * x / (sx - 1);
-            const uint8_t* p = rgba + (py * w + px) * 4;
-            for (int k = 0; k < 4; k++) {
-                hash ^= (uint64_t)p[k];
-                hash *= 1099511628211ull;
-            }
-        }
-    }
-    return hash;
-}
-
 namespace mirage::vk {
 
 static inline uint64_t now_ms() {
@@ -236,17 +217,6 @@ void VulkanTexture::update(VkCommandPool cmd_pool, VkQueue queue,
         MLOG_INFO("VkTex", "update#%u pool=%p cache_pool=%p w=%d h=%d skip=%u",
                   update_count_, (void*)cmd_pool, (void*)cached_cmd_pool_, w, h, skipped_updates_);
 
-    // Debug: hash sampled pixels to confirm input actually changes
-    static uint64_t last_hash = 0;
-    static int hash_cnt = 0;
-    hash_cnt++;
-    if (hash_cnt < 20 || (hash_cnt % 300 == 0)) {
-        uint64_t h64 = QuickRgbaHash(rgba, w, h);
-        MLOG_INFO("VkTex", "InputHash update#%d w=%d h=%d hash=%llu same=%d",\
-                  update_count_, w, h, (unsigned long long)h64, (h64 == last_hash));
-        last_hash = h64;
-    }
-
     }
 
     // Copy to staging (persistently mapped)
@@ -330,10 +300,15 @@ bool VulkanTexture::stageUpdate(const uint8_t* rgba, int w, int h) {
     if (!ctx_ || !image_ || w != width_ || h != height_ || !staging_mapped_) return false;
     std::lock_guard<std::mutex> lk(staging_mutex_);
     memcpy(staging_mapped_, rgba, (size_t)w * h * 4);
-    has_pending_upload_ = true;
+    has_pending_upload_.store(true, std::memory_order_release);
     update_count_++;
     if (update_count_ <= 5 || update_count_ % 300 == 0) {
-        MLOG_INFO("VkTex", "stageUpdate#%u w=%d h=%d", update_count_, w, h);
+        static uint64_t s_lh=0; static uint32_t s_sc=0;
+        uint64_t h64=0; int stp=(w*h)/64;
+        if(stp>0) for(int qi=0;qi<64;qi++){int ix=(qi*stp)*4; h64=h64*131u+rgba[ix]+((uint64_t)rgba[ix+1]<<8)+((uint64_t)rgba[ix+2]<<16);}
+        bool sm=(h64==s_lh); if(sm)s_sc++;else s_sc=0;
+        MLOG_INFO("VkTex","stageUpdate#%u %dx%d h=%llu %s sk=%u",update_count_,w,h,(unsigned long long)h64,sm?"SAME":"diff",s_sc);
+        s_lh=h64;
     }
     return true;
 }
@@ -348,14 +323,14 @@ bool VulkanTexture::stageTiled(const uint8_t* top_rgba, const uint8_t* bot_rgba,
     // Direct two-shot copy into persistent staging: avoids one intermediate 9.6MB buffer
     memcpy(staging_mapped_,             top_rgba, top_bytes);
     memcpy(static_cast<uint8_t*>(staging_mapped_) + top_bytes, bot_rgba, bot_bytes);
-    has_pending_upload_ = true;
+    has_pending_upload_.store(true, std::memory_order_release);
     update_count_++;
     return true;
 }
 
 bool VulkanTexture::recordUpdate(VkCommandBuffer cmd) {
-    if (!has_pending_upload_ || !ctx_ || !image_ || !staging_) return false;
-    has_pending_upload_ = false;
+    if (!ctx_ || !image_ || !staging_) return false;
+    if (!has_pending_upload_.exchange(false, std::memory_order_acq_rel)) return false;
 
     // Transition: SHADER_READ_ONLY (or UNDEFINED on first frame) -> TRANSFER_DST
     VkImageMemoryBarrier bar{};

@@ -127,6 +127,10 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
 
     // Second pass: switch Android devices to AOA mode
     if (!android_devices.empty()) {
+        if (!aoa_auto_switch_) {
+            MLOG_INFO("multicmd", "AOA auto-switch disabled by config, skipping %zu Android device(s)",
+                      android_devices.size());
+        } else {
         bool switched = false;
         for (auto dev : android_devices) {
             struct libusb_device_descriptor desc;
@@ -212,6 +216,7 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
                 }
             }
         }
+        } // else: aoa_auto_switch_ enabled
     }
 
     if (devs) {

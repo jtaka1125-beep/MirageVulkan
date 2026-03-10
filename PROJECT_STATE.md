@@ -1,5 +1,5 @@
 # MirageSystem Project State
-# Updated: 2026-03-03
+# Updated: 2026-03-10
 # Read at session start, updated at session end.
 # THIS IS THE MAIN REPOSITORY (MirageComplete is legacy/migrated)
 
@@ -9,28 +9,60 @@
 - AOA full-path verification: requires physical USB connection (currently WiFi-only)
 - Ollama: Session 1 (ユーザーセッション) での手動起動が必要
 - X1 APKデプロイ: WiFiADB shellゾンビ問題は修正済み、次回Ollama起動後に再実行
+- AnnexBSplitter.kt: HEVC NALタイプ(VPS=32等)の正確な判定を要確認
+- git未コミット: H264Encoder.kt他多数 (HEVC移行含む) → 要コミット
+- AiJpegReceiver (PC側): AiJpegSender対応のTCP受信コードが未確認 → 要調査
 
 ## Architecture (Video Pipeline)
 - Engine: FULLY CUSTOM. No scrcpy.
-- Android TX: MediaProjection -> H264Encoder -> AnnexBSplitter -> RtpH264Packetizer
+- Codec: **H.265/HEVC** (2026-03-10確認、実機APK・ソースコード両方確認済み)
+- Android TX: MediaProjection -> H264Encoder(HEVC) -> AnnexBSplitter
+              -> RtpH264Packetizer(useHevc=true, RFC 7798 FU-A)
               -> UsbVideoSender (VID0 batch) / TcpVideoSender / UdpVideoSender
 - PC RX (USB): HybridCommandSender.video_callback -> VID0 parse -> g_usb_decoders[device_id]
 - PC RX (TCP): adb forward tcp:50100 -> MirrorReceiver.start_tcp_vid0 -> VID0 -> RTP -> decode
+- PC Decode: mirror_receiver.cpp stream_is_hevc_自動検出 -> UnifiedDecoder(VideoCodec::HEVC)
+             -> h264_decoder.cpp(use_hevc=true, FFmpeg AV_CODEC_ID_HEVC)
+             ※ Vulkan Video はH.264のみ対応、HEVCはFFmpegフォールバック
 - Routing: RouteController (tcp_only_mode=true), FPS via ADB broadcast to MirageCapture APK
-- Policy: Video route prefers USB, auto-offloads to WiFi when USB bandwidth/RTT is congested, and returns to USB after recovery. Control route remains USB -> WiFi fallback. This policy is intended as a common rule for supported devices, not X1-only.
 - Note: g_hybrid_receiver always nullptr at runtime; TCP+USB decoder path active
+- Detail: VIDEO_PIPELINE_STATUS.md 参照
 
 ## Architecture (AI Pipeline)
-### C++ AIEngine (GUI必要)
-  FrameReadyEvent → AIEngine.processFrame → テンプレートマッチング(Layer1/2) → tap/swipe
-  Layer3 (Ollama vision): disabled (vde_enable_layer3=false), テンプレート揃ってから有効化予定
-  VDE設定: confirm_count=2, cooldown=2s, threshold=0.75
+> Detail: AI_STATUS.md 参照 (2026-03-10 実コード確認済み)
+
+### C++ AIEngine (GUI必要, #ifdef USE_AI)
+  FrameReadyEvent → AIEngine.processFrame
+  Layer 1:   VulkanTemplateMatcher (GPU NCC) テンプレート0枚, Learning Mode未実施
+  Layer 2:   OCR (Tesseract) ← FrameAnalyzer→AIEngine接続済み
+  Layer 2.5: LfmClassifier ← 2026-03-06追加
+             モデル: qwen3:0.6b (fast, ~20ms) / qwen3:1.7b (smart, ~50ms)
+             ※旧: LFM2-350M / LFM2.5-1.2B → 英語専用のためqwen3系に変更
+             OCRテキスト→アクション(Close/Tap/Ignore)分類, Unknown→Layer3フォールバック
+  Layer 3:   OllamaVision (llava:7b) ← disabled (vde_enable_layer3=false)
+             warmupAsync()でCLIPプリロード対応済み (初回38s問題対策)
+             ※ qwen3.5:4b はvision projectorなしのため不使用
+  VDE設定: confirm_count=3, cooldown_ms=2000
+           Layer3トリガー: 5s無マッチ or 10s同一テンプレートスタック, cooldown=30s
   テンプレート: build/templates/ (現在0枚 → GUIのLearning Modeで追加)
+
+### Android AIストリーム (AiStream.kt) ← 2026-03-10確認, 実装済み
+  H.264とは独立したVirtualDisplay → ImageReader(RGBA_8888) → JPEG → TCP送信
+  AiFrameProducer.kt: 低FPS(1-30fps指定), JPEG品質30-95, rowStride/pixelStride対応
+  AiJpegSender.kt: [int32 len][int32 w][int32 h][int64 tsUs][bytes jpeg], auto-reconnect
+  ScreenCaptureService: CMD_AI_START/STOP, SharedPreferences永続化, 起動時自動復元
+  ※ PC側のAiJpeg受信コードは未確認 → 要調査
 
 ### Python MacroAPI (MCP経由)
   screenshot: MacroApiServer → jpeg_cache (GUI起動時~数ms) or ADB screencap fallback
   ai_analyze: macro_screenshot → Ollama llava:7b → テキスト分析 (E2E 30-45s)
   parallel_shot: 3台並列screenshot (threading.Thread)
+
+### Ollama モデル構成 (2026-03-10確認)
+  Layer 2.5 fast:  qwen3:0.6b  (~20ms)   ← was LFM2-350M (英語専用)
+  Layer 2.5 smart: qwen3:1.7b  (~50ms)   ← was LFM2.5-1.2B
+  Layer 3 vision:  llava:7b    (~700ms)  disable中
+  installed:       llama3.1:8b, gemma2:9b (text用, 未使用)
 
 ### MCP Tools (37個 / 2026-03-01確認)
   主要: run_command, read_file, write_file, run_task, task_status, task_cancel
@@ -38,57 +70,49 @@
         desktop_screenshot, git_status, status, build_mirage
         memory_search, memory_bootstrap, memory_append_raw, memory_append_decision
 
-## Android APK Status (2 APKs)
-- :capture (com.mirage.capture) - 2026/02/26 capture-release.apk
-  - ScreenCaptureService, H264Encoder, RtpH264Packetizer, TcpVideoSender
+## Android APK Status
+- :capture (com.mirage.capture) - X1インストール済み 2026-03-10 01:26更新
+  - versionCode=1, versionName=1.0.0, targetSdk=33
+  - ScreenCaptureService, H264Encoder(HEVC), RtpH264Packetizer(useHevc=true)
+  - TcpVideoSender, UsbVideoSender(VID0), UdpVideoSender
+  - AiStream / AiFrameProducer / AiJpegSender (AIサブストリーム)
   - AudioCaptureService, ML: ScreenAnalyzer, ChangeDetector, OcrEngine
+  - BootReceiver: WiFi ADB port 55555固定 (2026-03-08追加)
+  - ※ソース未コミット変更あり (H264Encoder.kt HEVC移行等)
 - :accessory (com.mirage.accessory) - 2026/02/24 accessory-release.apk
   - AccessoryIoService (AOA USB I/O), MirageAccessibilityService
   - Protocol.kt (MIRA protocol, cmd 0x00-0x27)
   - directBootAware=true, USB_ACCESSORY_ATTACHED intent-filter
 
-## Device Status
-- WiFi: 192.168.0.3:5555 (X1/Npad X1), 192.168.0.6:5555 (A9#956), 192.168.0.8:5555 (A9#479)
-- APK: A9×2 両APKデプロイ済み, X1 次回デプロイ予定
-- USB: 3 devices expected (WinUSB driver required for AOA) [BLOCKED]
+## Device Status (2026-03-10確認)
+| デバイス | シリアル | 接続 | APK | 状態 |
+|---------|---------|------|-----|------|
+| Npad X1 | 93020523431940 | USB | capture v1.0.0 | ✅ Connected |
+| Npad X1 | 192.168.0.3:5555 | WiFi | (同上) | ✅ Connected |
+| RebotAi A9 (.6) | 192.168.0.6:5555 | WiFi | 両APK済み | ❌ Offline (手元なし) |
+| RebotAi A9 (.8) | 192.168.0.8:5555 | WiFi | 両APK済み | ❌ Offline (手元なし) |
+※ X1はUSB+WiFi同時接続で2台表示されるが同一デバイス
 
-## MCP Server Health
-- Version: v5.0.0 | PID: 32696 | Port: 3000 | Status: Running
+## MCP Server Health (2026-03-10確認)
+- Version: v5.0.0 | Port: 3000 | Status: Healthy ✅
+- Uptime: 71h / Requests: 20,121 / Errors: 6 (0.0%)
 - Transports: SSE + Streamable HTTP
-- wifi_adb_guard daemon: PID 32424, 30秒間隔shellゾンビ検出・自動復旧
+- wifi_adb_guard daemon: 30秒間隔shellゾンビ検出・自動復旧
 
 ## Ollama Status
 - Models: llava:7b (vision), llama3.1:8b (text), gemma2:9b (text)
 - Status: 要手動起動 (Session 1 / タスクトレイから)
 - post-commit hook: Ollama停止時はメモリ保存スキップ (エラーは無害)
 
-## Completed 2026-03-01 Sessions 1-3
-### Session 3 (AIパイプライン整備)
-- server.py: tool_macro_screenshot / tool_ai_analyze 追加(MacroAPI+llava:7b)
-- server.py: _macro_rpc() / _ollama_vision() ヘルパー追加
-- watchdog_ai.py: ADB重複監視削除(wifi_adb_guardに一元化), adbフルパス修正
-- wifi_adb_guard.py: shellゾンビ検出・30秒監視・daemon化 (MirageWiFiADB タスク)
-- ai_receiver_service.py: 廃止(孤立したデッドコード)
-- config.json: VDE設定・Ollama設定追加 (threshold 0.75, Layer3 disabled)
-- mcp-server: 不要スクリプト削除・整理 (37ツール確認)
-
-### Session 2 (X1接続安定化)
-- wifi_adb_guard: shellゾンビ検出+30秒daemon化
-- deploy_apk.py: mDNS除外・adbフルパス・タイムアウト延長
-- X1 APKデプロイ: 当日は成功したが翌日再度offline (要手動復旧)
-- parallel_shot.py: 3台並列screenshotクライアント
-
-### Session 1 (Screenshot & Deploy)
-- screenshot API: FrameReadyEvent購読方式 (GUI H264フレームをJPEGキャッシュ, ~数ms)
-- AdbH264Receiver廃止 (screenrecordの競合問題回避)
-- A9×2 APKデプロイ成功, mcp-server 222スクリプト削除
-
 ## Next Priorities (Ordered)
-1. Ollama起動後: ai_analyze E2Eテスト (ai_pipeline_test.py)
-2. X1 APKデプロイ: wifi_adb_guard自動復旧後に再実行
-3. GUIのLearning Modeでテンプレート収集 → C++ AIEngineのLayer1/2テスト
-4. TileCompositor E2Eテスト: X1でport0/port1合成フレームの確認
-5. AOA full-path test [BLOCKED: physical USB]
+1. AnnexBSplitter.kt HEVCのNALタイプ判定確認 (VPS=32, SPS=33, PPS=34)
+2. X1でH.265 E2Eテスト: ScreenCaptureService起動→GUI表示確認
+3. AiJpegReceiver (PC側): TCP受信コード有無を確認
+4. git commit: 未コミット変更一括コミット (HEVC移行等)
+5. Ollama起動後: LfmClassifier (qwen3) E2Eテスト
+6. GUIのLearning Modeでテンプレート収集 → AIEngine Layer1/2テスト
+7. TileCompositor E2Eテスト: X1でport0/port1合成フレームの確認
+8. AOA full-path test [BLOCKED: physical USB]
 
 ## GUI File Line Counts (Updated 2026-03-10)
 - gui_ai_panel.cpp:       663
@@ -103,12 +127,15 @@
 - TOTAL:                 4117 lines
 
 ## Key Decisions Log
+- 2026-03-10: AIパイプライン実コード確認。Layer 2.5 LfmClassifierモデルをLFM2系→qwen3系に変更済み(日本語対応)。AiStream.kt(Android側AIサブストリーム)実装確認。AI_STATUS.md新規作成。
+- 2026-03-10: ビデオコーデックをH.265/HEVCに確認。実機APK(X1)・ソースコード(MirageVulkan)を直接調査。PC受信側はHEVC自動検出+FFmpegデコード対応済み。VIDEO_PIPELINE_STATUS.md新規作成。
+- 2026-03-08: BootReceiver追加、WiFi ADB port 55555固定。X1 APK 2026-03-10更新確認。
+- 2026-03-06: LfmClassifier (Layer 2.5) 追加。モデルはqwen3:0.6b/1.7b。
 - 2026-03-03: MCP二重起動防止完了。MirageMCPServerタスクをDisable化、start_all.batをMirageMCP(watchdog)経由に統一、MirageMCPGuard(1分毎ヘルスチェック)を再有効化。
 - 2026-03-03: TileCompositor実装・コミット(1d8daa3)。native_h>1440デバイス(X1)で自動タイルモード起動。
 - 2026-03-01: AIパイプライン整備完了。tool_ai_analyze(Python/Ollama)とC++ AIEngine(テンプレートマッチ)は並立。
 - 2026-03-01: wifi_adb_guard daemon化。shellゾンビをget-stateでなくecho __alive__で検出。
 - 2026-03-01: ai_receiver_service.py廃止。TCPポート51100-51104は未使用だった。
-- 2026-03-01: config.json VDE設定追加。Layer3(Ollama)はdisabled維持(テンプレートなし)。
 - 2026-03-01: screenshot API - FrameReadyEvent購読方式確定。AdbH264Receiver廃止。
 - 2026-02-24: GUI refactoring COMPLETE, Migration Phase 3 COMPLETE.
 - 2026-02-23: Video engine fully custom, no scrcpy.
@@ -118,16 +145,3 @@
 - TemplateStoreTest 12, ActionMapperTest 14, WinUsbCheckerTest 14
 - TemplateManifestTest, BandwidthMonitorTest, HybridSenderTest, MirrorReceiverTest
 - VID0ParserTest, ConfigLoaderTest, VisionDecisionEngineTest (40 cases), etc.
-
-
-## Completed 2026-03-01 Session 3 (AIパイプライン整備)
-### AIパイプライン
-- screenshot API: FrameReadyEvent購読→jpeg_cache方式 (GUI H264から~数ms)
-- MCP tool_macro_screenshot: MacroAPI経由でデバイス画面取得 (tool登録済み)
-- MCP tool_ai_analyze: screenshot→llava:7b→テキスト分析 (tool登録済み、Ollama待ち)
-- ai_receiver_service.py廃止 (未接続のデッドコード、MirageAIReceiverタスク無効化)
-### mcp-server整備
-- watchdog_ai.py: requests→urllib.request置換 (標準ライブラリのみ)
-- watchdog_ai.py: ADB二重監視削除 (wifi_adb_guardに一元化)
-- wifi_adb_guard: shellゾンビ検出・30秒監視・daemon化
-- server.py多重起動時の旧プロセス競合問題確認 → 2026-03-03 解決済み (MirageMCPGuard再有効化)

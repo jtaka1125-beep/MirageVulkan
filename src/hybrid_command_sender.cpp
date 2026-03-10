@@ -49,13 +49,27 @@ bool HybridCommandSender::start() {
             if (jt->first.rfind("_pending_", 0) == 0) { it = jt; break; }
         }
         if (it != hid_touches_.end()) {
+            // Normal path: pending entry from pre_start_callback (AOA mode switch)
             it->second->set_handle(handle);
             hid_touches_[usb_id] = std::move(it->second);
             hid_touches_.erase(it);
-            MLOG_INFO("hybridcmd", "HID touch registered for device %s", usb_id.c_str());
+            MLOG_INFO("hybridcmd", "HID touch registered for device %s (from pending)", usb_id.c_str());
         } else if (hid_touches_.count(usb_id) && hid_touches_[usb_id]->is_registered()) {
+            // Already registered; just update handle (e.g. device re-enumeration)
             hid_touches_[usb_id]->set_handle(handle);
             MLOG_INFO("hybridcmd", "HID touch handle updated for device %s", usb_id.c_str());
+        } else {
+            // Late-registration path: device was already in AOA mode at startup.
+            // pre_start_callback was never called, so register HID now.
+            MLOG_INFO("hybridcmd", "Late HID registration for already-AOA device %s", usb_id.c_str());
+            auto touch = std::make_shared<mirage::AoaHidTouch>();
+            // AOA v2 is required for HID; try to register directly with the open handle.
+            if (touch->register_device(handle)) {
+                hid_touches_[usb_id] = std::move(touch);
+                MLOG_INFO("hybridcmd", "HID touch late-registered for device %s", usb_id.c_str());
+            } else {
+                MLOG_WARN("hybridcmd", "HID late-registration failed for %s (AOA v1 or unsupported)", usb_id.c_str());
+            }
         }
     });
 #endif
@@ -99,6 +113,11 @@ void HybridCommandSender::stop() {
 
     { std::lock_guard<std::mutex> lock(hid_mutex_); hid_touches_.clear(); }
     adb_fallback_.reset();
+    {
+        std::lock_guard<std::mutex> lock(wifi_sender_mutex_);
+        for (auto& kv : wifi_senders_) kv.second->stop();
+        wifi_senders_.clear();
+    }
 
     if (usb_sender_) {
         usb_sender_->stop();
@@ -142,13 +161,19 @@ void HybridCommandSender::set_video_callback(VideoDataCallback cb) {
     }
 }
 
-// ── Internal HID helpers ──
+void HybridCommandSender::set_aoa_auto_switch(bool enabled) {
+    if (usb_sender_) {
+        usb_sender_->set_aoa_auto_switch(enabled);
+    }
+}
+
+// 髫ｨ貂可髫ｨ貂可 Internal HID helpers 髫ｨ貂可髫ｨ貂可
 
 std::shared_ptr<mirage::AoaHidTouch> HybridCommandSender::get_hid_for_device(const std::string& device_id) {
     std::lock_guard<std::mutex> lock(hid_mutex_);
     auto it = hid_touches_.find(device_id);
     if (it != hid_touches_.end() && it->second && it->second->is_registered()) {
-        return it->second;  // shared_ptr コピーを返す → 参照カウント+1で安全
+        return it->second;  // shared_ptr 驛｢・ｧ繝ｻ・ｳ驛｢譎・ｱ堤ｹ晢ｽｻ驛｢・ｧ陞ｳ螟ｲ・ｽ・ｿ隴∫ｵｶ繝ｻ 驕ｶ鄙ｫ繝ｻ髯ｷ・ｿ郢ｧ蟲ｨ繝ｻ驛｢・ｧ繝ｻ・ｫ驛｢・ｧ繝ｻ・ｦ驛｢譎｢・ｽ・ｳ驛｢譏ｴ繝ｻ1驍ｵ・ｺ繝ｻ・ｧ髯橸ｽｳ霑壼生繝ｻ
     }
     return nullptr;
 }
@@ -173,40 +198,71 @@ bool HybridCommandSender::try_hid_swipe(const std::string& device_id, int x1, in
     return ok;
 }
 
-// ── Send to specific device (3-tier fallback) ──
+// 髫ｨ貂可髫ｨ貂可 Send to specific device (3-tier fallback) 髫ｨ貂可髫ｨ貂可
 
 uint32_t HybridCommandSender::send_ping(const std::string& device_id) {
     uint32_t seq = usb_sender_ ? usb_sender_->send_ping(device_id) : 0;
-    // RTT計測: コマンド送信タイミング記録
+    // RTT鬮ｫ・ｪ陜捺ｻゑｽｽ・ｸ繝ｻ・ｬ: 驛｢・ｧ繝ｻ・ｳ驛｢譎・ｽｧ・ｭ・趣ｽｦ驛｢譎∝ｴ滂ｾつ遶擾ｽｽ繝ｻ・ｿ繝ｻ・｡驛｢・ｧ繝ｻ・ｿ驛｢・ｧ繝ｻ・､驛｢譎・ｽｺ菴ｩ・ｦ驛｢・ｧ繝ｻ・ｰ鬮ｫ・ｪ陋滂ｽｬ魄厄ｽｸ
     if (seq > 0) rtt_tracker_.record_ping_sent(static_cast<uint16_t>(seq));
     return seq;
 }
 
 uint32_t HybridCommandSender::send_tap(const std::string& device_id, int x, int y, int screen_w, int screen_h) {
     // Tier 1: AOA HID (fastest, per-device)
+    bool usb_hid_failed = false;
     auto hid = get_hid_for_device(device_id);
     if (hid && screen_w > 0 && screen_h > 0) {
         if (try_hid_tap(device_id, x, y, screen_w, screen_h)) {
             current_touch_mode_.store(TouchMode::AOA_HID);
+            MLOG_INFO("hybridcmd", "tap via AOA_HID: %s (%d,%d)", device_id.c_str(), x, y);
             return 1;
         }
-        MLOG_WARN("hybridcmd", "AOA HID tap failed for %s, falling back to MIRA USB", device_id.c_str());
+        MLOG_WARN("hybridcmd", "AOA HID tap failed for %s, USB IO error - skip Tier2 bulk", device_id.c_str());
+        usb_hid_failed = true;
     }
 
-    // Tier 2: MIRA protocol via USB bulk
-    if (usb_sender_) {
+    // Tier 2: MIRA protocol via USB bulk (skip if HID already failed = USB IO error)
+    if (!usb_hid_failed && usb_sender_ && usb_sender_->is_device_connected(device_id)) {
         uint32_t seq = usb_sender_->send_tap(device_id, x, y, screen_w, screen_h);
         if (seq > 0) {
             current_touch_mode_.store(TouchMode::MIRA_USB);
+            MLOG_INFO("hybridcmd", "tap via MIRA_USB: %s seq=%u (%d,%d)", device_id.c_str(), seq, x, y);
             return seq;
         }
         MLOG_WARN("hybridcmd", "MIRA USB tap failed, falling back to ADB");
     }
 
+    // Tier 2.5: WiFi TCP
+    if (auto ws = get_wifi_sender(device_id)) {
+        uint32_t seq = ws->send_tap(x, y, screen_w, screen_h);
+        if (seq > 0) {
+            current_touch_mode_.store(TouchMode::WIFI_TCP);
+            MLOG_INFO("hybridcmd", "tap via WIFI_TCP: %s seq=%u (%d,%d)", device_id.c_str(), seq, x, y);
+            return seq;
+        }
+        MLOG_WARN("hybridcmd", "WiFi TCP tap failed for %s", device_id.c_str());
+    }
+
     // Tier 3: ADB shell (slowest)
+    // If caller provided a logical screen_w/h (e.g. canonical 600繝ｻ繝ｻ繝ｻ000),
+    // scale to the device's actual resolution before ADB input tap.
+    // X1 device native resolution: 1200繝ｻ繝ｻ繝ｻ000.
     if (adb_fallback_ && adb_fallback_->is_enabled()) {
-        if (adb_fallback_->tap(x, y)) {
+        int tap_x = x, tap_y = y;
+        if (screen_w > 0 && screen_h > 0) {
+            // Query actual screen size from ADB (cached on first call)
+            int dev_w = adb_fallback_->device_width();
+            int dev_h = adb_fallback_->device_height();
+            if (dev_w > 0 && dev_h > 0) {
+                tap_x = (int)std::round(x * (double)dev_w / screen_w);
+                tap_y = (int)std::round(y * (double)dev_h / screen_h);
+                MLOG_INFO("hybridcmd", "ADB tap scaled (%d,%d) [%dx%d] -> (%d,%d) [%dx%d]",
+                          x, y, screen_w, screen_h, tap_x, tap_y, dev_w, dev_h);
+            }
+        }
+        if (adb_fallback_->tap(tap_x, tap_y)) {
             current_touch_mode_.store(TouchMode::ADB_FALLBACK);
+            MLOG_INFO("hybridcmd", "tap via ADB_FALLBACK: %s (%d,%d)", device_id.c_str(), tap_x, tap_y);
             return 1;
         }
     }
@@ -217,29 +273,45 @@ uint32_t HybridCommandSender::send_tap(const std::string& device_id, int x, int 
 
 uint32_t HybridCommandSender::send_swipe(const std::string& device_id, int x1, int y1, int x2, int y2, int duration_ms, int screen_w, int screen_h) {
     // Tier 1: AOA HID (fastest, per-device)
+    bool usb_hid_failed = false;
     auto hid = get_hid_for_device(device_id);
     if (hid && screen_w > 0 && screen_h > 0) {
         if (try_hid_swipe(device_id, x1, y1, x2, y2, screen_w, screen_h, duration_ms)) {
             current_touch_mode_.store(TouchMode::AOA_HID);
+            MLOG_INFO("hybridcmd", "swipe via AOA_HID: %s (%d,%d)->(%d,%d) dur=%d", device_id.c_str(), x1, y1, x2, y2, duration_ms);
             return 1;
         }
-        MLOG_WARN("hybridcmd", "AOA HID swipe failed for %s, falling back to MIRA USB", device_id.c_str());
+        MLOG_WARN("hybridcmd", "AOA HID swipe failed for %s, USB IO error - skip Tier2 bulk", device_id.c_str());
+        usb_hid_failed = true;
     }
 
-    // Tier 2: MIRA protocol via USB bulk
-    if (usb_sender_) {
+    // Tier 2: MIRA protocol via USB bulk (skip if HID already failed)
+    if (!usb_hid_failed && usb_sender_ && usb_sender_->is_device_connected(device_id)) {
         uint32_t seq = usb_sender_->send_swipe(device_id, x1, y1, x2, y2, duration_ms, screen_w, screen_h);  // ISSUE-18
         if (seq > 0) {
             current_touch_mode_.store(TouchMode::MIRA_USB);
+            MLOG_INFO("hybridcmd", "swipe via MIRA_USB: %s seq=%u (%d,%d)->(%d,%d) dur=%d", device_id.c_str(), seq, x1, y1, x2, y2, duration_ms);
             return seq;
         }
         MLOG_WARN("hybridcmd", "MIRA USB swipe failed, falling back to ADB");
+    }
+
+    // Tier 2.5: WiFi TCP
+    if (auto ws = get_wifi_sender(device_id)) {
+        uint32_t seq = ws->send_swipe(x1, y1, x2, y2, duration_ms, screen_w, screen_h);
+        if (seq > 0) {
+            current_touch_mode_.store(TouchMode::WIFI_TCP);
+            MLOG_INFO("hybridcmd", "swipe via WIFI_TCP: %s seq=%u (%d,%d)->(%d,%d) dur=%d", device_id.c_str(), seq, x1, y1, x2, y2, duration_ms);
+            return seq;
+        }
+        MLOG_WARN("hybridcmd", "WiFi TCP swipe failed for %s", device_id.c_str());
     }
 
     // Tier 3: ADB shell (slowest)
     if (adb_fallback_ && adb_fallback_->is_enabled()) {
         if (adb_fallback_->swipe(x1, y1, x2, y2, duration_ms)) {
             current_touch_mode_.store(TouchMode::ADB_FALLBACK);
+            MLOG_INFO("hybridcmd", "swipe via ADB_FALLBACK: %s (%d,%d)->(%d,%d) dur=%d", device_id.c_str(), x1, y1, x2, y2, duration_ms);
             return 1;
         }
     }
@@ -250,17 +322,31 @@ uint32_t HybridCommandSender::send_swipe(const std::string& device_id, int x1, i
 
 uint32_t HybridCommandSender::send_back(const std::string& device_id) {
     // Tier 2: MIRA protocol via USB bulk (no HID for keys)
-    if (usb_sender_) {
+    if (usb_sender_ && usb_sender_->is_device_connected(device_id)) {
         uint32_t seq = usb_sender_->send_back(device_id);
         if (seq > 0) {
+            current_touch_mode_.store(TouchMode::MIRA_USB);
+            MLOG_INFO("hybridcmd", "back via MIRA_USB: %s seq=%u", device_id.c_str(), seq);
             return seq;
         }
         MLOG_WARN("hybridcmd", "MIRA USB back failed, falling back to ADB");
     }
 
+    // Tier 2.5: WiFi TCP
+    if (auto ws = get_wifi_sender(device_id)) {
+        uint32_t seq = ws->send_back();
+        if (seq > 0) {
+            current_touch_mode_.store(TouchMode::WIFI_TCP);
+            MLOG_INFO("hybridcmd", "back via WIFI_TCP: %s seq=%u", device_id.c_str(), seq);
+            return seq;
+        }
+    }
+
     // Tier 3: ADB shell
     if (adb_fallback_ && adb_fallback_->is_enabled()) {
         if (adb_fallback_->back()) {
+            current_touch_mode_.store(TouchMode::ADB_FALLBACK);
+            MLOG_INFO("hybridcmd", "back via ADB_FALLBACK: %s", device_id.c_str());
             return 1;
         }
     }
@@ -271,17 +357,31 @@ uint32_t HybridCommandSender::send_back(const std::string& device_id) {
 
 uint32_t HybridCommandSender::send_key(const std::string& device_id, int keycode) {
     // Tier 2: MIRA protocol via USB bulk (no HID for keys)
-    if (usb_sender_) {
+    if (usb_sender_ && usb_sender_->is_device_connected(device_id)) {
         uint32_t seq = usb_sender_->send_key(device_id, keycode);
         if (seq > 0) {
+            current_touch_mode_.store(TouchMode::MIRA_USB);
+            MLOG_INFO("hybridcmd", "key via MIRA_USB: %s seq=%u key=%d", device_id.c_str(), seq, keycode);
             return seq;
         }
         MLOG_WARN("hybridcmd", "MIRA USB key %d failed, falling back to ADB", keycode);
     }
 
+    // Tier 2.5: WiFi TCP
+    if (auto ws = get_wifi_sender(device_id)) {
+        uint32_t seq = ws->send_key(keycode);
+        if (seq > 0) {
+            current_touch_mode_.store(TouchMode::WIFI_TCP);
+            MLOG_INFO("hybridcmd", "key via WIFI_TCP: %s seq=%u key=%d", device_id.c_str(), seq, keycode);
+            return seq;
+        }
+    }
+
     // Tier 3: ADB shell
     if (adb_fallback_ && adb_fallback_->is_enabled()) {
         if (adb_fallback_->key(keycode)) {
+            current_touch_mode_.store(TouchMode::ADB_FALLBACK);
+            MLOG_INFO("hybridcmd", "key via ADB_FALLBACK: %s key=%d", device_id.c_str(), keycode);
             return 1;
         }
     }
@@ -303,7 +403,7 @@ uint32_t HybridCommandSender::send_click_text(const std::string& device_id, cons
     return usb_sender_ ? usb_sender_->send_click_text(device_id, text) : 0;
 }
 
-// ── Long press and pinch ──
+// 髫ｨ貂可髫ｨ貂可 Long press and pinch 髫ｨ貂可髫ｨ貂可
 
 bool HybridCommandSender::send_long_press(const std::string& device_id, int x, int y, int screen_w, int screen_h, int hold_ms) {
     // Tier 1: AOA HID (per-device)
@@ -317,8 +417,8 @@ bool HybridCommandSender::send_long_press(const std::string& device_id, int x, i
         MLOG_WARN("hybridcmd", "AOA HID long press failed for %s, falling back to ADB", device_id.c_str());
     }
 
-    // Tier 2: MIRA USB (CMD_LONGPRESS — added in FIX-B)
-    if (usb_sender_) {
+    // Tier 2: MIRA USB (CMD_LONGPRESS 驕ｯ・ｶ郢晢ｽｻadded in FIX-B)
+    if (usb_sender_ && usb_sender_->is_device_connected(device_id)) {
         uint32_t seq = usb_sender_->send_longpress(device_id, x, y, hold_ms);
         if (seq > 0) {
             MLOG_INFO("hybridcmd", "MIRA long press (%d,%d) %dms [%s] seq=%u", x, y, hold_ms, device_id.c_str(), seq);
@@ -352,8 +452,8 @@ bool HybridCommandSender::send_pinch(const std::string& device_id, int cx, int c
         }
     }
 
-    // Tier 2: MIRA USB (CMD_PINCH — added in FIX-B, angle=0 default)
-    if (usb_sender_) {
+    // Tier 2: MIRA USB (CMD_PINCH 驕ｯ・ｶ郢晢ｽｻadded in FIX-B, angle=0 default)
+    if (usb_sender_ && usb_sender_->is_device_connected(device_id)) {
         uint32_t seq = usb_sender_->send_pinch(device_id, cx, cy, start_dist, end_dist, duration_ms, 0);
         if (seq > 0) {
             MLOG_INFO("hybridcmd", "MIRA pinch (%d,%d) %d->%d %dms [%s] seq=%u",
@@ -367,7 +467,7 @@ bool HybridCommandSender::send_pinch(const std::string& device_id, int cx, int c
     return false;
 }
 
-// ── Send to all devices (3-tier fallback per device) ──
+// 髫ｨ貂可髫ｨ貂可 Send to all devices (3-tier fallback per device) 髫ｨ貂可髫ｨ貂可
 
 int HybridCommandSender::send_tap_all(int x, int y, int screen_w, int screen_h) {
     auto ids = get_device_ids();
@@ -453,7 +553,7 @@ int HybridCommandSender::send_key_all(int keycode) {
     return count;
 }
 
-// ── Legacy API - send to first device ──
+// 髫ｨ貂可髫ｨ貂可 Legacy API - send to first device 髫ｨ貂可髫ｨ貂可
 
 uint32_t HybridCommandSender::send_ping() {
     auto first = get_first_device_id();
@@ -490,7 +590,7 @@ uint32_t HybridCommandSender::send_click_text(const std::string& text) {
     return first.empty() ? 0 : send_click_text(first, text);
 }
 
-// ── Stats ──
+// 髫ｨ貂可髫ｨ貂可 Stats 髫ｨ貂可髫ｨ貂可
 
 bool HybridCommandSender::usb_connected() const {
     return device_count() > 0;
@@ -510,12 +610,61 @@ uint64_t HybridCommandSender::usb_commands_sent() const {
     return total;
 }
 
-// ── Touch mode string ──
+// 髫ｨ貂可髫ｨ貂可 Touch mode string 髫ｨ貂可髫ｨ貂可
+
+
+void HybridCommandSender::register_wifi_device(const std::string& hardware_id,
+                                                 const std::string& ip,
+                                                 uint16_t cmd_port) {
+    auto sender = std::make_shared<gui::WifiCommandSender>();
+    sender->setTarget(ip, cmd_port);
+    if (!sender->start()) {
+        MLOG_WARN("hybridcmd", "WiFi sender start failed: %s (%s:%d)",
+                  hardware_id.c_str(), ip.c_str(), cmd_port);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(wifi_sender_mutex_);
+    wifi_senders_[hardware_id] = sender;
+    MLOG_INFO("hybridcmd", "WiFi sender registered: %s -> %s:%d",
+              hardware_id.c_str(), ip.c_str(), cmd_port);
+}
+
+void HybridCommandSender::unregister_wifi_device(const std::string& hardware_id) {
+    std::lock_guard<std::mutex> lock(wifi_sender_mutex_);
+    auto it = wifi_senders_.find(hardware_id);
+    if (it != wifi_senders_.end()) {
+        it->second->stop();
+        wifi_senders_.erase(it);
+    }
+}
+
+bool HybridCommandSender::has_wifi_sender(const std::string& hardware_id) const {
+    std::lock_guard<std::mutex> lock(wifi_sender_mutex_);
+    return wifi_senders_.count(hardware_id) > 0;
+}
+
+std::shared_ptr<gui::WifiCommandSender>
+HybridCommandSender::get_wifi_sender(const std::string& device_id) const {
+    std::lock_guard<std::mutex> lock(wifi_sender_mutex_);
+    // Direct lookup by hardware_id. Return running sender even if not yet marked connected;
+    // WifiCommandSender can still complete/retry TCP connection on its own.
+    {
+        auto it = wifi_senders_.find(device_id);
+        if (it != wifi_senders_.end() && it->second && it->second->running()) return it->second;
+    }
+    // Fallback: single-device common case
+    if (wifi_senders_.size() == 1) {
+        auto& s = wifi_senders_.begin()->second;
+        if (s && s->running()) return s;
+    }
+    return nullptr;
+}
 
 std::string HybridCommandSender::get_touch_mode_str() const {
     switch (current_touch_mode_.load()) {
         case TouchMode::AOA_HID: return "AOA_HID";
         case TouchMode::MIRA_USB: return "MIRA_USB";
+        case TouchMode::WIFI_TCP:    return "WiFi TCP";
         case TouchMode::ADB_FALLBACK: return "ADB";
         default: return "UNKNOWN";
     }

@@ -17,6 +17,32 @@ namespace mirage::gui::window {
 using namespace mirage::gui::state;
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    // Forward mouse/key events to our handler BEFORE ImGui
+    // (ImGui_ImplWin32_WndProcHandler consumes mouse events when WantCaptureMouse is true,
+    //  which prevents our device tap/swipe from ever being called)
+    if (auto gui = g_gui) {
+        switch (msg) {
+            case WM_MOUSEMOVE:
+                gui->onMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+                break;
+            case WM_LBUTTONDOWN:
+                gui->onMouseDown(0, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+                break;
+            case WM_LBUTTONUP:
+                gui->onMouseUp(0, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+                break;
+            case WM_LBUTTONDBLCLK:
+                gui->onMouseDoubleClick(0, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+                break;
+            case WM_RBUTTONDOWN:
+                gui->onMouseDown(1, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+                break;
+            case WM_RBUTTONUP:
+                gui->onMouseUp(1, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+                break;
+        }
+    }
+
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
         return true;
     }
@@ -154,53 +180,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
-        case WM_MOUSEMOVE: {
-            auto gui = g_gui;
-            if (gui) {
-                gui->onMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            }
+        case WM_MOUSEMOVE:
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDBLCLK:
+        case WM_RBUTTONDOWN:
+        case WM_RBUTTONUP:
+            // Already handled before ImGui above; fall through to DefWindowProc
             return 0;
-        }
-
-        case WM_LBUTTONDOWN: {
-            auto gui = g_gui;
-            if (gui) {
-                gui->onMouseDown(0, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            }
-            return 0;
-        }
-
-        case WM_LBUTTONUP: {
-            auto gui = g_gui;
-            if (gui) {
-                gui->onMouseUp(0, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            }
-            return 0;
-        }
-
-        case WM_LBUTTONDBLCLK: {
-            auto gui = g_gui;
-            if (gui) {
-                gui->onMouseDoubleClick(0, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            }
-            return 0;
-        }
-
-        case WM_RBUTTONDOWN: {
-            auto gui = g_gui;
-            if (gui) {
-                gui->onMouseDown(1, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            }
-            return 0;
-        }
-
-        case WM_RBUTTONUP: {
-            auto gui = g_gui;
-            if (gui) {
-                gui->onMouseUp(1, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            }
-            return 0;
-        }
 
         case WM_KEYDOWN: {
             auto gui = g_gui;

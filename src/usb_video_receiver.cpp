@@ -172,6 +172,7 @@ void UsbVideoReceiver::stop() {
 bool UsbVideoReceiver::find_and_open_device() {
     uint16_t aoa_pids[] = { AOA_PID_ACCESSORY, AOA_PID_ACCESSORY_ADB,
                             AOA_PID_ACCESSORY_AUDIO, AOA_PID_ACCESSORY_AUDIO_ADB };
+    uint16_t mtk_aoa_pids[] = { 0x201C, 0x2005 };
     libusb_device** devs;
     ssize_t cnt = libusb_get_device_list(ctx_, &devs);
     if (cnt < 0) return false;
@@ -181,9 +182,12 @@ bool UsbVideoReceiver::find_and_open_device() {
     for (ssize_t i = 0; i < cnt; i++) {
         libusb_device_descriptor desc;
         if (libusb_get_device_descriptor(devs[i], &desc) != 0) continue;
-        if (desc.idVendor != AOA_VID) continue;
         bool ok = false;
-        for (auto pid : aoa_pids) if (desc.idProduct == pid) { ok=true; break; }
+        if (desc.idVendor == AOA_VID) {
+            for (auto pid : aoa_pids) if (desc.idProduct == pid) { ok=true; break; }
+        } else if (desc.idVendor == 0x0E8D) {
+            for (auto pid : mtk_aoa_pids) if (desc.idProduct == pid) { ok=true; break; }
+        }
         if (ok) aoa_devs.push_back({devs[i], libusb_get_bus_number(devs[i]), libusb_get_device_address(devs[i])});
     }
     MLOG_INFO("usbvid", "AOA devices: %d (serial=%s idx=%d)", (int)aoa_devs.size(),
@@ -192,16 +196,23 @@ bool UsbVideoReceiver::find_and_open_device() {
     int idx = 0;
     for (auto& ad : aoa_devs) {
         if (device_index_ >= 0 && idx != device_index_) { idx++; continue; }
-        if (libusb_open(ad.dev, &handle_) != LIBUSB_SUCCESS) { idx++; continue; }
+        int open_ret = libusb_open(ad.dev, &handle_);
+        if (open_ret != LIBUSB_SUCCESS) {
+            MLOG_WARN("usbvid", "libusb_open failed [%d:%d]: %s", ad.bus, ad.addr, libusb_error_name(open_ret));
+            idx++; continue;
+        }
         libusb_device_descriptor desc;
         libusb_get_device_descriptor(ad.dev, &desc);
         char serial[256]={0};
         if (desc.iSerialNumber)
             libusb_get_string_descriptor_ascii(handle_, desc.iSerialNumber, (unsigned char*)serial, sizeof(serial));
         if (!target_serial_.empty() && target_serial_ != serial) {
+            MLOG_INFO("usbvid", "Skip [%d:%d] serial mismatch got=%s want=%s", ad.bus, ad.addr, serial[0]?serial:"?", target_serial_.c_str());
             libusb_close(handle_); handle_=nullptr; idx++; continue;
         }
-        if (libusb_claim_interface(handle_, 0) != LIBUSB_SUCCESS) {
+        int claim_ret = libusb_claim_interface(handle_, 0);
+        if (claim_ret != LIBUSB_SUCCESS) {
+            MLOG_WARN("usbvid", "libusb_claim_interface failed [%d:%d] serial=%s: %s", ad.bus, ad.addr, serial[0]?serial:"?", libusb_error_name(claim_ret));
             libusb_close(handle_); handle_=nullptr; idx++; continue;
         }
         ep_in_ = 0;
@@ -216,7 +227,10 @@ bool UsbVideoReceiver::find_and_open_device() {
             }
             libusb_free_config_descriptor(config);
         }
-        if (!ep_in_) { libusb_release_interface(handle_,0); libusb_close(handle_); handle_=nullptr; idx++; continue; }
+        if (!ep_in_) {
+            MLOG_WARN("usbvid", "No bulk IN endpoint [%d:%d] serial=%s", ad.bus, ad.addr, serial[0]?serial:"?");
+            libusb_release_interface(handle_,0); libusb_close(handle_); handle_=nullptr; idx++; continue;
+        }
         MLOG_INFO("usbvid", "Selected [%d:%d] ep=0x%02x serial=%s", ad.bus, ad.addr, ep_in_, serial[0]?serial:"?");
         libusb_free_device_list(devs, 1);
         return true;

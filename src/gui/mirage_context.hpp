@@ -36,8 +36,8 @@
 #include "ai_engine.hpp"
 #include "ai/learning_mode.hpp"
 #endif
-#ifdef USE_OCR
-#include "ocr_engine.hpp"
+#ifdef MIRAGE_OCR_ENABLED
+#include "frame_analyzer.hpp"
 #endif
 
 #include <memory>
@@ -53,6 +53,8 @@
 #include "vid0_parser.hpp"  // Common VID0 constants
 
 namespace mirage {
+namespace x1 { class MonitorLaneClient; }
+
 
 // =============================================================================
 // Constants
@@ -100,6 +102,7 @@ public:
 
     // Multi-device receiver
     std::unique_ptr<::gui::MultiDeviceReceiver> multi_receiver;
+    std::unique_ptr<x1::MonitorLaneClient> monitor_lane_client;
 
     // USB video receiver
     std::unique_ptr<::gui::UsbVideoReceiver> usb_video_receiver;
@@ -148,8 +151,8 @@ public:
     std::unique_ptr<mirage::ai::LearningMode> learning_mode;
 #endif
 
-#ifdef USE_OCR
-    std::unique_ptr<mirage::ocr::OCREngine> ocr_engine;
+#ifdef MIRAGE_OCR_ENABLED
+    std::unique_ptr<mirage::FrameAnalyzer> frame_analyzer;
     std::atomic<bool> ocr_enabled{false};
 #endif
 

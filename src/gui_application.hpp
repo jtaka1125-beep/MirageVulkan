@@ -66,11 +66,18 @@ struct DeviceInfo {
     float bandwidth_mbps = 0;
     uint64_t frame_count = 0;
     
-    // Current frame texture
+    // Current frame texture (Canonical Lane)
     VkDescriptorSet vk_texture_ds = VK_NULL_HANDLE;
     std::shared_ptr<mirage::vk::VulkanTexture> vk_texture;
     int texture_width = 0;
     int texture_height = 0;
+
+    // Monitor Lane texture (Phase C-5: H.264 decoded frame)
+    VkDescriptorSet monitor_vk_texture_ds = VK_NULL_HANDLE;
+    std::shared_ptr<mirage::vk::VulkanTexture> monitor_vk_texture;
+    int monitor_tex_w = 0;
+    int monitor_tex_h = 0;
+    uint64_t last_monitor_update_ms = 0;
 
     // Dual-stream mismatch tracking (log once per state change)
     bool size_mismatch_logged = false;  // true if mismatch already logged for current texture
@@ -137,6 +144,11 @@ struct DeviceInfo {
         queued_count.store(o.queued_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
         processed_count.store(o.processed_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
         last_texture_update_ms.store(o.last_texture_update_ms.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        monitor_vk_texture_ds   = o.monitor_vk_texture_ds;
+        monitor_vk_texture      = o.monitor_vk_texture;
+        monitor_tex_w           = o.monitor_tex_w;
+        monitor_tex_h           = o.monitor_tex_h;
+        last_monitor_update_ms  = o.last_monitor_update_ms;
         last_tiled_update_ms.store(o.last_tiled_update_ms.load(std::memory_order_relaxed), std::memory_order_relaxed);
         return *this;
     }
@@ -280,6 +292,16 @@ public:
         std::lock_guard<std::mutex> lock(devices_mutex_);
         return main_device_id_;
     }
+    // Get device native resolution (for touch coordinate scaling)
+    std::pair<int,int> getDeviceNativeSize(const std::string& id) const {
+        std::lock_guard<std::mutex> lock(devices_mutex_);
+        auto it = devices_.find(id);
+        if (it == devices_.end()) return {0, 0};
+        const auto& d = it->second;
+        int w = d.expected_width  > 0 ? d.expected_width  : d.texture_width;
+        int h = d.expected_height > 0 ? d.expected_height : d.texture_height;
+        return {w, h};
+    }
     
     // Device updates
     void updateDeviceStatus(const std::string& id, DeviceStatus status);
@@ -294,6 +316,17 @@ public:
     void updateDeviceOverlays(const std::string& id,
                               const std::vector<DeviceInfo::MatchOverlay>& overlays);
     void updateDeviceStats(const std::string& id, float fps, float latency_ms, float bandwidth_mbps);
+
+    // Monitor Lane (Phase C-5): upload decoded RGBA frame to monitor_vk_texture
+    void stageMonitorFrame(const std::string& device_id,
+                           const uint8_t*     rgba,
+                           int                width,
+                           int                height);
+    void flushPendingMonitorFrames();  // call from main thread after device registration
+private:
+    void uploadMonitorTexture_(DeviceInfo& device,
+                               const uint8_t* rgba, int width, int height);
+public:
     
     // Thread-safe frame queue (call from any thread)
     // This copies data to queue, main thread processes with processPendingFrames()
@@ -450,6 +483,16 @@ private:
     // Per-device latest frame only (older frames auto-discarded on overwrite)
     std::map<std::string, PendingFrame> pending_frames_;
     mutable std::mutex pending_frames_mutex_;
+
+    // Monitor Lane: cache latest RGBA frame per device_id for deferred upload
+    // (device may not be registered yet when first RGBA arrives)
+    struct PendingMonitorFrame {
+        std::vector<uint8_t> rgba;
+        int width  = 0;
+        int height = 0;
+    };
+    std::map<std::string, PendingMonitorFrame> pending_monitor_frames_;
+    mutable std::mutex pending_monitor_mutex_;
 
     // === Per-device FPS measurement (actual receive rate) ===
     struct FpsTracker {
