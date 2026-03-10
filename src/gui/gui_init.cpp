@@ -740,13 +740,6 @@ static void onFpsCommand(const std::string& device_id, int fps) {
 static void onRouteCommand(const std::string& device_id,
                            ::gui::RouteController::VideoRoute route,
                            const std::string& host, int port) {
-    // TCP-only mode: Android is already in TCP mode.
-    // Sending VIDEO_ROUTE(WiFi/UDP) would cause Android to switch away from TCP,
-    // breaking the active TCP connection. Skip entirely.
-    if (g_route_controller && g_route_controller->isTcpOnlyMode()) {
-        MLOG_INFO("RouteCtrl", "TCP_ONLY: VIDEO_ROUTE skipped for %s (would break TCP)", device_id.c_str());
-        return;
-    }
     if (g_hybrid_cmd) {
         uint8_t mode = (route == ::gui::RouteController::VideoRoute::WIFI) ? 1 : 0;
         g_hybrid_cmd->send_video_route(device_id, mode, host, port);
