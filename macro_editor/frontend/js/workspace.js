@@ -664,27 +664,29 @@ async function createContainerFromRecording() {
 
 // ==================== Save / Load / Export ====================
 
-async function normalizeCurrentBlocks() {
+async function normalizeCurrentBlocks(options) {
+  options = options || {};
+  const silent = !!options.silent;
   var serial = document.getElementById('device-select') ? document.getElementById('device-select').value : '';
-  if (!serial) { alert('デバイスを選択してください'); return; }
+  if (!serial) { if (!silent) alert('デバイスを選択してください'); return 0; }
 
   let imgData = null;
   try {
     imgData = await window.pywebview.api.capture_screen(serial);
   } catch (e) {
-    alert('画面基準の取得に失敗: ' + e);
-    return;
+    if (!silent) alert('画面基準の取得に失敗: ' + e);
+    return 0;
   }
   if (!imgData || imgData.error) {
-    alert('画面基準の取得に失敗: ' + (imgData ? imgData.error : 'unknown'));
-    return;
+    if (!silent) alert('画面基準の取得に失敗: ' + (imgData ? imgData.error : 'unknown'));
+    return 0;
   }
 
   const basis_w = imgData.width || imgData.preview_w || imgData.native_w || 0;
   const basis_h = imgData.height || imgData.preview_h || imgData.native_h || 0;
   if (!(basis_w > 0 && basis_h > 0)) {
-    alert('有効な座標基準がありません');
-    return;
+    if (!silent) alert('有効な座標基準がありません');
+    return 0;
   }
 
   let touched = 0;
@@ -729,10 +731,12 @@ async function normalizeCurrentBlocks() {
   }
 
   updateCodePreview();
-  alert('正規化したブロック数: ' + touched);
+  if (!silent) alert('正規化したブロック数: ' + touched);
+  return touched;
 }
 
 async function saveMacro() {
+  await normalizeCurrentBlocks({silent: true});
   var name = prompt('繝槭け繝ｭ蜷阪ｒ蛟､蜉', 'my_macro');
   if (!name) return;
   var ws = Blockly.serialization.workspaces.save(workspace);
