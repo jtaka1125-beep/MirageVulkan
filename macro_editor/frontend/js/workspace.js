@@ -73,6 +73,65 @@ function refreshNormalizationIndicators() {
   }
 }
 
+
+async function normalizeSingleBlock(block, options) {
+  options = options || {};
+  const silent = !!options.silent;
+  if (!block || !isTouchBlockNeedingNormalization(block)) return false;
+  var serial = document.getElementById('device-select') ? document.getElementById('device-select').value : '';
+  if (!serial) { if (!silent) alert('デバイスを選択してください'); return false; }
+  let imgData = null;
+  try {
+    imgData = await window.pywebview.api.capture_screen(serial);
+  } catch (e) {
+    if (!silent) alert('画面基準の取得に失敗: ' + e);
+    return false;
+  }
+  if (!imgData || imgData.error) {
+    if (!silent) alert('画面基準の取得に失敗: ' + (imgData ? imgData.error : 'unknown'));
+    return false;
+  }
+  const basis_w = imgData.width || imgData.preview_w || imgData.native_w || 0;
+  const basis_h = imgData.height || imgData.preview_h || imgData.native_h || 0;
+  if (!(basis_w > 0 && basis_h > 0)) return false;
+  try {
+    if (block.type === 'adb_tap') {
+      const x = Number(block.getFieldValue('X'));
+      const y = Number(block.getFieldValue('Y'));
+      const norm = await window.pywebview.api.normalize_coords(serial, x, y, basis_w, basis_h);
+      if (norm && norm.status === 'ok') {
+        block.data = JSON.stringify({ coord_basis: 'native_normalized', x_norm: norm.x_norm, y_norm: norm.y_norm });
+        refreshNormalizationIndicators(); updateCodePreview(); return true;
+      }
+    } else if (block.type === 'adb_swipe') {
+      const x1 = Number(block.getFieldValue('X1')); const y1 = Number(block.getFieldValue('Y1'));
+      const x2 = Number(block.getFieldValue('X2')); const y2 = Number(block.getFieldValue('Y2'));
+      const n1 = await window.pywebview.api.normalize_coords(serial, x1, y1, basis_w, basis_h);
+      const n2 = await window.pywebview.api.normalize_coords(serial, x2, y2, basis_w, basis_h);
+      if (n1 && n1.status === 'ok' && n2 && n2.status === 'ok') {
+        block.data = JSON.stringify({ coord_basis: 'native_normalized', x1_norm: n1.x_norm, y1_norm: n1.y_norm, x2_norm: n2.x_norm, y2_norm: n2.y_norm });
+        refreshNormalizationIndicators(); updateCodePreview(); return true;
+      }
+    } else if (block.type === 'adb_long_press') {
+      const x = Number(block.getFieldValue('X')); const y = Number(block.getFieldValue('Y'));
+      const norm = await window.pywebview.api.normalize_coords(serial, x, y, basis_w, basis_h);
+      if (norm && norm.status === 'ok') {
+        block.data = JSON.stringify({ coord_basis: 'native_normalized', x_norm: norm.x_norm, y_norm: norm.y_norm });
+        refreshNormalizationIndicators(); updateCodePreview(); return true;
+      }
+    }
+  } catch (e) { console.log('normalizeSingleBlock failed', e); }
+  return false;
+}
+
+function clearSingleBlockNormalization(block) {
+  if (!block || !isTouchBlockNeedingNormalization(block)) return false;
+  block.data = null;
+  refreshNormalizationIndicators();
+  updateCodePreview();
+  return true;
+}
+
 // Wait for pywebview JS bridge to be ready
 function waitForPywebview() {
   if (window.pywebview && window.pywebview.api) {
@@ -212,6 +271,37 @@ function registerContextMenu() {
     id: 'execute_from_block',
     weight: 1
   });
+
+  Blockly.ContextMenuRegistry.registry.register({
+    displayText: '🧭 このブロックを正規化',
+    preconditionFn: function(scope) {
+      if (!scope.block) return 'hidden';
+      if (!isTouchBlockNeedingNormalization(scope.block)) return 'hidden';
+      return hasNormalizedCoordData(scope.block) ? 'disabled' : 'enabled';
+    },
+    callback: function(scope) {
+      normalizeSingleBlock(scope.block, {silent: false});
+    },
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    id: 'normalize_single_block',
+    weight: 2
+  });
+
+  Blockly.ContextMenuRegistry.registry.register({
+    displayText: '↺ 正規化を解除',
+    preconditionFn: function(scope) {
+      if (!scope.block) return 'hidden';
+      if (!isTouchBlockNeedingNormalization(scope.block)) return 'hidden';
+      return hasNormalizedCoordData(scope.block) ? 'enabled' : 'disabled';
+    },
+    callback: function(scope) {
+      clearSingleBlockNormalization(scope.block);
+    },
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    id: 'clear_single_block_normalization',
+    weight: 3
+  });
+
 }
 
 async function executeBlockLive(block) {
