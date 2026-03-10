@@ -802,7 +802,8 @@ async function loadMacro() {
   refreshNormalizationIndicators();
 }
 
-function exportCode() {
+async function exportCode() {
+  await normalizeCurrentBlocks({silent: true});
   var code = Blockly.Python.workspaceToCode(workspace);
   var blob = new Blob([code], {type: 'text/plain'});
   var a = document.createElement('a');
