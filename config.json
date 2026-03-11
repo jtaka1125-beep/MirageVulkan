@@ -54,13 +54,14 @@
     "vde_debounce_window_ms": 500,
     "enable_layer0": true,
     "layer0_idle_timeout_ms": 5000,
-    "enable_layer2": true,
-    "layer2_no_match_frames": 60,
-    "layer2_stuck_frames": 90,
     "layer2_no_match_ms": 90000,
-    "layer2_cooldown_ms": 10000,
     "layer2_freeze_timeout_ms": 60000,
-    "layer2_freeze_action": "home_button"
+    "layer2_freeze_action": "home_button",
+    "vde_enable_layer3": true,
+    "vde_layer3_no_match_frames": 60,
+    "vde_layer3_stuck_frames": 90,
+    "vde_layer3_no_match_ms": 5000,
+    "vde_layer3_cooldown_ms": 10000
   },
   "ocr": {
     "enabled": false,
@@ -69,7 +70,7 @@
   "ollama": {
     "host": "127.0.0.1",
     "port": 11434,
-    "model": "qwen3-vl:4b",
+    "model": "llava-phi3",
     "timeout_ms": 60000,
     "max_tokens": 64
   }
