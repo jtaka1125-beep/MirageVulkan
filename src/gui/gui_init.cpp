@@ -1195,6 +1195,18 @@ void initializeAI() {
 
     // Initialize AiJpegReceiver (lazy start from GUI)
     g_ai_jpeg_receiver = std::make_unique<mirage::ai::AiJpegReceiver>();
+    g_ai_jpeg_receiver->setFrameCallback([](const std::string& device_id,
+                                            const std::vector<uint8_t>& jpeg,
+                                            int width, int height,
+                                            int64_t /*timestamp_us*/) {
+        // Log frame receipt (future: feed to AIEngine for analysis)
+        static uint64_t s_frame_count = 0;
+        if (++s_frame_count % 30 == 1) {  // Log every 30 frames
+            MLOG_DEBUG("ai.jpeg", "Frame #%llu from %s: %dx%d, %zu bytes",
+                (unsigned long long)s_frame_count, device_id.c_str(),
+                width, height, jpeg.size());
+        }
+    });
     MLOG_INFO("gui", "AiJpegReceiver initialized (start from GUI)");
 }
 #endif
