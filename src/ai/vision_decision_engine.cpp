@@ -412,6 +412,8 @@ DeviceVisionState& VisionDecisionEngine::getOrCreateState(const std::string& dev
         DeviceVisionState& ds = device_states_[device_id];
         ds.last_any_match_time = std::chrono::steady_clock::now();
         ds.layer2_last_call   = std::chrono::steady_clock::now();
+        // Layer 0 無効時は IDLE から開始
+        ds.state = config_.enable_layer0 ? VisionState::STANDBY : VisionState::IDLE;
         return ds;
     }
     return it->second;

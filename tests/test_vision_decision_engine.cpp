@@ -51,6 +51,7 @@ protected:
         cfg.cooldown_ms = 2000;
         cfg.debounce_window_ms = 500;
         cfg.error_recovery_ms = 3000;
+        cfg.enable_layer0 = false;  // テストではLayer 0無効（IDLEから開始）
     }
 };
 
@@ -287,6 +288,7 @@ protected:
         cfg.cooldown_ms = 1000;
         cfg.debounce_window_ms = 500;
         cfg.error_recovery_ms = 3000;
+        cfg.enable_layer0 = false;  // テストではLayer 0無効
     }
 };
 
@@ -298,6 +300,7 @@ TEST_F(VisionDebounceTest, ConsecutiveDetectionCount) {
     c.confirm_count = 5;
     c.cooldown_ms = 2000;
     c.debounce_window_ms = 500;
+    c.enable_layer0 = false;  // テストではLayer 0無効
     VisionDecisionEngine engine(c);
     const std::string dev = "dev1";
 
@@ -430,6 +433,7 @@ TEST_F(VisionConfigTest, ConfirmCount1) {
     cfg.confirm_count = 1;
     cfg.cooldown_ms = 1000;
     cfg.debounce_window_ms = 0;  // デバウンスなし
+    cfg.enable_layer0 = false;   // テストではLayer 0無効
     VisionDecisionEngine engine(cfg);
     const std::string dev = "dev1";
 
@@ -454,6 +458,7 @@ TEST_F(VisionConfigTest, ConfirmCount5) {
     cfg.confirm_count = 5;
     cfg.cooldown_ms = 1000;
     cfg.debounce_window_ms = 0;
+    cfg.enable_layer0 = false;  // テストではLayer 0無効
     VisionDecisionEngine engine(cfg);
     const std::string dev = "dev1";
 
@@ -480,6 +485,7 @@ TEST_F(VisionConfigTest, CooldownMsChange) {
     cfg.confirm_count = 1;
     cfg.cooldown_ms = 500;   // 短いCOOLDOWN
     cfg.debounce_window_ms = 0;
+    cfg.enable_layer0 = false;  // テストではLayer 0無効
     VisionDecisionEngine engine(cfg);
     const std::string dev = "dev1";
 
@@ -510,12 +516,14 @@ TEST_F(VisionConfigTest, DynamicConfigChange) {
     cfg.confirm_count = 3;
     cfg.cooldown_ms = 2000;
     cfg.debounce_window_ms = 500;
+    cfg.enable_layer0 = false;  // テストではLayer 0無効
     VisionDecisionEngine engine(cfg);
 
     // 設定変更
     VisionDecisionConfig new_cfg;
     new_cfg.confirm_count = 1;
     new_cfg.cooldown_ms = 100;
+    new_cfg.enable_layer0 = false;  // テストではLayer 0無効
     new_cfg.debounce_window_ms = 0;
     engine.setConfig(new_cfg);
 
@@ -546,6 +554,7 @@ protected:
         cfg.cooldown_ms = 1000;
         cfg.debounce_window_ms = 0;
         cfg.error_recovery_ms = 3000;
+        cfg.enable_layer0 = false;  // テストではLayer 0無効
     }
 };
 
@@ -643,6 +652,7 @@ protected:
         cfg.cooldown_ms = 1000;
         cfg.debounce_window_ms = 0;
         cfg.error_recovery_ms = 3000;
+        cfg.enable_layer0 = false;  // テストではLayer 0無効
     }
 };
 
@@ -682,6 +692,7 @@ TEST_F(VisionEdgeCaseTest, MultipleMatchesBestScoreSelected) {
     c.confirm_count = 1;
     c.cooldown_ms = 1000;
     c.debounce_window_ms = 0;
+    c.enable_layer0 = false;  // テストではLayer 0無効
     VisionDecisionEngine engine(c);
     const std::string dev = "dev1";
 
@@ -786,6 +797,7 @@ TEST_F(VisionEdgeCaseTest, ConfirmedNoDoubleAction) {
     c.confirm_count = 1;
     c.cooldown_ms = 2000;
     c.debounce_window_ms = 0;
+    c.enable_layer0 = false;  // テストではLayer 0無効
     VisionDecisionEngine engine(c);
     const std::string dev = "dev1";
 
@@ -825,6 +837,7 @@ TEST_F(VisionEdgeCaseTest, PrevStateTracking) {
     c.confirm_count = 1;
     c.cooldown_ms = 1000;
     c.debounce_window_ms = 0;
+    c.enable_layer0 = false;  // テストではLayer 0無効
     VisionDecisionEngine engine(c);
     const std::string dev = "dev1";
 
@@ -902,6 +915,7 @@ protected:
         c.enable_ewma        = true;
         c.ewma_alpha         = alpha;
         c.ewma_confirm_thr   = thr;
+        c.enable_layer0      = false;  // テストではLayer 0無効
         return c;
     }
     VisionMatch match(const std::string& id, float score) {
@@ -993,6 +1007,7 @@ TEST_F(EwmaTest, DisabledEwmaSkipsGate) {
     cfg.debounce_window_ms = 0;
     cfg.enable_ewma        = false;   // DISABLED
     cfg.ewma_confirm_thr   = 0.99f;   // impossible if ewma was active
+    cfg.enable_layer0      = false;   // テストではLayer 0無効
     VisionDecisionEngine engine(cfg);
     const std::string dev = "d";
     std::vector<VisionMatch> ms = { match("btn", 0.95f) };
