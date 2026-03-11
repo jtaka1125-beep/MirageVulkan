@@ -8,7 +8,7 @@
 ## Active Blockers / Known Issues
 - AOA full-path verification: requires physical USB connection (currently WiFi-only)
 - Ollama: Session 1 (ユーザーセッション) での手動起動が必要
-- AiJpegReceiver (PC側): 未実装 (現状FrameReadyEvent経由で動作、低優先度)
+- AiJpegReceiver (PC側): 実装済み (src/ai/ai_jpeg_receiver.cpp), 統合未完了
 
 ## Architecture (Video Pipeline)
 - Engine: FULLY CUSTOM. No scrcpy.

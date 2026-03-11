@@ -247,6 +247,10 @@ set(AI_SOURCES
 
     src/ai/lfm_classifier.hpp
 
+    src/ai/ai_jpeg_receiver.cpp
+
+    src/ai/ai_jpeg_receiver.hpp
+
 
     src/ai/ollama_vision.hpp
 
