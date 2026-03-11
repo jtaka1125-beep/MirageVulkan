@@ -8868,6 +8868,23 @@ if (decision.should_act && can_send) {
         if (vision_engine_) vision_engine_->resetAll();
     }
 
+    // テンプレート無視リスト
+    void ignoreTemplate(const std::string& template_id) {
+        if (vision_engine_) vision_engine_->ignoreTemplate(template_id);
+    }
+    void unignoreTemplate(const std::string& template_id) {
+        if (vision_engine_) vision_engine_->unignoreTemplate(template_id);
+    }
+    bool isTemplateIgnored(const std::string& template_id) const {
+        return vision_engine_ ? vision_engine_->isIgnored(template_id) : false;
+    }
+    std::vector<std::string> getIgnoredTemplates() const {
+        return vision_engine_ ? vision_engine_->getIgnoredTemplates() : std::vector<std::string>{};
+    }
+    void clearIgnoredTemplates() {
+        if (vision_engine_) vision_engine_->clearIgnoredTemplates();
+    }
+
     // Layer 0 support: ユーザー操作通知
     void notifyUserInput(const std::string& device_id) {
         if (vision_engine_) vision_engine_->notifyUserInput(device_id);
@@ -19461,6 +19478,26 @@ void AIEngine::resetAllVision() {
 
 
 
+}
+
+void AIEngine::ignoreTemplate(const std::string& template_id) {
+    if (impl_) impl_->ignoreTemplate(template_id);
+}
+
+void AIEngine::unignoreTemplate(const std::string& template_id) {
+    if (impl_) impl_->unignoreTemplate(template_id);
+}
+
+bool AIEngine::isTemplateIgnored(const std::string& template_id) const {
+    return impl_ ? impl_->isTemplateIgnored(template_id) : false;
+}
+
+std::vector<std::string> AIEngine::getIgnoredTemplates() const {
+    return impl_ ? impl_->getIgnoredTemplates() : std::vector<std::string>{};
+}
+
+void AIEngine::clearIgnoredTemplates() {
+    if (impl_) impl_->clearIgnoredTemplates();
 }
 
 

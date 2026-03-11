@@ -159,9 +159,10 @@ static void renderEngineControl() {
     if (ImGui::SmallButton("Reset##ai")) {
         g_ai_engine->reset();
         g_ai_engine->resetStats();
+        g_ai_engine->clearActionLog();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("統計とVisionDecisionEngine状態をリセット");
+        ImGui::SetTooltip("統計・実行ログ・VisionDecisionEngine状態をリセット");
     }
 
     // 統計表示
@@ -356,6 +357,48 @@ static void renderMatchResults() {
             ImGui::SameLine();
             ImGui::PlotLines(plot_id, hist.buf, 60, hist.head,
                 nullptr, 0.f, 1.f, ImVec2(80, 20));
+        }
+
+        // 無視ボタン（誤検出対策）
+        ImGui::SameLine();
+        char ignore_id[64];
+        snprintf(ignore_id, sizeof(ignore_id), "X##ign_%s", m.template_id.c_str());
+        bool is_ignored = g_ai_engine->isTemplateIgnored(m.template_id);
+        if (is_ignored) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+        }
+        if (ImGui::SmallButton(ignore_id)) {
+            if (is_ignored) {
+                g_ai_engine->unignoreTemplate(m.template_id);
+            } else {
+                g_ai_engine->ignoreTemplate(m.template_id);
+            }
+        }
+        if (is_ignored) {
+            ImGui::PopStyleColor();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(is_ignored ? "無視解除: %s" : "無視する: %s", m.template_id.c_str());
+        }
+    }
+
+    // 無視リスト表示
+    auto ignored = g_ai_engine->getIgnoredTemplates();
+    if (!ignored.empty()) {
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Ignored (%d):", (int)ignored.size());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear All##ign")) {
+            g_ai_engine->clearIgnoredTemplates();
+        }
+        for (const auto& tpl : ignored) {
+            ImGui::BulletText("%s", tpl.c_str());
+            ImGui::SameLine();
+            char unign_id[64];
+            snprintf(unign_id, sizeof(unign_id), "Restore##%s", tpl.c_str());
+            if (ImGui::SmallButton(unign_id)) {
+                g_ai_engine->unignoreTemplate(tpl);
+            }
         }
     }
 }

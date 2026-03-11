@@ -750,7 +750,12 @@ public:
 
     void resetAllVision();
 
-
+    // テンプレート無視リスト（誤検出対策）
+    void ignoreTemplate(const std::string& template_id);
+    void unignoreTemplate(const std::string& template_id);
+    bool isTemplateIgnored(const std::string& template_id) const;
+    std::vector<std::string> getIgnoredTemplates() const;
+    void clearIgnoredTemplates();
 
     // Layer 0 support: ユーザー操作通知 → STANDBY状態へ遷移
     void notifyUserInput(const std::string& device_id);

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -288,6 +289,14 @@ public:
                            std::chrono::steady_clock::time_point now =
                                std::chrono::steady_clock::now());
 
+    // ── テンプレート無視リスト ──
+    // 誤検出テンプレートを一時的に無視（次回検出時にスキップ）
+    void ignoreTemplate(const std::string& template_id);
+    void unignoreTemplate(const std::string& template_id);
+    bool isIgnored(const std::string& template_id) const;
+    std::vector<std::string> getIgnoredTemplates() const;
+    void clearIgnoredTemplates();
+
 private:
     VisionDecisionConfig config_;
 
@@ -304,6 +313,9 @@ private:
     // Layer 2 グローバル排他: 全デバイス合計で同時1つまで
     mutable std::atomic<int> layer2_active_count_{0};
     static constexpr int LAYER2_MAX_CONCURRENT = 1; // Ollama はシングルスレッド
+
+    // テンプレート無視リスト
+    std::unordered_set<std::string> ignored_templates_;
 
     // 内部ヘルパー
     DeviceVisionState& getOrCreateState(const std::string& device_id);

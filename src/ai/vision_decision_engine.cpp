@@ -565,6 +565,7 @@ const VisionMatch* VisionDecisionEngine::findBestMatch(
     const VisionMatch* best = nullptr;
     for (const auto& m : matches) {
         if (m.is_error_group) continue;  // errorグループは別処理
+        if (isIgnored(m.template_id)) continue;  // 無視リスト
         if (!best || m.score > best->score) {
             best = &m;
         }
@@ -929,6 +930,34 @@ bool VisionDecisionEngine::checkLayer2Freeze(
     }
 
     return false;
+}
+
+
+// =============================================================================
+// テンプレート無視リスト
+// =============================================================================
+
+void VisionDecisionEngine::ignoreTemplate(const std::string& template_id) {
+    ignored_templates_.insert(template_id);
+    MLOG_INFO("ai.vision", "テンプレート無視追加: %s", template_id.c_str());
+}
+
+void VisionDecisionEngine::unignoreTemplate(const std::string& template_id) {
+    ignored_templates_.erase(template_id);
+    MLOG_INFO("ai.vision", "テンプレート無視解除: %s", template_id.c_str());
+}
+
+bool VisionDecisionEngine::isIgnored(const std::string& template_id) const {
+    return ignored_templates_.count(template_id) > 0;
+}
+
+std::vector<std::string> VisionDecisionEngine::getIgnoredTemplates() const {
+    return std::vector<std::string>(ignored_templates_.begin(), ignored_templates_.end());
+}
+
+void VisionDecisionEngine::clearIgnoredTemplates() {
+    ignored_templates_.clear();
+    MLOG_INFO("ai.vision", "テンプレート無視リストをクリア");
 }
 
 } // namespace mirage::ai
