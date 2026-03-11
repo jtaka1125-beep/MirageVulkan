@@ -286,6 +286,8 @@ bool AoaHidTouch::flush() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool AoaHidTouch::tap(int x, int y, int screen_w, int screen_h) {
+    notifyUserInput();  // Layer 0 support
+
     uint16_t hx = pixel_to_hid_x(x, screen_w);
     uint16_t hy = pixel_to_hid_y(y, screen_h);
 
@@ -303,6 +305,8 @@ bool AoaHidTouch::tap(int x, int y, int screen_w, int screen_h) {
 
 bool AoaHidTouch::swipe(int x1, int y1, int x2, int y2,
                          int screen_w, int screen_h, int duration_ms) {
+    notifyUserInput();  // Layer 0 support
+
     const int interval_ms = 12;  // ~83 Hz
     const int steps = std::max(1, duration_ms / interval_ms);
 
@@ -334,6 +338,8 @@ bool AoaHidTouch::swipe(int x1, int y1, int x2, int y2,
 }
 
 bool AoaHidTouch::long_press(int x, int y, int screen_w, int screen_h, int hold_ms) {
+    notifyUserInput();  // Layer 0 support
+
     uint16_t hx = pixel_to_hid_x(x, screen_w);
     uint16_t hy = pixel_to_hid_y(y, screen_h);
 
@@ -348,6 +354,8 @@ bool AoaHidTouch::long_press(int x, int y, int screen_w, int screen_h, int hold_
 
 bool AoaHidTouch::pinch(int cx, int cy, int start_dist, int end_dist,
                          int screen_w, int screen_h, int duration_ms, int angleDeg100) {  // ISSUE-2
+    notifyUserInput();  // Layer 0 support
+
     const int interval_ms = 12;
     const int steps = std::max(1, duration_ms / interval_ms);
 

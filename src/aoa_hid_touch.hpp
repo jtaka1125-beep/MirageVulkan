@@ -11,6 +11,7 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <functional>
 
 #ifdef USE_LIBUSB
 #include <libusb-1.0/libusb.h>
@@ -100,6 +101,10 @@ public:
     // Two-finger pinch (zoom in/out)
     bool pinch(int cx, int cy, int start_dist, int end_dist, int screen_w, int screen_h, int duration_ms = 400, int angleDeg100 = 0);  // ISSUE-2
 
+    // ── User input callback (Layer 0 support) ──
+    using UserInputCallback = std::function<void()>;
+    void setUserInputCallback(UserInputCallback cb) { user_input_callback_ = std::move(cb); }
+
     // ── Low-level operations (HID coordinates 0-32767) ──
 
     // Touch down (begin contact)
@@ -137,6 +142,15 @@ private:
     // Build report from current contact states
     TouchReport build_report() const;
 
+    // User input callback for Layer 0 support
+    UserInputCallback user_input_callback_;
+
+    // Notify user input (call callback if set)
+    void notifyUserInput() {
+        if (user_input_callback_) {
+            user_input_callback_();
+        }
+    }
 };
 
 } // namespace mirage
