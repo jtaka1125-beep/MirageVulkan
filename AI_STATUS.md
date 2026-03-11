@@ -74,6 +74,14 @@ AndroidのAiJpegSenderからJPEGフレームを受信するTCPサーバー:
 | エンディアン | Big-endian (Java互換) |
 | 最大フレームサイズ | 10MB |
 | 実装 | src/ai/ai_jpeg_receiver.cpp |
+| GUI | AI Engine パネル → "AI Stream (JPEG)" セクション |
+
+### GUI操作
+1. ポート番号を設定（デフォルト: 51200）
+2. 「Start」ボタンでリッスン開始
+3. Android側: `adb forward tcp:51200 tcp:51200`
+4. AiStreamを有効化 → JPEGフレーム受信開始
+5. 統計表示: Frames / KB
 
 使用例:
 ```cpp

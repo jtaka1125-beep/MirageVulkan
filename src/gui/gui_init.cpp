@@ -1192,6 +1192,10 @@ void initializeAI() {
         if (gui) gui->logWarning(u8"AI engine failed to initialize");
         g_ai_engine.reset();
     }
+
+    // Initialize AiJpegReceiver (lazy start from GUI)
+    g_ai_jpeg_receiver = std::make_unique<mirage::ai::AiJpegReceiver>();
+    MLOG_INFO("gui", "AiJpegReceiver initialized (start from GUI)");
 }
 #endif
 

@@ -112,7 +112,7 @@
 
 ## GUI File Line Counts (Updated 2026-03-11)
 - gui_ai_panel.cpp:       815
-- gui_init.cpp:          1223
+- gui_init.cpp:          1227
 - gui_threads.cpp:        736
 - gui_device_control.cpp: 539
 - gui_command.cpp:        504
@@ -120,7 +120,7 @@
 - gui_main.cpp:           360
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4412 lines
+- TOTAL:                 4416 lines
 
 ## Key Decisions Log
 - 2026-03-11: AiJpegReceiver実装（PC側AIストリーム受信）。MirageContext統合。
