@@ -62,6 +62,25 @@
 | llava-phi3 | ~2秒 ✅ | ⚠️ | 現在使用中 |
 | qwen3:0.6b | ~0.5秒 | - | LfmClassifier用 |
 
+
+
+## AiJpegReceiver (PC側) - 2026-03-11追加
+
+AndroidのAiJpegSenderからJPEGフレームを受信するTCPサーバー:
+
+| 項目 | 値 |
+|------|-----|
+| プロトコル | [int32 len][int32 w][int32 h][int64 tsUs][bytes jpeg] |
+| エンディアン | Big-endian (Java互換) |
+| 最大フレームサイズ | 10MB |
+| 実装 | src/ai/ai_jpeg_receiver.cpp |
+
+使用例:
+```cpp
+mirage::ai::AiJpegReceiver receiver;
+receiver.setFrameCallback([](device_id, jpeg, w, h, ts) { ... });
+receiver.start("device_123", 51200);
+```
 ## テスト結果 (2026-03-11)
 - CTest: 32/32 PASSED
 - VDE: 40/40 PASSED
