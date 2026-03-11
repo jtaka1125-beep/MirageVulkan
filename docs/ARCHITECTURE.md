@@ -1,4 +1,4 @@
-# MirageSystem Architecture
+﻿# MirageSystem Architecture
 
 ## Overview
 
@@ -96,7 +96,7 @@ tests/
 └── test_winusb_checker.cpp  # WinUSB driver detection
 
 android/
-├── app/                     # MirageService (AOA accessory)
+├── app/                     # [LEGACY] old monolith (excluded from build)
 └── capture/                 # CaptureActivity (MediaProjection)
 ```
 
@@ -130,6 +130,66 @@ mingw32-make -j4
 ```
 
 Requires: MinGW-w64, Vulkan SDK, libusb-1.0, FFmpeg (avcodec/avformat)
+
+## Vision AI System (3-Layer Architecture)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              3層 Vision AI システム (操作検出ベース)              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Layer 0: STANDBY (待機モード) ← 低負荷                        │
+│  ─────────────────────────────────                             │
+│  - テンプレートマッチング停止                                   │
+│  - GPU負荷: ほぼゼロ                                           │
+│  - 初期状態 & ユーザー操作後の状態                              │
+│      │                                                          │
+│      └─ 操作なし 5秒 ─────────────────────────────────┐        │
+│                                                        ▼        │
+│  Layer 1: IDLE/DETECTED/CONFIRMED/COOLDOWN            │        │
+│  ─────────────────────────────────────────            │        │
+│  - VulkanTemplateMatcher稼働 (GPU)                    │        │
+│  - 状態遷移マシンで自動タップ判定                      │        │
+│      │                                                │        │
+│      ├─ ユーザー操作検出 (AOA HID) ───────────────────┘        │
+│      │   → Layer 0 (STANDBY) に即時復帰                        │
+│      │                                                          │
+│      └─ 90秒マッチなし ──────────────────────────────┐        │
+│                                                        ▼        │
+│  Layer 2: AI並列投票                                           │
+│  ─────────────────────                                         │
+│  - qwen2.5vl:3b + qwen3-vl:4b + Gemini Flash                   │
+│  - 多数決でポップアップ判定                                     │
+│      │                                                          │
+│      └─ 60秒経過 → フリーズ判定 → ホームボタン → Layer 0       │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Layer State Transitions
+
+| From | To | Trigger |
+|------|-----|---------|
+| STANDBY | IDLE | 操作なし 5秒 (layer0_idle_timeout_ms) |
+| IDLE/DETECTED/CONFIRMED | STANDBY | ユーザー操作 (tap/swipe/pinch) |
+| IDLE | DETECTED | テンプレートマッチ (score > threshold) |
+| DETECTED | CONFIRMED | 同一テンプレート N回連続 |
+| CONFIRMED | COOLDOWN | アクション実行後 |
+| COOLDOWN | IDLE | cooldown_ms 経過 |
+| ANY | Layer 2 | 90秒マッチなし |
+| Layer 2 | STANDBY | 60秒フリーズ → ホームボタン |
+
+### Config (config.json)
+
+```json
+"ai": {
+    "enable_layer0": true,
+    "layer0_idle_timeout_ms": 5000,
+    "enable_layer2": true,
+    "layer2_no_match_ms": 90000,
+    "layer2_freeze_timeout_ms": 60000
+}
+```
 
 ## GPU
 
