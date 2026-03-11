@@ -143,4 +143,4 @@
 ## Test Coverage (33 tests registered in CMakeLists.txt)
 - TemplateStoreTest 12, ActionMapperTest 14, WinUsbCheckerTest 14
 - TemplateManifestTest, BandwidthMonitorTest, HybridSenderTest, MirrorReceiverTest
-- VID0ParserTest, ConfigLoaderTest, VisionDecisionEngineTest (40 cases), etc.
+- VID0ParserTest, ConfigLoaderTest, VisionDecisionEngineTest (40 cases), AiJpegReceiverTest (5 cases), etc.

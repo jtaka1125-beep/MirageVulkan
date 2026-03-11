@@ -2088,9 +2088,15 @@ if(BUILD_TESTS)
 
         add_test(NAME AIImprovementsNQRTest COMMAND test_ai_improvements_nqr)
 
-
-
-
+        # AiJpegReceiver unit tests
+        add_executable(test_ai_jpeg_receiver
+            tests/test_ai_jpeg_receiver.cpp
+            src/ai/ai_jpeg_receiver.cpp
+        )
+        target_include_directories(test_ai_jpeg_receiver PRIVATE src)
+        target_link_libraries(test_ai_jpeg_receiver PRIVATE gtest ws2_32)
+        target_compile_definitions(test_ai_jpeg_receiver PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_test(NAME AiJpegReceiverTest COMMAND test_ai_jpeg_receiver)
 
         # BandwidthMonitor unit tests
 
