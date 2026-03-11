@@ -123,6 +123,7 @@
 - TOTAL:                 4365 lines
 
 ## Key Decisions Log
+- 2026-03-11: VERIFYING状態追加（アクション後検証+リトライ）。テンプレート無視リスト追加（永続化+GUI編集）。
 - 2026-03-11: H.265 E2E確認完了。AnnexBSplitter/RtpH264Packetizer HEVC対応確認。LfmClassifier動作確認。TileCompositor削除確認。検出オーバーレイ可視化実装。座標スケーリング実装。7件コミット。
 - 2026-03-10: AIパイプライン実コード確認。Layer 2.5 LfmClassifierモデルをLFM2系→qwen3系に変更済み(日本語対応)。AiStream.kt(Android側AIサブストリーム)実装確認。AI_STATUS.md新規作成。
 - 2026-03-10: ビデオコーデックをH.265/HEVCに確認。実機APK(X1)・ソースコード(MirageVulkan)を直接調査。PC受信側はHEVC自動検出+FFmpegデコード対応済み。VIDEO_PIPELINE_STATUS.md新規作成。
