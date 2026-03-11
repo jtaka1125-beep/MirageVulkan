@@ -1,76 +1,76 @@
 {
-    "network": {
-        "pc_ip": "192.168.0.2",
-        "video_base_port": 60000,
-        "command_base_port": 50000,
-        "tcp_command_port": 50100
-    },
-    "usb_tether": {
-        "android_ip": "192.168.42.129",
-        "pc_subnet": "192.168.42.0/24"
-    },
-    "adb": {
-        "path": "C:/Users/jun/.local/bin/platform-tools/adb.exe",
-        "device_port": 5555,
-        "process_timeout_ms": 30000,
-        "command_timeout_ms": 15000
-    },
-    "gui": {
-        "window_width": 1920,
-        "window_height": 1080,
-        "vsync": true,
-        "font_size": 18.0
-    },
-    "video": {
-        "default_width": 1920,
-        "default_height": 1080
-    },
-    "timeouts": {
-        "reconnect_init_ms": 2000,
-        "reconnect_max_ms": 30000,
-        "usb_timeout_ms": 20,
-        "alive_timeout_ms": 3000,
-        "switch_cooldown_ms": 3000
-    },
-    "thresholds": {
-        "usb_max_latency_ms": 50.0,
-        "usb_recovery_latency_ms": 30.0,
-        "usb_congestion_mbps": 25.0,
-        "rtt_warning_ms": 50.0,
-        "rtt_critical_ms": 200.0
-    },
-    "paths": {
-        "shader_dir": "shaders",
-        "log_file": "",
-        "templates_dir": "templates"
-    },
-    "ai": {
-        "enabled": true,
-        "templates_dir": "templates",
-        "default_threshold": 0.75,
-        "enable_multi_scale": true,
-        "vde_confirm_count": 2,
-        "vde_cooldown_ms": 2000,
-        "vde_debounce_window_ms": 500,
-        "enable_layer0": true,
-        "layer0_idle_timeout_ms": 5000,
-        "enable_layer2": true,
-        "layer2_no_match_frames": 60,
-        "layer2_stuck_frames": 90,
-        "layer2_no_match_ms": 90000,
-        "layer2_cooldown_ms": 10000,
-        "layer2_freeze_timeout_ms": 60000,
-        "layer2_freeze_action": "home_button"
-    },
-    "ocr": {
-        "enabled": false,
-        "language": "eng+jpn"
-    },
-    "ollama": {
-        "host": "127.0.0.1",
-        "port": 11434,
-        "model": "qwen2.5vl:3b",
-        "timeout_ms": 60000,
-        "max_tokens": 64
-    }
+  "network": {
+    "pc_ip": "192.168.0.2",
+    "video_base_port": 60000,
+    "command_base_port": 50000,
+    "tcp_command_port": 50100
+  },
+  "usb_tether": {
+    "android_ip": "192.168.42.129",
+    "pc_subnet": "192.168.42.0/24"
+  },
+  "adb": {
+    "path": "C:/Users/jun/.local/bin/platform-tools/adb.exe",
+    "device_port": 5555,
+    "process_timeout_ms": 30000,
+    "command_timeout_ms": 15000
+  },
+  "gui": {
+    "window_width": 1920,
+    "window_height": 1080,
+    "vsync": true,
+    "font_size": 18.0
+  },
+  "video": {
+    "default_width": 1920,
+    "default_height": 1080
+  },
+  "timeouts": {
+    "reconnect_init_ms": 2000,
+    "reconnect_max_ms": 30000,
+    "usb_timeout_ms": 20,
+    "alive_timeout_ms": 3000,
+    "switch_cooldown_ms": 3000
+  },
+  "thresholds": {
+    "usb_max_latency_ms": 50.0,
+    "usb_recovery_latency_ms": 30.0,
+    "usb_congestion_mbps": 25.0,
+    "rtt_warning_ms": 50.0,
+    "rtt_critical_ms": 200.0
+  },
+  "paths": {
+    "shader_dir": "shaders",
+    "log_file": "",
+    "templates_dir": "templates"
+  },
+  "ai": {
+    "enabled": true,
+    "templates_dir": "templates",
+    "default_threshold": 0.75,
+    "enable_multi_scale": true,
+    "vde_confirm_count": 2,
+    "vde_cooldown_ms": 2000,
+    "vde_debounce_window_ms": 500,
+    "enable_layer0": true,
+    "layer0_idle_timeout_ms": 5000,
+    "enable_layer2": true,
+    "layer2_no_match_frames": 60,
+    "layer2_stuck_frames": 90,
+    "layer2_no_match_ms": 90000,
+    "layer2_cooldown_ms": 10000,
+    "layer2_freeze_timeout_ms": 60000,
+    "layer2_freeze_action": "home_button"
+  },
+  "ocr": {
+    "enabled": false,
+    "language": "eng+jpn"
+  },
+  "ollama": {
+    "host": "127.0.0.1",
+    "port": 11434,
+    "model": "qwen3-vl:4b",
+    "timeout_ms": 60000,
+    "max_tokens": 64
+  }
 }
