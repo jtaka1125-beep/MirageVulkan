@@ -5,6 +5,7 @@
 // =============================================================================
 #include "gui/gui_state.hpp"
 #include "gui/gui_command.hpp"
+#include "gui/gui_device_control.hpp"
 #include "gui_application.hpp"
 #include "adb_device_manager.hpp"
 #include "hybrid_command_sender.hpp"
@@ -19,6 +20,7 @@
 #include "stb_image.h"
 #include <shellapi.h>
 #include "mirage_log.hpp"
+#include "mirage_config.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -250,8 +252,8 @@ void GuiApplication::renderLeftPanel() {
         }
     }
 
-    // Row 2: WinUSB + Learning toggle
-    if (ImGui::Button(u8"WinUSB\u30c9\u30e9\u30a4\u30d0", ImVec2(half_w, 0))) {
+    // Row 2: WinUSB + Macro + AI (3列)
+    if (ImGui::Button(u8"WinUSB\u30c9\u30e9\u30a4\u30d0", ImVec2(third_w, 0))) {
         // Launch install_android_winusb.py with admin elevation via ShellExecute
         logInfo(u8"WinUSB \u30a4\u30f3\u30b9\u30c8\u30fc\u30e9\u30fc\u8d77\u52d5\u4e2d...");
 
@@ -312,47 +314,166 @@ void GuiApplication::renderLeftPanel() {
 
     ImGui::SameLine();
 
-    // Learning toggle button
-    {
-        bool learning = learning_session_.active;
-        if (ImGui::Button(learning ? u8"\u5b66\u7fd2\u505c\u6b62" : u8"\u5b66\u7fd2\u958b\u59cb", ImVec2(half_w, 0))) {
-            if (learning) {
-                stopLearningSession();
-            } else {
-                startLearningSession("Session_" + std::to_string(getCurrentTimeMs()));
-            }
-        }
+    // Macro Editor launch button
+    if (ImGui::Button(u8"\u30de\u30af\u30ed", ImVec2(third_w, 0))) {
+        // Launch macro_editor/app.py
+        logInfo(u8"\u30de\u30af\u30ed\u30a8\u30c7\u30a3\u30bf\u8d77\u52d5\u4e2d...");
+        ShellExecuteA(nullptr, "open", "pythonw",
+            "macro_editor/app.py", "C:\\MirageWork\\MirageVulkan", SW_SHOWNORMAL);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(u8"\u30de\u30af\u30ed\u30a8\u30c7\u30a3\u30bf\u3092\u958b\u304f");
     }
 
-    // Learning status (only when active)
-    if (learning_session_.active) {
-        ImGui::TextColored(ImVec4(0, 1, 0, 1), u8"\u8a18\u9332\u4e2d: %zu\u4ef6", learning_session_.collected_clicks.size());
-        if (ImGui::Button(u8"\u30c7\u30fc\u30bf\u51fa\u529b", ImVec2(half_w, 0))) {
-            exportLearningData();
+    ImGui::SameLine();
+
+    // AI Panel toggle button
+#ifdef USE_AI
+    {
+        bool visible = g_ai_panel_visible.load();
+        const char* label = visible ? u8"AI [\u25cf]" : u8"AI [\u25cb]";
+        if (ImGui::Button(label, ImVec2(third_w, 0))) {
+            g_ai_panel_visible.store(!visible);
         }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(u8"AI\u30a8\u30f3\u30b8\u30f3\u30d1\u30cd\u30eb\u3092\u8868\u793a/\u975e\u8868\u793a");
+        }
+    }
+#else
+    ImGui::BeginDisabled();
+    ImGui::Button(u8"AI", ImVec2(third_w, 0));
+    ImGui::EndDisabled();
+#endif
+
+    // Row 3: Help button (3列目に配置)
+    ImGui::SameLine();
+    if (ImGui::Button(u8"ヘルプ", ImVec2(third_w, 0))) {
+        ImGui::OpenPopup("HelpPopup");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(u8"キーボードショートカットと操作ガイド");
+    }
+
+    // Help popup
+    if (ImGui::BeginPopup("HelpPopup")) {
+        ImGui::Text(u8"■ キーボードショートカット");
+        ImGui::Separator();
+        ImGui::BulletText(u8"F5: スクリーンショット");
+        ImGui::BulletText(u8"F11: フルスクリーン切替");
+        ImGui::BulletText(u8"Esc: フルスクリーン解除");
+        ImGui::BulletText(u8"Space: ミラーリング開始/停止");
+        ImGui::Spacing();
+        ImGui::Text(u8"■ マウス操作");
+        ImGui::Separator();
+        ImGui::BulletText(u8"左クリック: タップ");
+        ImGui::BulletText(u8"右クリック: コンテキストメニュー");
+        ImGui::BulletText(u8"ドラッグ: スワイプ");
+        ImGui::BulletText(u8"ホイール: スクロール");
+        ImGui::Spacing();
+        ImGui::Text(u8"■ AI機能");
+        ImGui::Separator();
+        ImGui::BulletText(u8"AIボタン: パネル表示切替");
+        ImGui::BulletText(u8"Learning Mode: テンプレート収集");
+        ImGui::BulletText(u8"VDE: ポップアップ自動検出/タップ");
+        ImGui::EndPopup();
     }
 
     ImGui::Spacing();
     ImGui::Separator();
 
-    // === Statistics ===
-    ImGui::Text(u8"統計");
+    // === Devices ===
+    ImGui::Text(u8"デバイス");
     ImGui::Separator();
 
     {
+        // Get device control info
+        auto devices = mirage::gui::device_control::getAllDeviceControlInfo();
+        
+        if (devices.empty()) {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), u8"接続なし");
+        } else {
+            for (const auto& dev : devices) {
+                ImGui::PushID(dev.device_id.c_str());
+                
+                // Device name line
+                ImGui::Text("%s", dev.display_name.c_str());
+                
+                // Status line with toggle buttons
+                ImGui::Indent(10);
+                
+                // AOA toggle button
+                bool aoa = dev.in_aoa_mode;
+                bool aoa_cfg = mirage::config::getSystemConfig().aoa_enabled;
+                if (aoa) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.6f, 0.1f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+                    ImGui::SmallButton("AOA ON");
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("AOA mode active (USB direct)");
+                    }
+                } else if (aoa_cfg) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.5f, 0.4f, 1.0f));
+                    if (ImGui::SmallButton("AOA OFF")) {
+                        mirage::gui::device_control::switchDeviceToAOA(dev.device_id);
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to enable AOA mode");
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "AOA:N/A");
+                }
+                
+                ImGui::SameLine();
+                
+                // ADB toggle button
+                if (dev.has_adb) {
+                    const char* adb_label = dev.adb_type == "usb" ? "ADB:USB" : "ADB:WiFi";
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.4f, 0.7f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+                    ImGui::SmallButton(adb_label);
+                    ImGui::PopStyleColor(2);
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.5f, 1.0f));
+                    if (ImGui::SmallButton("ADB OFF")) {
+                        mirage::gui::device_control::connectDeviceADB(dev.device_id);
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to connect ADB");
+                    }
+                }
+                
+                ImGui::SameLine();
+                
+                // Battery
+                if (dev.battery_level >= 0) {
+                    ImVec4 bat_col = dev.battery_level > 20
+                        ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f)
+                        : ImVec4(0.95f, 0.3f, 0.3f, 1.0f);
+                    ImGui::TextColored(bat_col, "%d%%", dev.battery_level);
+                } else {
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "--%");
+                }
+                
+                ImGui::Unindent(10);
+                ImGui::Spacing();
+                ImGui::PopID();
+            }
+        }
+        
+        // Bandwidth summary
         std::lock_guard<std::mutex> lock(devices_mutex_);
-
-        int connected = 0;
         float total_bandwidth = 0;
         for (const auto& [id, device] : devices_) {
             if (device.status != DeviceStatus::Disconnected) {
-                connected++;
                 total_bandwidth += device.bandwidth_mbps;
             }
         }
-
-        ImGui::Text(u8"接続数: %d / %zu", connected, devices_.size());
-        ImGui::Text(u8"合計帯域: %.1f Mbps", total_bandwidth);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), u8"帯域: %.1f Mbps", total_bandwidth);
     }
 
     ImGui::Spacing();

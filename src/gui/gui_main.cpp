@@ -271,7 +271,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
         renderDeviceControlPanel();
 
 #ifdef USE_AI
-        renderAIPanel();
+        if (g_ai_panel_visible.load()) {
+            renderAIPanel();
+        }
 #endif
 
         g_gui->render();

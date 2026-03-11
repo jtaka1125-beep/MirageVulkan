@@ -63,7 +63,9 @@ inline auto& g_macro_api_server       = mirage::ctx().macro_api_server;
 
 #ifdef USE_AI
 inline auto& g_ai_engine              = mirage::ctx().ai_engine;
-inline auto& g_ai_enabled             = mirage::ctx().ai_enabled;
+inline auto& g_ai_enabled              = mirage::ctx().ai_enabled;
+inline auto& g_ai_panel_visible       = mirage::ctx().ai_panel_visible;
+inline auto& g_device_panel_visible   = mirage::ctx().device_panel_visible;
 inline auto& g_learning_mode          = mirage::ctx().learning_mode;
 inline auto& g_ai_jpeg_receiver       = mirage::ctx().ai_jpeg_receiver;
 #endif

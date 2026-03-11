@@ -149,6 +149,8 @@ public:
 #ifdef USE_AI
     std::unique_ptr<mirage::ai::AIEngine> ai_engine;
     std::atomic<bool> ai_enabled{true};
+    std::atomic<bool> ai_panel_visible{true};  // AI Panel表示フラグ
+    std::atomic<bool> device_panel_visible{false};  // Device Control Panel表示フラグ
     std::unique_ptr<mirage::ai::LearningMode> learning_mode;
     std::unique_ptr<mirage::ai::AiJpegReceiver> ai_jpeg_receiver;
 #endif

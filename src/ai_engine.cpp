@@ -21102,6 +21102,8 @@ void AIEngine::resetDeviceVision(const std::string&) {}
 
 void AIEngine::resetAllVision() {}
 
+void AIEngine::clearActionLog() {}
+
 
 
 

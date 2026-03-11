@@ -4,6 +4,7 @@
 // AOA mode switching and ADB connection management
 // =============================================================================
 #include "mirage_log.hpp"
+#include "mirage_config.hpp"
 #include "gui_device_control.hpp"
 #include "gui_state.hpp"
 #include "winusb_checker.hpp"
@@ -168,6 +169,16 @@ int switchAllDevicesToAOA() {
 }
 
 bool switchDeviceToAOA(const std::string& device_id) {
+    // Check if AOA is enabled in config
+    auto& cfg = mirage::config::getSystemConfig();
+    if (!cfg.aoa_enabled) {
+        MLOG_INFO("devctl", "AOA disabled in config, skipping switch for %s", device_id.c_str());
+        if (g_gui) {
+            g_gui->logInfo(u8"AOA無効: 設定で無効化されています");
+        }
+        return false;
+    }
+
     MLOG_INFO("devctl", "Switching device %s to AOA mode...", device_id.c_str());
 
     auto gui = g_gui;
@@ -411,6 +422,11 @@ bool renderDeviceADBButton(const std::string& device_id) {
 }
 
 void renderDeviceControlPanel() {
+    // Check visibility flag
+    if (!g_device_panel_visible.load()) {
+        return;
+    }
+
     // Position in top-right area, below title bar - always set position on first frame
     static bool first_frame = true;
     ImGuiIO& io = ImGui::GetIO();
@@ -418,7 +434,6 @@ void renderDeviceControlPanel() {
 
     if (first_frame) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - panel_width - 10, 30));
-        ImGui::SetNextWindowCollapsed(true);  // Start collapsed
         first_frame = false;
     }
 

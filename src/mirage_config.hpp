@@ -54,6 +54,11 @@ struct MirageConfig {
     int udp_listen_port = 5000;
     int tcp_video_base_port = 50100;
 
+    // AOA Mode Control
+    // Set to false to disable AOA entirely (pure ADB mode)
+    // Useful when Android updates break AOA compatibility
+    bool aoa_enabled = true;
+
     // Default constructor with platform-specific defaults
     MirageConfig() {
         initDefaults();
@@ -207,6 +212,7 @@ inline bool loadConfigFile(const std::string& path, MirageConfig& config) {
         else if (key == "max_video_height") config.max_video_height = std::stoi(value);
         else if (key == "udp_listen_port") config.udp_listen_port = std::stoi(value);
         else if (key == "tcp_video_base_port") config.tcp_video_base_port = std::stoi(value);
+        else if (key == "aoa_enabled") config.aoa_enabled = (value == "true" || value == "1");
     }
 
     return true;
@@ -225,6 +231,7 @@ inline void applyEnvironmentOverrides(MirageConfig& config) {
     if ((val = std::getenv("MIRAGE_AOA_SWITCH"))) config.aoa_switch_path = val;
     if ((val = std::getenv("MIRAGE_VIDEO_FPS"))) config.default_video_fps = std::stoi(val);
     if ((val = std::getenv("MIRAGE_UDP_PORT"))) config.udp_listen_port = std::stoi(val);
+    if ((val = std::getenv("MIRAGE_AOA_ENABLED"))) config.aoa_enabled = (std::string(val) == "true" || std::string(val) == "1");
 }
 
 } // namespace mirage::config

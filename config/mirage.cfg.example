@@ -1,0 +1,45 @@
+# =============================================================================
+# MirageSystem Configuration File
+# =============================================================================
+# Copy this file to 'mirage.cfg' and modify as needed.
+# Environment variables (MIRAGE_*) take precedence over this file.
+# =============================================================================
+
+# Logging
+log_directory = C:\MirageWork\logs
+log_filename = mirage_vulkan.log
+log_to_console = true
+log_to_file = true
+
+# ADB executable path (empty = use 'adb' from PATH)
+# adb_path = C:\android-sdk\platform-tools\adb.exe
+
+# Temporary directory for screenshots
+# temp_directory = C:\Temp
+
+# Video settings
+default_video_fps = 30
+max_video_width = 1920
+max_video_height = 1080
+
+# Network
+udp_listen_port = 5000
+tcp_video_base_port = 50100
+
+# =============================================================================
+# AOA (Android Open Accessory) Mode Control
+# =============================================================================
+# Set to false to disable AOA entirely and use pure ADB mode.
+# Useful when:
+#   - Android update breaks AOA compatibility
+#   - WinUSB driver issues
+#   - Prefer WiFi ADB over USB AOA
+#
+# When aoa_enabled = false:
+#   - AOA buttons are hidden from UI
+#   - All device control uses ADB (USB or WiFi)
+#   - No USB driver installation required
+#
+# Environment variable: MIRAGE_AOA_ENABLED=false
+# =============================================================================
+aoa_enabled = true

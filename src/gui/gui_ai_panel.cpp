@@ -166,7 +166,7 @@ static void renderEngineControl() {
     if (ImGui::SmallButton("Reset##ai")) {
         g_ai_engine->reset();
         g_ai_engine->resetStats();
-        g_ai_engine->clearActionLog();
+        
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("統計・実行ログ・VisionDecisionEngine状態をリセット");
