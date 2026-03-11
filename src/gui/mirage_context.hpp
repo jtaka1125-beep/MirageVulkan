@@ -35,6 +35,7 @@
 #ifdef USE_AI
 #include "ai_engine.hpp"
 #include "ai/learning_mode.hpp"
+#include "ai/ai_jpeg_receiver.hpp"
 #endif
 #ifdef MIRAGE_OCR_ENABLED
 #include "frame_analyzer.hpp"
@@ -149,6 +150,7 @@ public:
     std::unique_ptr<mirage::ai::AIEngine> ai_engine;
     std::atomic<bool> ai_enabled{true};
     std::unique_ptr<mirage::ai::LearningMode> learning_mode;
+    std::unique_ptr<mirage::ai::AiJpegReceiver> ai_jpeg_receiver;
 #endif
 
 #ifdef MIRAGE_OCR_ENABLED
