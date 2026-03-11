@@ -5,7 +5,6 @@ deploy_apk.py - APKビルド→全端末デプロイ→起動→権限承認 ワ
 Usage:
     python deploy_apk.py                        # 全モジュール ビルド+デプロイ
     python deploy_apk.py --module capture       # captureのみ
-    python deploy_apk.py --module accessory     # accessoryのみ
     python deploy_apk.py --skip-build           # ビルドスキップ（既存APKをデプロイ）
     python deploy_apk.py --debug                # debugビルド
     python deploy_apk.py --no-backup            # バックアップをスキップ
@@ -20,15 +19,12 @@ import glob
 
 ANDROID_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "android")
 
-# NOTE: "app" (旧モノリス) は 2026-02-24 に :capture + :accessory に分割済み。
-# android/app/ ソースは参照用に保持するが、settings.gradle.kts から除外済み。
+# NOTE: :app (旧モノリス) は 2026-02-24 に :capture へ統合。
+# NOTE: :accessory は 2026-03-08 に :capture へマージ済み (settings.gradle.kts 参照)。
+# 現在は :capture (com.mirage.capture) のみがアクティブ。
+# android/app/ android/accessory/ は参照用残骸。
+# DEPRECATED: "accessory" モジュールは削除済み。--module accessory は無効。
 MODULES = {
-    "accessory": {
-        "package": "com.mirage.accessory",
-        "activity": "com.mirage.accessory.ui.AccessoryActivity",
-        "apk_release": "accessory/build/outputs/apk/release/accessory-release.apk",
-        "apk_debug": "accessory/build/outputs/apk/debug/accessory-debug.apk",
-    },
     "capture": {
         "package": "com.mirage.capture",
         "activity": None,  # サービスのみ、Activity起動不要（ADB broadcastで制御）
@@ -137,15 +133,14 @@ def grant_permissions(devices):
             capture_output=True, text=True, timeout=15
         ).stdout.strip()
 
-        # MirageAccessory の AccessibilityService 有効化
-        acc_svc = "com.mirage.accessory/com.mirage.accessory.access.MirageAccessibilityService"
+        # MirageCapture の AccessibilityService 有効化 (accessoryはcaptureに統合済み)
+        acc_svc = "com.mirage.capture/com.mirage.capture.access.MirageAccessibilityService"
         run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "settings", "put", "secure",
              "enabled_accessibility_services", acc_svc], timeout=15)
 
-        # バッテリー最適化除外 (capture + accessory)
-        for pkg in ["com.mirage.capture", "com.mirage.accessory"]:
-            run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "dumpsys", "deviceidle", "whitelist",
-                 f"+{pkg}"], timeout=15)
+        # バッテリー最適化除外 (capture のみ、accessoryは統合済み)
+        run([r"C:/Users/jun/.local/bin/platform-tools/adb.exe", "-s", serial, "shell", "dumpsys", "deviceidle", "whitelist",
+             "+com.mirage.capture"], timeout=15)
 
         print(f"  [{model}] AccessibilityService + バッテリー最適化除外 設定済み")
 
