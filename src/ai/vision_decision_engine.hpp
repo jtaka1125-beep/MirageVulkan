@@ -297,6 +297,10 @@ public:
     std::vector<std::string> getIgnoredTemplates() const;
     void clearIgnoredTemplates();
 
+    // 永続化: JSONファイルへ保存/読込
+    void saveIgnoredTemplates(const std::string& path) const;
+    void loadIgnoredTemplates(const std::string& path);
+
 private:
     VisionDecisionConfig config_;
 

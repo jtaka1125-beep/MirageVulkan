@@ -8884,6 +8884,12 @@ if (decision.should_act && can_send) {
     void clearIgnoredTemplates() {
         if (vision_engine_) vision_engine_->clearIgnoredTemplates();
     }
+    void saveIgnoredTemplates(const std::string& path) const {
+        if (vision_engine_) vision_engine_->saveIgnoredTemplates(path);
+    }
+    void loadIgnoredTemplates(const std::string& path) {
+        if (vision_engine_) vision_engine_->loadIgnoredTemplates(path);
+    }
 
     // Layer 0 support: ユーザー操作通知
     void notifyUserInput(const std::string& device_id) {
@@ -19498,6 +19504,14 @@ std::vector<std::string> AIEngine::getIgnoredTemplates() const {
 
 void AIEngine::clearIgnoredTemplates() {
     if (impl_) impl_->clearIgnoredTemplates();
+}
+
+void AIEngine::saveIgnoredTemplates(const std::string& path) const {
+    if (impl_) impl_->saveIgnoredTemplates(path);
+}
+
+void AIEngine::loadIgnoredTemplates(const std::string& path) {
+    if (impl_) impl_->loadIgnoredTemplates(path);
 }
 
 

@@ -28,6 +28,13 @@ using namespace mirage::gui::state;
 static constexpr int VS_IDLE           = 0;
 static constexpr int VS_DETECTED       = 1;
 static constexpr int VS_CONFIRMED      = 2;
+
+// 無視リスト自動保存ヘルパー
+static void saveIgnoreList() {
+    if (!g_ai_engine) return;
+    // templates_dir は config から取得するか、デフォルトパスを使用
+    g_ai_engine->saveIgnoredTemplates("templates/ignored_templates.json");
+}
 static constexpr int VS_COOLDOWN       = 3;
 static constexpr int VS_ERROR_RECOVERY = 4;
 
@@ -373,6 +380,7 @@ static void renderMatchResults() {
             } else {
                 g_ai_engine->ignoreTemplate(m.template_id);
             }
+            saveIgnoreList();
         }
         if (is_ignored) {
             ImGui::PopStyleColor();
@@ -382,24 +390,78 @@ static void renderMatchResults() {
         }
     }
 
-    // 無視リスト表示
+    // 無視リスト表示 & 編集ボタン
     auto ignored = g_ai_engine->getIgnoredTemplates();
-    if (!ignored.empty()) {
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Ignored (%d)", (int)ignored.size());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Edit...##ign_edit")) {
+        ImGui::OpenPopup("IgnoreListEditor");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("無視リストを編集");
+    }
+
+    // 無視リスト編集ポップアップ
+    if (ImGui::BeginPopup("IgnoreListEditor")) {
+        ImGui::Text("Ignored Templates");
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Ignored (%d):", (int)ignored.size());
+
+        // 新規追加
+        static char new_ignore[64] = "";
+        ImGui::SetNextItemWidth(150);
+        ImGui::InputText("##new_ign", new_ignore, sizeof(new_ignore));
         ImGui::SameLine();
-        if (ImGui::SmallButton("Clear All##ign")) {
-            g_ai_engine->clearIgnoredTemplates();
-        }
-        for (const auto& tpl : ignored) {
-            ImGui::BulletText("%s", tpl.c_str());
-            ImGui::SameLine();
-            char unign_id[64];
-            snprintf(unign_id, sizeof(unign_id), "Restore##%s", tpl.c_str());
-            if (ImGui::SmallButton(unign_id)) {
-                g_ai_engine->unignoreTemplate(tpl);
+        if (ImGui::SmallButton("Add##ign_add")) {
+            if (strlen(new_ignore) > 0) {
+                g_ai_engine->ignoreTemplate(new_ignore);
+                saveIgnoreList();
+                new_ignore[0] = ' ';
             }
         }
+
+        ImGui::Separator();
+
+        // 既存リスト
+        auto current_ignored = g_ai_engine->getIgnoredTemplates();
+        if (current_ignored.empty()) {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(empty)");
+        } else {
+            for (const auto& tpl : current_ignored) {
+                ImGui::BulletText("%s", tpl.c_str());
+                ImGui::SameLine(200);
+                char del_id[64];
+                snprintf(del_id, sizeof(del_id), "Remove##%s", tpl.c_str());
+                if (ImGui::SmallButton(del_id)) {
+                    g_ai_engine->unignoreTemplate(tpl);
+                    saveIgnoreList();
+                }
+            }
+        }
+
+        ImGui::Separator();
+        if (ImGui::SmallButton("Clear All##ign_clr")) {
+            g_ai_engine->clearIgnoredTemplates();
+            saveIgnoreList();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Close##ign_close")) {
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // コンパクト表示: 無視中テンプレートをインライン表示（最大3件）
+    if (!ignored.empty()) {
+        std::string preview;
+        for (size_t i = 0; i < std::min(ignored.size(), (size_t)3); ++i) {
+            if (i > 0) preview += ", ";
+            preview += ignored[i];
+        }
+        if (ignored.size() > 3) preview += ", ...";
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.4f, 0.4f, 1.0f), "[%s]", preview.c_str());
     }
 }
 

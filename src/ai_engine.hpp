@@ -756,6 +756,8 @@ public:
     bool isTemplateIgnored(const std::string& template_id) const;
     std::vector<std::string> getIgnoredTemplates() const;
     void clearIgnoredTemplates();
+    void saveIgnoredTemplates(const std::string& path) const;
+    void loadIgnoredTemplates(const std::string& path);
 
     // Layer 0 support: ユーザー操作通知 → STANDBY状態へ遷移
     void notifyUserInput(const std::string& device_id);

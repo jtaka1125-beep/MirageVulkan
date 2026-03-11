@@ -26,6 +26,7 @@
 #include "mirage_log.hpp"
 #include "event_bus.hpp"
 #include <algorithm>
+#include <fstream>
 
 namespace mirage::ai {
 
@@ -958,6 +959,48 @@ std::vector<std::string> VisionDecisionEngine::getIgnoredTemplates() const {
 void VisionDecisionEngine::clearIgnoredTemplates() {
     ignored_templates_.clear();
     MLOG_INFO("ai.vision", "テンプレート無視リストをクリア");
+}
+
+
+void VisionDecisionEngine::saveIgnoredTemplates(const std::string& path) const {
+    std::ofstream ofs(path);
+    if (!ofs) {
+        MLOG_WARN("ai.vision", "無視リスト保存失敗: %s", path.c_str());
+        return;
+    }
+    ofs << "{" << std::endl;
+    ofs << "  \"ignored_templates\": [" << std::endl;
+    bool first = true;
+    for (const auto& tpl : ignored_templates_) {
+        if (!first) ofs << "," << std::endl;
+        ofs << "    \"" << tpl << "\"";
+        first = false;
+    }
+    ofs << std::endl << "  ]" << std::endl;
+    ofs << "}" << std::endl;
+    MLOG_INFO("ai.vision", "無視リスト保存: %s (%d件)", path.c_str(), (int)ignored_templates_.size());
+}
+
+void VisionDecisionEngine::loadIgnoredTemplates(const std::string& path) {
+    std::ifstream ifs(path);
+    if (!ifs) {
+        // ファイルなし = 初回起動、エラーではない
+        return;
+    }
+    ignored_templates_.clear();
+    std::string line;
+    while (std::getline(ifs, line)) {
+        // 簡易JSONパース: "template_name" を抽出
+        size_t start = line.find('"');
+        if (start == std::string::npos) continue;
+        size_t end = line.find('"', start + 1);
+        if (end == std::string::npos) continue;
+        std::string tpl = line.substr(start + 1, end - start - 1);
+        if (tpl != "ignored_templates") {
+            ignored_templates_.insert(tpl);
+        }
+    }
+    MLOG_INFO("ai.vision", "無視リスト読込: %s (%d件)", path.c_str(), (int)ignored_templates_.size());
 }
 
 } // namespace mirage::ai

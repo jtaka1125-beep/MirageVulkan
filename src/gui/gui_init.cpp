@@ -1165,6 +1165,10 @@ void initializeAI() {
             if (gui) gui->logInfo(u8"AI templates loaded: " + std::to_string(stats.templates_loaded));
         }
 
+        // 無視リスト読込 (永続化)
+        std::string ignore_path = ai_config.templates_dir + "/ignored_templates.json";
+        g_ai_engine->loadIgnoredTemplates(ignore_path);
+
         // NOTE: AI繧｢繧ｯ繧ｷ繝ｧ繝ｳ螳溯｡後・EventBus邨檎罰繝代う繝励Λ繧､繝ｳ
         // (decideAction 竊・TapCommandEvent/KeyCommandEvent 竊・gui_command雉ｼ隱ｭ)
         // action_callback_縺ｯ蠕梧婿莠呈鋤繝ｻ繝ｭ繧ｰ逕ｨ縺ｮ縺ｿ
