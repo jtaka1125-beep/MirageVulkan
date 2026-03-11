@@ -290,7 +290,15 @@ static void updateSlotReceiverFrames(const std::shared_ptr<gui::GuiApplication>&
                                     o.x = m.x; o.y = m.y;
                                     o.w = m.w; o.h = m.h;
                                     o.score = m.score;
-                                    o.color = 0;
+                                    o.layer = m.layer;
+                                    // レイヤー別色: L1=緑, L2=黄, L3=マゼンタ
+                                    if (m.layer == 3) {
+                                        o.color = 0xC8FF00FF;  // マゼンタ
+                                    } else if (m.layer == 2) {
+                                        o.color = 0xC800FFFF;  // 黄
+                                    } else {
+                                        o.color = 0;  // デフォルト (スコア基準)
+                                    }
                                     overlays.push_back(o);
                                 }
                                 gui->updateDeviceOverlays(id, overlays);
@@ -557,11 +565,63 @@ void deviceUpdateThread() {
             lastStatsTime = now;
         }
 
+        // =================================================================
+        // Auto IDR Request: Check for stale frames and request IDR
+        // =================================================================
+        {
+            static std::unordered_map<std::string, uint64_t> last_idr_request_ms;
+            constexpr uint64_t STALE_FRAME_TIMEOUT_MS = 3000;   // 3秒更新なしでIDR要求
+            constexpr uint64_t IDR_REQUEST_COOLDOWN_MS = 5000;  // IDR要求のクールダウン
+
+            const uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+
+            auto device_ids = gui->getDeviceIds();
+            for (const auto& device_id : device_ids) {
+                const uint64_t last_update = gui->getDeviceLastTextureUpdateMs(device_id);
+                if (last_update == 0) continue;  // まだフレームを受信していない
+
+                const uint64_t stale_ms = now_ms - last_update;
+                if (stale_ms > STALE_FRAME_TIMEOUT_MS) {
+                    // クールダウンチェック
+                    uint64_t last_req = 0;
+                    auto it = last_idr_request_ms.find(device_id);
+                    if (it != last_idr_request_ms.end()) {
+                        last_req = it->second;
+                    }
+
+                    if (now_ms - last_req > IDR_REQUEST_COOLDOWN_MS) {
+                        last_idr_request_ms[device_id] = now_ms;
+
+                        // HybridCommandSender経由でIDR要求
+                        if (g_hybrid_cmd) {
+                            g_hybrid_cmd->send_video_idr(device_id);
+                            MLOG_INFO("AutoIDR", "Requested IDR for %s (stale %llu ms)",
+                                      device_id.c_str(), stale_ms);
+                        }
+
+                        // ADB broadcast経由でもIDR要求（冗長だが確実）
+                        if (g_adb_manager) {
+                            auto devs = g_adb_manager->getUniqueDevices();
+                            for (const auto& d : devs) {
+                                if (d.hardware_id == device_id && !d.usb_serial.empty()) {
+                                    std::string cmd = "adb -s " + d.usb_serial +
+                                        " shell am broadcast -a com.mirage.ACTION_VIDEO_IDR";
+                                    execHidden(cmd);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         updateSlotReceiverFrames(gui);
         registerAndUpdateUsbDevices(gui);
         updateTcpReceiverFrames(gui);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        std::this_thread::sleep_for(std::chrono::milliseconds(22));  // 45fps GUI limit
     }
   } catch (const std::exception& e) {
     MLOG_ERROR("threads", "deviceUpdateThread exception: %s", e.what());

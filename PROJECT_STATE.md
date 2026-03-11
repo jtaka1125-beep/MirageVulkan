@@ -117,14 +117,14 @@
 ## GUI File Line Counts (Updated 2026-03-11)
 - gui_ai_panel.cpp:       663
 - gui_init.cpp:          1219
-- gui_threads.cpp:        728
+- gui_threads.cpp:        736
 - gui_device_control.cpp: 539
 - gui_command.cpp:        504
 - gui_window.cpp:         224
 - gui_main.cpp:           360
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4248 lines
+- TOTAL:                 4256 lines
 
 ## Key Decisions Log
 - 2026-03-10: AIパイプライン実コード確認。Layer 2.5 LfmClassifierモデルをLFM2系→qwen3系に変更済み(日本語対応)。AiStream.kt(Android側AIサブストリーム)実装確認。AI_STATUS.md新規作成。

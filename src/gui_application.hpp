@@ -101,6 +101,7 @@ struct DeviceInfo {
         int x, y, w, h;
         float score;
         uint32_t color;  // ABGR
+        int layer = 1;   // 検出レイヤー: 1=Template, 2=LLM(freeze), 3=LLM(popup)
     };
     std::vector<MatchOverlay> overlays;
     // Freeze diagnostics (thread-safe counters)
@@ -255,7 +256,7 @@ struct GuiConfig {
     int sub_border_width = 3;
     
     // Log
-    int max_log_entries = 1000;
+    int max_log_entries = 500;  // reduced for performance
     bool auto_scroll_log = true;
 };
 
@@ -302,7 +303,24 @@ public:
         int h = d.expected_height > 0 ? d.expected_height : d.texture_height;
         return {w, h};
     }
-    
+    // Get last texture update time (for stale frame detection / auto IDR)
+    uint64_t getDeviceLastTextureUpdateMs(const std::string& id) const {
+        std::lock_guard<std::mutex> lock(devices_mutex_);
+        auto it = devices_.find(id);
+        if (it == devices_.end()) return 0;
+        return it->second.last_texture_update_ms.load(std::memory_order_relaxed);
+    }
+    // Get all device IDs
+    std::vector<std::string> getDeviceIds() const {
+        std::lock_guard<std::mutex> lock(devices_mutex_);
+        std::vector<std::string> ids;
+        ids.reserve(devices_.size());
+        for (const auto& [id, _] : devices_) {
+            ids.push_back(id);
+        }
+        return ids;
+    }
+
     // Device updates
     void updateDeviceStatus(const std::string& id, DeviceStatus status);
     // Zero-copy tiled upload: top/bot tiles -> staging directly

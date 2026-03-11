@@ -5049,6 +5049,26 @@ public:
         return max_sim;
     }
 
+    // Layer 2/3 検出結果をオーバーレイ用に追加
+    void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+        AIEngine::MatchRect rect;
+        rect.template_id = "layer" + std::to_string(layer_num) + "_detection";
+        rect.label = "[L" + std::to_string(layer_num) + "] " + label;
+        rect.x = std::max(0, x - 80);
+        rect.y = std::max(0, y - 80);
+        rect.w = 160;
+        rect.h = 160;
+        rect.center_x = x;
+        rect.center_y = y;
+        rect.score = 1.0f;
+        rect.layer = layer_num;
+
+        std::lock_guard<std::mutex> lock(layer2_matches_mutex_);
+        layer2_matches_.clear();  // 最新の検出のみ保持
+        layer2_matches_.push_back(rect);
+        layer2_last_time_ = std::chrono::steady_clock::now();
+    }
+
     // Layer 3 検出成功時にテンプレートをファイル保存 & ランタイム登録
 
 
@@ -7265,7 +7285,8 @@ if (decision.should_act && can_send) {
 
                             registerLayer2Template(l2, rgba, width, height);
 
-
+                            // オーバーレイ表示用に検出を追加
+                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
 
                         }
 
@@ -7553,7 +7574,8 @@ if (decision.should_act && can_send) {
 
                             registerLayer2Template(l2, rgba, width, height);
 
-
+                            // オーバーレイ表示用に検出を追加
+                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
 
                         }
 
@@ -8352,38 +8374,25 @@ if (decision.should_act && can_send) {
 
 
     std::vector<AIEngine::MatchRect> getLastMatches() const {
+        std::vector<AIEngine::MatchRect> result;
 
+        // Layer 1 (テンプレートマッチング) 結果
+        {
+            std::lock_guard<std::mutex> lock(matches_mutex_);
+            result = last_matches_;
+        }
 
+        // Layer 2/3 (LLM) 結果を追加（3秒以内の検出のみ）
+        {
+            std::lock_guard<std::mutex> lock(layer2_matches_mutex_);
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - layer2_last_time_).count();
+            if (elapsed < 3000) {  // 3秒間表示
+                result.insert(result.end(), layer2_matches_.begin(), layer2_matches_.end());
+            }
+        }
 
-
-
-
-
-
-
-
-
-
-
-
-
-        std::lock_guard<std::mutex> lock(matches_mutex_);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        return last_matches_;
+        return result;
 
 
 
@@ -17991,6 +18000,9 @@ private:
 
 
     std::vector<AIEngine::MatchRect> last_matches_;
+    std::vector<AIEngine::MatchRect> layer2_matches_;  // Layer 2/3 (LLM) 検出結果
+    mutable std::mutex layer2_matches_mutex_;
+    std::chrono::steady_clock::time_point layer2_last_time_;  // 最終検出時刻
 
     // Layer3 自動登録テンプレートの重複検出用キャッシュ
     struct Layer3TemplateCache {

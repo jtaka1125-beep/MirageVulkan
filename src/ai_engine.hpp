@@ -682,7 +682,7 @@ public:
 
         float score = 0.0f;
 
-
+        int layer = 1;          // 検出レイヤー: 1=Template, 2=LLM(freeze), 3=LLM(popup)
 
     };
 
