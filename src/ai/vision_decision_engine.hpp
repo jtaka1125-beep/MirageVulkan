@@ -67,13 +67,13 @@ struct VisionDecisionConfig {
     float ewma_alpha       = 0.40f;  // 平滑化係数 (0=強平滑, 1=生スコアそのまま)
     float ewma_confirm_thr = 0.60f;  // EWMA が この値以上でないと CONFIRMED 不可
     // ── Layer 2: Ollama LLM Vision ──
-    bool enable_layer2 = false;      // Layer 2 (LLM Vision) を有効化
-    int layer2_cooldown_ms = 30000;  // Layer 2 呼び出し後の冷却時間(ms) - LLMは重いので長め
-    int layer2_freeze_timeout_ms = 60000; // Layer 2 で 60秒経過 → フリーズ判定
+    bool enable_layer3 = false;      // Layer 2 (LLM Vision) を有効化
+    int layer3_cooldown_ms = 30000;  // Layer 2 呼び出し後の冷却時間(ms) - LLMは重いので長め
+    int layer3_freeze_timeout_ms = 60000; // Layer 2 で 60秒経過 → フリーズ判定
     // ── Layer 2 トリガー閾値 ──
-    int layer2_no_match_frames = 150; // 連続マッチなしフレーム数 (~5秒@30fps)
-    int layer2_stuck_frames    = 300; // 同一テンプレート継続フレーム数 (~10秒@30fps)
-    int layer2_no_match_ms     = 90000;// 時間ベーストリガー (90秒)
+    int layer3_no_match_frames = 150; // 連続マッチなしフレーム数 (~5秒@30fps)
+    int layer3_stuck_frames    = 300; // 同一テンプレート継続フレーム数 (~10秒@30fps)
+    int layer3_no_match_ms     = 90000;// 時間ベーストリガー (90秒)
     // ── アクション検証 (VERIFYING状態) ──
     bool enable_verify = false;       // アクション後の検証を有効化（デフォルトOFF=後方互換）
     int  verify_delay_ms = 500;       // アクション実行後、検証開始までの待機時間(ms)
@@ -132,7 +132,7 @@ struct DebounceKeyHash {
 // =============================================================================
 
 // Layer 2 非同期タスク状態
-struct Layer2Task {
+struct Layer3Task {
     std::future<OllamaVisionResult> future;
     std::chrono::steady_clock::time_point start_time;
     int frame_width = 0;
@@ -153,9 +153,9 @@ struct DeviceVisionState {
     float ewma_score = 0.0f;              // テンプレート存在感の指数移動平均
     std::string ewma_template_id;          // EWMA追跡中のテンプレートID
     // ── Layer 2: LLM Vision (非同期) ──
-    std::chrono::steady_clock::time_point layer2_last_call;  // Layer 2最終呼び出し時刻
-    std::chrono::steady_clock::time_point layer2_start_time; // Layer 2 開始時刻 (フリーズ検出用)
-    std::shared_ptr<Layer2Task> layer2_task;  // 実行中の非同期タスク
+    std::chrono::steady_clock::time_point layer3_last_call;  // Layer 2最終呼び出し時刻
+    std::chrono::steady_clock::time_point layer3_start_time; // Layer 2 開始時刻 (フリーズ検出用)
+    std::shared_ptr<Layer3Task> layer3_task;  // 実行中の非同期タスク
     // ── Layer 2 トリガー条件 ──
     int  consecutive_no_match = 0;        // 連続マッチなしフレーム数
     int  consecutive_same_match = 0;      // 同一テンプレート継続フレーム数
@@ -232,7 +232,7 @@ public:
     void setOllamaVision(std::shared_ptr<OllamaVision> ollama);
 
     // Layer 2検出結果
-    struct Layer2Result {
+    struct Layer3Result {
         bool has_result = false;     // 結果があるか
         bool found = false;          // ポップアップ検出したか
         std::string type;            // ad/permission/error/notification/other
@@ -244,28 +244,28 @@ public:
 
     // Layer 2を非同期で起動（fire & forget）
     // @return true: 起動成功, false: 既に実行中/冷却中/無効
-    bool launchLayer2Async(const std::string& device_id,
+    bool launchLayer3Async(const std::string& device_id,
                            const uint8_t* rgba, int width, int height,
                            std::chrono::steady_clock::time_point now =
                                std::chrono::steady_clock::now());
 
     // Layer 2の結果をポーリング（毎フレーム呼び出し）
     // 完了していれば結果を返す、未完了なら has_result=false
-    Layer2Result pollLayer2Result(const std::string& device_id);
+    Layer3Result pollLayer3Result(const std::string& device_id);
 
     // Layer 2が実行中かチェック
-    bool isLayer2Running(const std::string& device_id) const;
+    bool isLayer3Running(const std::string& device_id) const;
 
     // Layer 2が冷却中かチェック
-    bool isLayer2OnCooldown(const std::string& device_id,
+    bool isLayer3OnCooldown(const std::string& device_id,
                             std::chrono::steady_clock::time_point now =
                                 std::chrono::steady_clock::now()) const;
 
     // Layer 2をキャンセル（結果を破棄）
-    void cancelLayer2(const std::string& device_id);
+    void cancelLayer3(const std::string& device_id);
 
     // Layer 2トリガー条件を満たしているか判定
-    bool shouldTriggerLayer2(const std::string& device_id,
+    bool shouldTriggerLayer3(const std::string& device_id,
                               std::chrono::steady_clock::time_point now =
                                   std::chrono::steady_clock::now()) const;
 
@@ -285,7 +285,7 @@ public:
     bool isStandby(const std::string& device_id) const;
 
     // Layer 2 フリーズ検出 (60秒経過)
-    bool checkLayer2Freeze(const std::string& device_id,
+    bool checkLayer3Freeze(const std::string& device_id,
                            std::chrono::steady_clock::time_point now =
                                std::chrono::steady_clock::now());
 
@@ -315,8 +315,8 @@ private:
     std::shared_ptr<OllamaVision> ollama_vision_;
 
     // Layer 2 グローバル排他: 全デバイス合計で同時1つまで
-    mutable std::atomic<int> layer2_active_count_{0};
-    static constexpr int LAYER2_MAX_CONCURRENT = 1; // Ollama はシングルスレッド
+    mutable std::atomic<int> layer3_active_count_{0};
+    static constexpr int LAYER3_MAX_CONCURRENT = 1; // Ollama はシングルスレッド
 
     // テンプレート無視リスト
     std::unordered_set<std::string> ignored_templates_;

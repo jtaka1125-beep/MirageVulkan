@@ -2510,11 +2510,11 @@ public:
 
 
 
-        vde_config.enable_layer2          = config.vde_enable_layer3;
-        vde_config.layer2_no_match_frames = config.vde_layer3_no_match_frames;
-        vde_config.layer2_stuck_frames    = config.vde_layer3_stuck_frames;
-        vde_config.layer2_no_match_ms     = config.vde_layer3_no_match_ms;
-        vde_config.layer2_cooldown_ms     = config.vde_layer3_cooldown_ms;
+        vde_config.enable_layer3          = config.vde_enable_layer3;
+        vde_config.layer3_no_match_frames = config.vde_layer3_no_match_frames;
+        vde_config.layer3_stuck_frames    = config.vde_layer3_stuck_frames;
+        vde_config.layer3_no_match_ms     = config.vde_layer3_no_match_ms;
+        vde_config.layer3_cooldown_ms     = config.vde_layer3_cooldown_ms;
 
 
 
@@ -5050,7 +5050,7 @@ public:
     }
 
     // Layer 2/3 検出結果をオーバーレイ用に追加
-    void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+    void addLayer3Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
         AIEngine::MatchRect rect;
         rect.template_id = "layer" + std::to_string(layer_num) + "_detection";
         rect.label = "[L" + std::to_string(layer_num) + "] " + label;
@@ -5063,18 +5063,18 @@ public:
         rect.score = 1.0f;
         rect.layer = layer_num;
 
-        std::lock_guard<std::mutex> lock(layer2_matches_mutex_);
-        layer2_matches_.clear();  // 最新の検出のみ保持
-        layer2_matches_.push_back(rect);
-        layer2_last_time_ = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(layer3_matches_mutex_);
+        layer3_matches_.clear();  // 最新の検出のみ保持
+        layer3_matches_.push_back(rect);
+        layer3_last_time_ = std::chrono::steady_clock::now();
     }
 
     // Layer 3 検出成功時にテンプレートをファイル保存 & ランタイム登録
 
 
 
-    void registerLayer2Template(
-        const VisionDecisionEngine::Layer2Result& l2,
+    void registerLayer3Template(
+        const VisionDecisionEngine::Layer3Result& l2,
         const uint8_t* rgba, int frame_w, int frame_h)
 
 
@@ -6697,7 +6697,7 @@ public:
 
 
 
-                vision_engine_->cancelLayer2(device_id);
+                vision_engine_->cancelLayer3(device_id);
 
 
 
@@ -7241,7 +7241,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        if (vision_engine_->shouldTriggerLayer2(device_id)) {
+                        if (vision_engine_->shouldTriggerLayer3(device_id)) {
                             static std::mutex s_l3_cd_mu1;
                             static std::unordered_map<std::string, int64_t> s_last_l3_ms1;
                             const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7252,7 +7252,7 @@ if (decision.should_act && can_send) {
                                 int64_t &last = s_last_l3_ms1[device_id];
                                 if (now_ms - last >= 2000) { last = now_ms; allow_l3 = true; }
                             }
-                            if (allow_l3) vision_engine_->launchLayer2Async(device_id, rgba, width, height);
+                            if (allow_l3) vision_engine_->launchLayer3Async(device_id, rgba, width, height);
 
 
 
@@ -7264,7 +7264,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        auto l2 = vision_engine_->pollLayer2Result(device_id);
+                        auto l2 = vision_engine_->pollLayer3Result(device_id);
 
 
 
@@ -7308,10 +7308,10 @@ if (decision.should_act && can_send) {
 
 
 
-                            registerLayer2Template(l2, rgba, width, height);
+                            registerLayer3Template(l2, rgba, width, height);
 
                             // オーバーレイ表示用に検出を追加
-                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
+                            addLayer3Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
 
                         }
 
@@ -7529,7 +7529,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        if (vision_engine_->shouldTriggerLayer2(device_id)) {
+                        if (vision_engine_->shouldTriggerLayer3(device_id)) {
 
 
 
@@ -7537,7 +7537,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            vision_engine_->launchLayer2Async(device_id, rgba, width, height);
+                            vision_engine_->launchLayer3Async(device_id, rgba, width, height);
 
 
 
@@ -7553,7 +7553,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        auto l2 = vision_engine_->pollLayer2Result(device_id);
+                        auto l2 = vision_engine_->pollLayer3Result(device_id);
 
 
 
@@ -7597,10 +7597,10 @@ if (decision.should_act && can_send) {
 
 
 
-                            registerLayer2Template(l2, rgba, width, height);
+                            registerLayer3Template(l2, rgba, width, height);
 
                             // オーバーレイ表示用に検出を追加
-                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
+                            addLayer3Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
 
                         }
 
@@ -8409,11 +8409,11 @@ if (decision.should_act && can_send) {
 
         // Layer 2/3 (LLM) 結果を追加（3秒以内の検出のみ）
         {
-            std::lock_guard<std::mutex> lock(layer2_matches_mutex_);
+            std::lock_guard<std::mutex> lock(layer3_matches_mutex_);
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - layer2_last_time_).count();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - layer3_last_time_).count();
             if (elapsed < 3000) {  // 3秒間表示
-                result.insert(result.end(), layer2_matches_.begin(), layer2_matches_.end());
+                result.insert(result.end(), layer3_matches_.begin(), layer3_matches_.end());
             }
         }
 
@@ -18048,9 +18048,9 @@ private:
 
 
     std::vector<AIEngine::MatchRect> last_matches_;
-    std::vector<AIEngine::MatchRect> layer2_matches_;  // Layer 2/3 (LLM) 検出結果
-    mutable std::mutex layer2_matches_mutex_;
-    std::chrono::steady_clock::time_point layer2_last_time_;  // 最終検出時刻
+    std::vector<AIEngine::MatchRect> layer3_matches_;  // Layer 2/3 (LLM) 検出結果
+    mutable std::mutex layer3_matches_mutex_;
+    std::chrono::steady_clock::time_point layer3_last_time_;  // 最終検出時刻
 
     // Layer3 自動登録テンプレートの重複検出用キャッシュ
     struct Layer3TemplateCache {

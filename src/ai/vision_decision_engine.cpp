@@ -9,7 +9,7 @@
 // 遷移ルール:
 //   Layer 0→1: 操作なし 5秒 (layer0_idle_timeout_ms)
 //   Layer 1→0: ユーザー操作検出 (notifyUserInput)
-//   Layer 1→2: 90秒マッチなし (layer2_no_match_ms)
+//   Layer 1→2: 90秒マッチなし (layer3_no_match_ms)
 //   Layer 2→0: フリーズ60秒 → ホームボタン → STANDBY
 //
 //   IDLE → DETECTED: score > threshold
@@ -109,7 +109,7 @@ VisionDecision VisionDecisionEngine::update(
             mirage::bus().publish(evt);
         }
         // ERROR_RECOVERY中はエラー以外のアクション抑制
-        // Layer2トリガーカウンタをリセット（エラー対応中は未知UIではない）
+        // Layer3トリガーカウンタをリセット（エラー対応中は未知UIではない）
         ds.consecutive_no_match = 0;
         ds.consecutive_same_match = 0;
         ds.last_any_match_time = now;
@@ -140,7 +140,7 @@ VisionDecision VisionDecisionEngine::update(
             ds.cooldown_template_id.clear();
         } else {
             // まだCOOLDOWN中 — アクション抑制
-            // Layer2トリガーカウンタをリセット（冷却中は正常な待機状態）
+            // Layer3トリガーカウンタをリセット（冷却中は正常な待機状態）
             ds.consecutive_no_match = 0;
             ds.consecutive_same_match = 0;
             ds.last_any_match_time = now;
@@ -548,7 +548,7 @@ DeviceVisionState& VisionDecisionEngine::getOrCreateState(const std::string& dev
         // 新規デバイス: last_any_match_time を now で初期化して起動即トリガーを防ぐ
         DeviceVisionState& ds = device_states_[device_id];
         ds.last_any_match_time = std::chrono::steady_clock::now();
-        ds.layer2_last_call   = std::chrono::steady_clock::now();
+        ds.layer3_last_call   = std::chrono::steady_clock::now();
         // Layer 0 無効時は IDLE から開始
         ds.state = config_.enable_layer0 ? VisionState::STANDBY : VisionState::IDLE;
         return ds;
@@ -591,7 +591,7 @@ void VisionDecisionEngine::setOllamaVision(std::shared_ptr<OllamaVision> ollama)
     ollama_vision_ = std::move(ollama);
 }
 
-bool VisionDecisionEngine::isLayer2OnCooldown(
+bool VisionDecisionEngine::isLayer3OnCooldown(
     const std::string& device_id,
     std::chrono::steady_clock::time_point now) const
 {
@@ -600,57 +600,57 @@ bool VisionDecisionEngine::isLayer2OnCooldown(
 
     const auto& ds = it->second;
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now - ds.layer2_last_call).count();
-    return elapsed < config_.layer2_cooldown_ms;
+        now - ds.layer3_last_call).count();
+    return elapsed < config_.layer3_cooldown_ms;
 }
 
-bool VisionDecisionEngine::isLayer2Running(const std::string& device_id) const {
+bool VisionDecisionEngine::isLayer3Running(const std::string& device_id) const {
     auto it = device_states_.find(device_id);
     if (it == device_states_.end()) return false;
 
     const auto& ds = it->second;
-    return ds.layer2_task && ds.layer2_task->valid;
+    return ds.layer3_task && ds.layer3_task->valid;
 }
 
-bool VisionDecisionEngine::launchLayer2Async(
+bool VisionDecisionEngine::launchLayer3Async(
     const std::string& device_id,
     const uint8_t* rgba, int width, int height,
     std::chrono::steady_clock::time_point now)
 {
     // Layer 2無効 or OllamaVision未設定
-    if (!config_.enable_layer2 || !ollama_vision_) {
+    if (!config_.enable_layer3 || !ollama_vision_) {
         return false;
     }
 
     // 既に実行中
-    if (isLayer2Running(device_id)) {
+    if (isLayer3Running(device_id)) {
         MLOG_DEBUG("ai.vision", "Layer 2既に実行中: device=%s", device_id.c_str());
         return false;
     }
 
     // 冷却中チェック
-    if (isLayer2OnCooldown(device_id, now)) {
+    if (isLayer3OnCooldown(device_id, now)) {
         MLOG_DEBUG("ai.vision", "Layer 2冷却中: device=%s", device_id.c_str());
         return false;
     }
 
-    // グローバル排他: 全デバイス合計で LAYER2_MAX_CONCURRENT まで
-    if (layer2_active_count_.load() >= LAYER2_MAX_CONCURRENT) {
+    // グローバル排他: 全デバイス合計で LAYER3_MAX_CONCURRENT まで
+    if (layer3_active_count_.load() >= LAYER3_MAX_CONCURRENT) {
         MLOG_DEBUG("ai.vision", "Layer 2グローバル上限: device=%s active=%d",
-                   device_id.c_str(), layer2_active_count_.load());
+                   device_id.c_str(), layer3_active_count_.load());
         return false;
     }
 
     auto& ds = getOrCreateState(device_id);
-    ds.layer2_last_call = now;
-    ds.layer2_start_time = now;  // フリーズ検出用
+    ds.layer3_last_call = now;
+    ds.layer3_start_time = now;  // フリーズ検出用
 
     // RGBAデータをコピー（非同期タスク用）
     size_t data_size = static_cast<size_t>(width) * height * 4;
     auto rgba_copy = std::make_shared<std::vector<uint8_t>>(rgba, rgba + data_size);
 
     // 非同期タスク作成
-    auto task = std::make_shared<Layer2Task>();
+    auto task = std::make_shared<Layer3Task>();
     task->start_time = now;
     task->frame_width = width;
     task->frame_height = height;
@@ -659,8 +659,8 @@ bool VisionDecisionEngine::launchLayer2Async(
     // OllamaVisionのshared_ptrをキャプチャ
     auto ollama = ollama_vision_;
 
-    layer2_active_count_++;
-    auto* active_count = &layer2_active_count_;
+    layer3_active_count_++;
+    auto* active_count = &layer3_active_count_;
     task->future = std::async(std::launch::async,
         [ollama, rgba_copy, width, height, active_count]() -> OllamaVisionResult {
             OllamaVisionResult r = ollama->detectPopup(rgba_copy->data(), width, height);
@@ -668,7 +668,7 @@ bool VisionDecisionEngine::launchLayer2Async(
             return r;
         });
 
-    ds.layer2_task = task;
+    ds.layer3_task = task;
 
     MLOG_INFO("ai.vision", "Layer 2非同期起動: device=%s %dx%d",
               device_id.c_str(), width, height);
@@ -676,20 +676,20 @@ bool VisionDecisionEngine::launchLayer2Async(
     return true;
 }
 
-VisionDecisionEngine::Layer2Result VisionDecisionEngine::pollLayer2Result(
+VisionDecisionEngine::Layer3Result VisionDecisionEngine::pollLayer3Result(
     const std::string& device_id)
 {
-    Layer2Result result;
+    Layer3Result result;
     result.has_result = false;
 
     auto it = device_states_.find(device_id);
     if (it == device_states_.end()) return result;
 
     auto& ds = it->second;
-    if (!ds.layer2_task || !ds.layer2_task->valid) return result;
+    if (!ds.layer3_task || !ds.layer3_task->valid) return result;
 
     // 完了チェック（ノンブロッキング）
-    auto status = ds.layer2_task->future.wait_for(std::chrono::seconds(0));
+    auto status = ds.layer3_task->future.wait_for(std::chrono::seconds(0));
     if (status != std::future_status::ready) {
         return result;  // まだ実行中
     }
@@ -698,10 +698,10 @@ VisionDecisionEngine::Layer2Result VisionDecisionEngine::pollLayer2Result(
     result.has_result = true;
 
     try {
-        OllamaVisionResult ollama_result = ds.layer2_task->future.get();
+        OllamaVisionResult ollama_result = ds.layer3_task->future.get();
 
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - ds.layer2_task->start_time).count();
+            std::chrono::steady_clock::now() - ds.layer3_task->start_time).count();
         result.elapsed_ms = static_cast<int>(elapsed);
 
         if (!ollama_result.error.empty()) {
@@ -713,8 +713,8 @@ VisionDecisionEngine::Layer2Result VisionDecisionEngine::pollLayer2Result(
             result.type = ollama_result.type;
             result.button_text = ollama_result.button_text;
             // パーセント座標をピクセルに変換
-            result.x = (ollama_result.x_percent * ds.layer2_task->frame_width) / 100;
-            result.y = (ollama_result.y_percent * ds.layer2_task->frame_height) / 100;
+            result.x = (ollama_result.x_percent * ds.layer3_task->frame_width) / 100;
+            result.y = (ollama_result.y_percent * ds.layer3_task->frame_height) / 100;
 
             MLOG_INFO("ai.vision", "Layer 2検出成功: device=%s type=%s button='%s' pos=(%d,%d) (%dms)",
                       device_id.c_str(), result.type.c_str(), result.button_text.c_str(),
@@ -730,44 +730,44 @@ VisionDecisionEngine::Layer2Result VisionDecisionEngine::pollLayer2Result(
     }
 
     // タスク完了 — 無効化
-    ds.layer2_task->valid = false;
-    ds.layer2_task.reset();
+    ds.layer3_task->valid = false;
+    ds.layer3_task.reset();
 
     return result;
 }
 
-void VisionDecisionEngine::cancelLayer2(const std::string& device_id) {
+void VisionDecisionEngine::cancelLayer3(const std::string& device_id) {
     auto it = device_states_.find(device_id);
     if (it == device_states_.end()) return;
 
     auto& ds = it->second;
-    if (ds.layer2_task && ds.layer2_task->valid) {
+    if (ds.layer3_task && ds.layer3_task->valid) {
         MLOG_DEBUG("ai.vision", "Layer 2キャンセル: device=%s", device_id.c_str());
-        ds.layer2_task->valid = false;
+        ds.layer3_task->valid = false;
         // futureは破棄されるがスレッドは走り続ける（ラムダ内で -1 される）
-        ds.layer2_task.reset();
+        ds.layer3_task.reset();
     }
 }
 
 
-bool VisionDecisionEngine::shouldTriggerLayer2(
+bool VisionDecisionEngine::shouldTriggerLayer3(
     const std::string& device_id,
     std::chrono::steady_clock::time_point now) const
 {
-    if (!config_.enable_layer2) return false;
+    if (!config_.enable_layer3) return false;
 
     auto it = device_states_.find(device_id);
     if (it == device_states_.end()) {
-        MLOG_INFO("ai.vde", "shouldTriggerLayer2: device %s not found", device_id.c_str());
+        MLOG_INFO("ai.vde", "shouldTriggerLayer3: device %s not found", device_id.c_str());
         return false;
     }
     const auto& ds = it->second;
 
     // 既に Layer 2 実行中または冷却中はスキップ
-    if (ds.layer2_task && ds.layer2_task->valid) return false;
-    if (isLayer2OnCooldown(device_id, now)) return false;
+    if (ds.layer3_task && ds.layer3_task->valid) return false;
+    if (isLayer3OnCooldown(device_id, now)) return false;
     // グローバル上限チェック
-    if (layer2_active_count_.load() >= LAYER2_MAX_CONCURRENT) return false;
+    if (layer3_active_count_.load() >= LAYER3_MAX_CONCURRENT) return false;
 
     // ① 連続マッチなしフレーム数トリガー
     {
@@ -776,28 +776,28 @@ bool VisionDecisionEngine::shouldTriggerLayer2(
         MLOG_INFO("ai.vde", "L2check: dev=%s no_match=%d elapsed=%lldms",
                   device_id.c_str(), ds.consecutive_no_match, (long long)elapsed_ms);
     }
-    if (config_.layer2_no_match_frames > 0 &&
-        ds.consecutive_no_match >= config_.layer2_no_match_frames) {
-        MLOG_DEBUG("ai.vision", "Layer2トリガー(no_match_frames): device=%s count=%d",
+    if (config_.layer3_no_match_frames > 0 &&
+        ds.consecutive_no_match >= config_.layer3_no_match_frames) {
+        MLOG_DEBUG("ai.vision", "Layer3トリガー(no_match_frames): device=%s count=%d",
                    device_id.c_str(), ds.consecutive_no_match);
         return true;
     }
 
     // ② 時間ベーストリガー (フレームレート非依存)
-    if (config_.layer2_no_match_ms > 0 && ds.consecutive_no_match > 0) {
+    if (config_.layer3_no_match_ms > 0 && ds.consecutive_no_match > 0) {
         auto since_last_match = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - ds.last_any_match_time).count();
-        if (since_last_match >= config_.layer2_no_match_ms) {
-            MLOG_DEBUG("ai.vision", "Layer2トリガー(no_match_ms): device=%s elapsed=%lldms",
+        if (since_last_match >= config_.layer3_no_match_ms) {
+            MLOG_DEBUG("ai.vision", "Layer3トリガー(no_match_ms): device=%s elapsed=%lldms",
                        device_id.c_str(), (long long)since_last_match);
             return true;
         }
     }
 
     // ③ 同一テンプレート貼り付きトリガー（タップが効いていない疑い）
-    if (config_.layer2_stuck_frames > 0 &&
-        ds.consecutive_same_match >= config_.layer2_stuck_frames) {
-        MLOG_DEBUG("ai.vision", "Layer2トリガー(stuck): device=%s tpl=%s count=%d",
+    if (config_.layer3_stuck_frames > 0 &&
+        ds.consecutive_same_match >= config_.layer3_stuck_frames) {
+        MLOG_DEBUG("ai.vision", "Layer3トリガー(stuck): device=%s tpl=%s count=%d",
                    device_id.c_str(), ds.last_matched_template.c_str(),
                    ds.consecutive_same_match);
         return true;
@@ -823,9 +823,9 @@ void VisionDecisionEngine::notifyUserInput(
         transitionTo(ds, VisionState::STANDBY);
 
         // Layer 2 タスク実行中なら中断
-        if (ds.layer2_task && ds.layer2_task->valid) {
-            ds.layer2_task->valid = false;
-            ds.layer2_task.reset();
+        if (ds.layer3_task && ds.layer3_task->valid) {
+            ds.layer3_task->valid = false;
+            ds.layer3_task.reset();
         }
 
         MLOG_DEBUG("ai.vision", "ユーザー操作検出 → STANDBY (Layer 0): device=%s from=%s",
@@ -890,7 +890,7 @@ bool VisionDecisionEngine::isStandby(const std::string& device_id) const {
     return it->second.state == VisionState::STANDBY;
 }
 
-bool VisionDecisionEngine::checkLayer2Freeze(
+bool VisionDecisionEngine::checkLayer3Freeze(
     const std::string& device_id,
     std::chrono::steady_clock::time_point now)
 {
@@ -900,18 +900,18 @@ bool VisionDecisionEngine::checkLayer2Freeze(
     auto& ds = it->second;
 
     // Layer 2 実行中でないならチェック不要
-    if (!ds.layer2_task || !ds.layer2_task->valid) return false;
+    if (!ds.layer3_task || !ds.layer3_task->valid) return false;
 
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now - ds.layer2_start_time).count();
+        now - ds.layer3_start_time).count();
 
-    if (elapsed >= config_.layer2_freeze_timeout_ms) {
+    if (elapsed >= config_.layer3_freeze_timeout_ms) {
         MLOG_WARN("ai.vision", "Layer 2 フリーズ検出 (%lldms) → STANDBY: device=%s",
                   (long long)elapsed, device_id.c_str());
 
         // タスクキャンセル
-        ds.layer2_task->valid = false;
-        ds.layer2_task.reset();
+        ds.layer3_task->valid = false;
+        ds.layer3_task.reset();
 
         // STANDBY (Layer 0) へ強制遷移
         VisionState old_state = ds.state;
