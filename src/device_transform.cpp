@@ -125,6 +125,7 @@ void DeviceTransform::video_to_native(float vx, float vy, float& nx, float& ny) 
     video_to_rotated(vx, vy, rx, ry);
     nx = rx * scale_x + offset_x;
     ny = ry * scale_y + offset_y;
+    // Note: display_rotation_offset is for GUI rendering only, NOT for touch coordinates
 }
 
 void DeviceTransform::native_to_video(float nx, float ny, float& vx, float& vy) const {

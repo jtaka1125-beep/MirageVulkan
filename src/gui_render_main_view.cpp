@@ -299,23 +299,8 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
             renderOverlays(device, view_x, view_y, view_w, view_h);
         }
     } else {
-        // No texture - draw placeholder
-        draw_list->AddRectFilled(
-            ImVec2(view_x, view_y),
-            ImVec2(view_x + view_w, view_y + view_h),
-            IM_COL32(30, 30, 35, 255)
-        );
-
-        // Device name in center
-        const char* text = device.name.c_str();
-        ImVec2 textSize = ImGui::CalcTextSize(text);
-        draw_list->AddText(
-            ImVec2(view_x + (view_w - textSize.x) / 2, view_y + (view_h - textSize.y) / 2),
-            IM_COL32(128, 128, 128, 255),
-            text
-        );
-
-        // Mark main view as invalid when no texture
+        // No texture yet - just mark invalid, don't draw gray placeholder
+        // (Last valid frame is preserved in vk_texture_ds, so we don't need placeholder)
         if (is_main) {
             std::lock_guard<std::mutex> rect_lock(view_rect_mutex_);
             main_view_rect_.valid = false;

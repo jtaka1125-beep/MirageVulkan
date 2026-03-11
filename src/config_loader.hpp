@@ -276,8 +276,10 @@ inline AppConfig& getConfig() {
 // =============================================================================
 struct ExpectedDeviceSpec {
     std::string hardware_id;
-    int screen_width = 0;
+    int screen_width = 0;   // Encoded video resolution (for GUI/AI coordinate mapping)
     int screen_height = 0;
+    int physical_width = 0;  // Physical device resolution (for Android input tap)
+    int physical_height = 0;
     int screen_density = 0;
     int tcp_port = 0;
     std::string tcp_host;  // override host for TCP video (e.g. "127.0.0.1" for ADB forward)
@@ -313,6 +315,8 @@ public:
                 spec.hardware_id = dev.value("hardware_id", "");
                 spec.screen_width = dev.value("screen_width", 0);
                 spec.screen_height = dev.value("screen_height", 0);
+                spec.physical_width = dev.value("physical_width", 0);  // 0 = same as screen_width
+                spec.physical_height = dev.value("physical_height", 0);
                 spec.screen_density = dev.value("screen_density", 0);
                 spec.tcp_port = dev.value("tcp_port", 0);
                 spec.tcp_host = dev.value("tcp_host", "");
@@ -370,6 +374,17 @@ public:
         if (it != devices_.end()) {
             out_rotation = it->second.display_rotation;
             return true;
+        }
+        return false;
+    }
+
+    // Get physical resolution (for Android input tap). Falls back to screen_width/height if not set.
+    bool getPhysicalSize(const std::string& hardware_id, int& out_w, int& out_h) const {
+        auto it = devices_.find(hardware_id);
+        if (it != devices_.end()) {
+            out_w = (it->second.physical_width > 0) ? it->second.physical_width : it->second.screen_width;
+            out_h = (it->second.physical_height > 0) ? it->second.physical_height : it->second.screen_height;
+            return (out_w > 0 && out_h > 0);
         }
         return false;
     }

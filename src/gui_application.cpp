@@ -591,6 +591,21 @@ void GuiApplication::updateDeviceOverlays(const std::string& id,
 
 void GuiApplication::updateDeviceStats(const std::string& id, 
                                         float fps, float latency_ms, float bandwidth_mbps) {
+    // Throttle stats updates to 200ms intervals per device (reduce GUI overhead)
+    static std::unordered_map<std::string, uint64_t> last_update_ms;
+    constexpr uint64_t STATS_UPDATE_INTERVAL_MS = 200;
+    
+    const uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    
+    auto it_time = last_update_ms.find(id);
+    if (it_time != last_update_ms.end()) {
+        if (now_ms - it_time->second < STATS_UPDATE_INTERVAL_MS) {
+            return;  // Skip this update
+        }
+    }
+    last_update_ms[id] = now_ms;
+
     std::lock_guard<std::mutex> lock(devices_mutex_);
     
     auto it = devices_.find(id);

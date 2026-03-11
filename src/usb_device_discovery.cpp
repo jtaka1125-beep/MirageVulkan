@@ -25,12 +25,9 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
         AOA_PID_ACCESSORY_AUDIO,
         AOA_PID_ACCESSORY_AUDIO_ADB
     };
-    // MediaTek composite AOA PIDs (VID_0E8D) - e.g. Npad X1
-    static constexpr uint16_t MTK_VID = 0x0E8D;
-    uint16_t mtk_aoa_pids[] = {
-        0x201C, // AOA composite (AOA+ADB)
-        0x2005, // AOA only
-    };
+    // Note: After AOA switch, ALL devices use Google VID (0x18D1) + AOA PIDs.
+    // MediaTek PID_201C/2005 are ADB/RNDIS modes, NOT AOA - they need AOA switch
+    // to re-enumerate as VID_18D1 devices.
 
     bool found_any = false;
     std::vector<libusb_device*> android_devices;
@@ -41,19 +38,10 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
         struct libusb_device_descriptor desc;
         if (libusb_get_device_descriptor(dev, &desc) != 0) continue;
 
-        // Check if already-enumerated AOA device (Google VID_18D1)
+        // Check if already-enumerated AOA device (Google VID_18D1 ONLY)
+        // After AOA switch, device re-enumerates with Google VID regardless of original vendor
         if (desc.idVendor == AOA_VID) {
             for (uint16_t pid : aoa_pids) {
-                if (desc.idProduct == pid) {
-                    aoa_devices_to_open.push_back({dev, pid});
-                    break;
-                }
-            }
-            continue;
-        }
-        // Check MediaTek AOA composite (VID_0E8D) - Npad X1 uses PID_201C
-        if (desc.idVendor == MTK_VID) {
-            for (uint16_t pid : mtk_aoa_pids) {
                 if (desc.idProduct == pid) {
                     aoa_devices_to_open.push_back({dev, pid});
                     break;
@@ -172,22 +160,9 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
                     struct libusb_device_descriptor desc;
                     if (libusb_get_device_descriptor(dev, &desc) != 0) continue;
 
+                    // Only check Google VID AOA devices after switch
                     if (desc.idVendor == AOA_VID) {
                         for (uint16_t pid : aoa_pids) {
-                            if (desc.idProduct == pid) {
-                                found_aoa = true;
-                                if (open_aoa_device(dev, pid)) {
-                                    found_any = true;
-                                } else {
-                                    all_opened = false;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    // Also check MediaTek AOA after re-enumeration
-                    if (desc.idVendor == MTK_VID) {
-                        for (uint16_t pid : mtk_aoa_pids) {
                             if (desc.idProduct == pid) {
                                 found_aoa = true;
                                 if (open_aoa_device(dev, pid)) {

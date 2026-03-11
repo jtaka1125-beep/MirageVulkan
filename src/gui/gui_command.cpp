@@ -7,6 +7,7 @@
 #include "event_bus.hpp"
 #include "gui_command.hpp"
 #include "gui_state.hpp"
+#include "config_loader.hpp"
 #include <cstdio>
 
 namespace mirage::gui::command {
@@ -241,11 +242,25 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
         }
 
         if (g_hybrid_cmd->has_wifi_sender(device_id)) {
-            g_hybrid_cmd->send_tap(device_id, x, y, screen_w, screen_h);
+            // Scale from encoded coords to physical coords for WiFi TCP
+            int tap_x = x, tap_y = y;
+            int enc_w = 0, enc_h = 0, phys_w = 0, phys_h = 0;
+            auto& reg = mirage::config::ExpectedSizeRegistry::instance();
+            if (reg.getExpectedSize(device_id, enc_w, enc_h) &&
+                reg.getPhysicalSize(device_id, phys_w, phys_h) &&
+                enc_w > 0 && enc_h > 0 && phys_w > 0 && phys_h > 0) {
+                float scale_x = static_cast<float>(phys_w) / enc_w;
+                float scale_y = static_cast<float>(phys_h) / enc_h;
+                tap_x = static_cast<int>(x * scale_x + 0.5f);
+                tap_y = static_cast<int>(y * scale_y + 0.5f);
+                MLOG_INFO("cmd", "WiFi scaled (%d,%d)->(%d,%d) enc=%dx%d phys=%dx%d",
+                          x, y, tap_x, tap_y, enc_w, enc_h, phys_w, phys_h);
+            }
+            g_hybrid_cmd->send_tap(device_id, tap_x, tap_y, phys_w > 0 ? phys_w : screen_w, phys_h > 0 ? phys_h : screen_h);
             MLOG_INFO("cmd", "WiFi TCP tap sent to %s!", device_id.c_str());
             if (gui) {
                 gui->logInfo(u8"WiFi タップ " + device_id +
-                             " (" + std::to_string(x) + ", " + std::to_string(y) + ")");
+                             " (" + std::to_string(tap_x) + ", " + std::to_string(tap_y) + ")");
             }
             return;
         }
@@ -256,13 +271,47 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
         auto devices = g_adb_manager->getUniqueDevices();
         for (const auto& dev : devices) {
             if (dev.hardware_id == device_id) {
-                std::string cmd = "shell input tap " + std::to_string(x) + " " + std::to_string(y);
+                // Scale from encoded coords to physical coords if needed
+                int tap_x = x, tap_y = y;
+                int enc_w = 0, enc_h = 0, phys_w = 0, phys_h = 0;
+                int disp_rot = 0;
+                auto& reg = mirage::config::ExpectedSizeRegistry::instance();
+                reg.getDisplayRotation(device_id, disp_rot);
+                
+                if (reg.getExpectedSize(device_id, enc_w, enc_h) &&
+                    reg.getPhysicalSize(device_id, phys_w, phys_h) &&
+                    enc_w > 0 && enc_h > 0) {
+                    // Scale: encoded -> physical
+                    float scale_x = static_cast<float>(phys_w) / enc_w;
+                    float scale_y = static_cast<float>(phys_h) / enc_h;
+                    tap_x = static_cast<int>(x * scale_x + 0.5f);
+                    tap_y = static_cast<int>(y * scale_y + 0.5f);
+                    
+                    // Apply display_rotation compensation (GUI shows rotated image)
+                    // display_rotation=180 means GUI image is flipped, so we need to flip tap coords
+                    if (disp_rot == 180) {
+                        tap_x = phys_w - tap_x;
+                        tap_y = phys_h - tap_y;
+                    } else if (disp_rot == 90) {
+                        int tmp = tap_x;
+                        tap_x = tap_y;
+                        tap_y = phys_w - tmp;
+                    } else if (disp_rot == 270) {
+                        int tmp = tap_x;
+                        tap_x = phys_h - tap_y;
+                        tap_y = tmp;
+                    }
+                    
+                    MLOG_INFO("cmd", "Scaled coords (%d,%d)->(%d,%d) enc=%dx%d phys=%dx%d rot=%d",
+                              x, y, tap_x, tap_y, enc_w, enc_h, phys_w, phys_h, disp_rot);
+                }
+                std::string cmd = "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y);
                 std::string adb_id = resolvePreferredAdbIdForInput(dev);
                 g_adb_manager->adbCommand(adb_id, cmd);
                 MLOG_INFO("cmd", "ADB tap sent to %s via %s", device_id.c_str(), adb_id.c_str());
                 if (gui) {
                     gui->logInfo(u8"ADB タップ " + dev.display_name +
-                                 " (" + std::to_string(x) + ", " + std::to_string(y) + ")");
+                                 " (" + std::to_string(tap_x) + ", " + std::to_string(tap_y) + ")");
                 }
                 return;
             }

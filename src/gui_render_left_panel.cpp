@@ -153,12 +153,21 @@ void GuiApplication::renderLeftPanel() {
 
     // Row 1: Screenshot + Auto Setup
     if (ImGui::Button(u8"\u30b9\u30af\u30ea\u30fc\u30f3\u30b7\u30e7\u30c3\u30c8", ImVec2(third_w, 0))) {
-        // Capture from main device, fallback to first available
+        // Resolve GUI hardware_id to concrete ADB id before screenshot.
         if (adb_manager_) {
             std::string target;
+            std::string selected_id;
             {
                 std::lock_guard<std::mutex> lock(devices_mutex_);
-                target = main_device_id_;
+                selected_id = main_device_id_;
+            }
+            if (!selected_id.empty()) {
+                ::gui::AdbDeviceManager::UniqueDevice dev;
+                if (adb_manager_->getUniqueDevice(selected_id, dev) && !dev.preferred_adb_id.empty()) {
+                    target = dev.preferred_adb_id;
+                } else {
+                    target = selected_id;
+                }
             }
             if (target.empty()) {
                 auto devices = adb_manager_->getUniqueDevices();
@@ -167,10 +176,10 @@ void GuiApplication::renderLeftPanel() {
             if (!target.empty()) {
                 captureScreenshot(target);
             } else {
-                logWarning(u8"ADB\u30c7\u30d0\u30a4\u30b9\u306a\u3057");
+                logWarning("ADB device not found");
             }
         } else {
-            logWarning(u8"ADB\u30de\u30cd\u30fc\u30b8\u30e3\u672a\u8a2d\u5b9a");
+            logWarning("ADB manager not set");
         }
     }
 
@@ -466,25 +475,39 @@ void GuiApplication::renderLeftPanel() {
     {
         std::lock_guard<std::mutex> lock(logs_mutex_);
 
-        for (const auto& entry : logs_) {
-            // Filter by level
+        // Build filtered index list for ListClipper (only visible items)
+        static std::vector<int> filtered_indices;
+        filtered_indices.clear();
+        filtered_indices.reserve(logs_.size());
+        
+        for (int i = 0; i < static_cast<int>(logs_.size()); ++i) {
+            const auto& entry = logs_[i];
             if (log_level_filter == 1 && entry.level == LogEntry::Level::Debug) continue;
             if (log_level_filter == 2 &&
                 (entry.level == LogEntry::Level::Debug ||
                  entry.level == LogEntry::Level::Info)) continue;
             if (log_level_filter == 3 && entry.level != LogEntry::Level::Error) continue;
-
-            ImVec4 col(
-                ((entry.getColor() >> 0) & 0xFF) / 255.0f,
-                ((entry.getColor() >> 8) & 0xFF) / 255.0f,
-                ((entry.getColor() >> 16) & 0xFF) / 255.0f,
-                1.0f
-            );
-
-            ImGui::TextColored(col, "[%s] %s",
-                               entry.source.c_str(),
-                               entry.message.c_str());
+            filtered_indices.push_back(i);
         }
+
+        // Use ListClipper for efficient rendering (only visible rows)
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(filtered_indices.size()));
+        while (clipper.Step()) {
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                const auto& entry = logs_[filtered_indices[row]];
+                ImVec4 col(
+                    ((entry.getColor() >> 0) & 0xFF) / 255.0f,
+                    ((entry.getColor() >> 8) & 0xFF) / 255.0f,
+                    ((entry.getColor() >> 16) & 0xFF) / 255.0f,
+                    1.0f
+                );
+                ImGui::TextColored(col, "[%s] %s",
+                                   entry.source.c_str(),
+                                   entry.message.c_str());
+            }
+        }
+        clipper.End();
 
         // Auto scroll - always scroll to bottom when enabled
         if (config_.auto_scroll_log) {

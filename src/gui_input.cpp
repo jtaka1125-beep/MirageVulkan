@@ -1,4 +1,4 @@
-﻿// =============================================================================
+// =============================================================================
 // MirageSystem v2 - GUI Implementation Part 3
 // =============================================================================
 // Input handling: Mouse clicks, double-clicks, drag/swipe, learning mode
@@ -41,27 +41,39 @@ std::pair<int, int> GuiApplication::screenToDeviceCoords(
         return {-1, -1};
     }
     
-    // Convert to device coordinates
     // Convert to normalized coordinates within the rendered view
     float rel_x = (screen_x - view_x) / view_w;
     float rel_y = (screen_y - view_y) / view_h;
     rel_x = std::clamp(rel_x, 0.0f, 1.0f);
     rel_y = std::clamp(rel_y, 0.0f, 1.0f);
 
-    // Map view position (rel_x, rel_y) directly to native device coordinates.
-    // Rendering currently does NOT apply display_rotation_offset on the main view,
-    // so input must stay in the same orientation as the visible image.
     const int nw = (device.expected_width  > 0) ? device.expected_width  : device.texture_width;
     const int nh = (device.expected_height > 0) ? device.expected_height : device.texture_height;
     if (nw <= 0 || nh <= 0) return {-1, -1};
 
-    int dev_x = static_cast<int>(std::lround(rel_x * static_cast<float>(nw)));
-    int dev_y = static_cast<int>(std::lround(rel_y * static_cast<float>(nh)));
+    // Use DeviceTransform pipeline (rotation + scale + offset) for correct
+    // video->native coordinate mapping. Falls back to simple linear scale
+    // when transform has no valid video dimensions.
+    int dev_x, dev_y;
+    if (device.transform.video_w > 0 && device.transform.video_h > 0) {
+        float vx = rel_x * static_cast<float>(device.transform.video_w);
+        float vy = rel_y * static_cast<float>(device.transform.video_h);
+        float nx_f, ny_f;
+        device.transform.video_to_native(vx, vy, nx_f, ny_f);
+        dev_x = static_cast<int>(std::lround(nx_f));
+        dev_y = static_cast<int>(std::lround(ny_f));
+        MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) video=(%.1f,%.1f) native=(%d,%d) rot=%d",
+                 device.id.c_str(), rel_x, rel_y, vx, vy, dev_x, dev_y,
+                 device.transform.rotation);
+    } else {
+        // Fallback: no transform info yet, simple linear scale
+        dev_x = static_cast<int>(std::lround(rel_x * static_cast<float>(nw)));
+        dev_y = static_cast<int>(std::lround(rel_y * static_cast<float>(nh)));
+        MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) native=(%d,%d) [no-transform]",
+                 device.id.c_str(), rel_x, rel_y, dev_x, dev_y);
+    }
     dev_x = std::max(0, std::min(dev_x, nw - 1));
     dev_y = std::max(0, std::min(dev_y, nh - 1));
-
-    MLOG_INFO("input", "tapmap dev=%s rel=(%.3f,%.3f) native=(%d,%d)",
-             device.id.c_str(), rel_x, rel_y, dev_x, dev_y);
 
     return {dev_x, dev_y};
 }
@@ -276,8 +288,6 @@ void GuiApplication::processMainViewClick(int local_x, int local_y, bool /*is_do
         // Prepare for tap callback
         should_tap_callback = (tap_callback_ != nullptr);
 
-        logDebug("Tap: " + device_id + " @ (" + std::to_string(dev_x) + ", " +
-                 std::to_string(dev_y) + ")");
     }
     
     // Call callbacks OUTSIDE mutex to avoid deadlock
