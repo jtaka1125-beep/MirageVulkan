@@ -39,7 +39,8 @@ class H264Encoder(
     private val ctx: Context,
     private val projection: MediaProjection,
     initialSender: VideoSender,
-    initialFps: Int = 60
+    initialFps: Int = 60,
+    initialMaxSize: Int = 0
 ) {
     companion object {
         private const val TAG = "MirageH265"
@@ -65,7 +66,16 @@ class H264Encoder(
 
         private fun mimeType() = MediaFormat.MIMETYPE_VIDEO_HEVC
 
-        private const val MIN_FPS = 10
+        // Scale down if long side > maxSz. 0=no limit. 2-aligned.
+        fun applyMaxSize(w: Int, h: Int, maxSz: Int): Pair<Int, Int> {
+            if (maxSz <= 0 || maxOf(w, h) <= maxSz) return Pair(w, h)
+            val sc = maxSz.toDouble() / maxOf(w, h).toDouble()
+            val nw = ((w * sc).toInt() / 2) * 2
+            val nh = ((h * sc).toInt() / 2) * 2
+            return Pair(nw.coerceAtLeast(2), nh.coerceAtLeast(2))
+        }
+
+                private const val MIN_FPS = 10
         private const val MAX_FPS = 60
         private const val BASE_BITRATE = 10_000_000
         private const val BASE_FPS = 30
@@ -100,6 +110,8 @@ class H264Encoder(
     )
 
     private val sendQueue = ArrayBlockingQueue<List<ByteArray>>(16)
+    private val maxSizeLong = java.util.concurrent.atomic.AtomicInteger(initialMaxSize)
+    fun setMaxSize(s: Int) { maxSizeLong.set(s) }
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -178,8 +190,9 @@ class H264Encoder(
     fun start() {
         val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
         val (rawWidth, rawHeight) = physicalScreenSize()
-        val captureWidth = minOf(rawWidth, rawHeight)
-        val captureHeight = maxOf(rawWidth, rawHeight)
+        val rawCW = minOf(rawWidth, rawHeight)
+        val rawCH = maxOf(rawWidth, rawHeight)
+        val (captureWidth, captureHeight) = applyMaxSize(rawCW, rawCH, maxSizeLong.get())
         val metrics: DisplayMetrics = ctx.resources.displayMetrics
         val dpi = metrics.densityDpi
         val fps = targetFps.get()

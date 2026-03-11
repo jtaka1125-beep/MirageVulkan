@@ -98,10 +98,13 @@ class AccessoryActivity : AppCompatActivity() {
         if (intent?.action != UsbManager.ACTION_USB_ACCESSORY_ATTACHED) return
         val accessory = intent.getParcelableExtra<UsbAccessory>(UsbManager.EXTRA_ACCESSORY) ?: return
         Log.i(TAG, "Accessory attached: ${accessory.manufacturer}/${accessory.model}")
-        if (!isServiceRunning(AccessoryIoService::class.java)) {
-            startAccessoryService(accessory)
-        }
         currentAccessory = accessory
+        // Start service on background thread to avoid ANR
+        Thread {
+            if (!isServiceRunning(AccessoryIoService::class.java)) {
+                startAccessoryService(accessory)
+            }
+        }.start()
     }
 
     private fun updateStatus() {
@@ -120,18 +123,19 @@ class AccessoryActivity : AppCompatActivity() {
         setGate(gate3Icon, g3)
         setGate(gate4Icon, g4)
 
-        // Auto-start if connected but service not running
+        // Auto-start if connected but service not running (on background thread to avoid ANR)
         if (g3 && !g4 && !pendingPermission && currentAccessory != null) {
-            if (usbMgr.hasPermission(currentAccessory)) {
+            val acc = currentAccessory!!
+            if (usbMgr.hasPermission(acc)) {
                 Log.i(TAG, "updateStatus: has permission, starting AccessoryIoService")
-                startAccessoryService(currentAccessory!!)
+                Thread { startAccessoryService(acc) }.start()
             } else {
                 pendingPermission = true
                 Log.i(TAG, "updateStatus: requesting USB permission")
                 val pi = PendingIntent.getBroadcast(this, 0,
                     Intent(ACTION_USB_PERMISSION).apply { setPackage(packageName) },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                usbMgr.requestPermission(currentAccessory, pi)
+                usbMgr.requestPermission(acc, pi)
             }
         }
 

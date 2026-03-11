@@ -39,6 +39,9 @@ class ScreenCaptureService : Service() {
         private const val EXTRA_AI_HEIGHT = "ai_height"
         private const val EXTRA_AI_FPS = "ai_fps"
         private const val EXTRA_AI_QUALITY = "ai_quality"
+        private const val CMD_SET_MAX_SIZE = "set_max_size"
+        private const val EXTRA_MAX_SIZE = "max_size"
+        const val ACTION_VIDEO_MAXSIZE = "com.mirage.capture.ACTION_VIDEO_MAXSIZE"
         private const val CHANNEL_ID = "mirage_capture_channel"
         private const val NOTIFICATION_ID = 2001
         // TCP_SECONDARY_PORT 廃止: primaryPort + 1 を動的に使用 (devices.jsonが単一ソース)
@@ -87,6 +90,8 @@ class ScreenCaptureService : Service() {
 
     @Volatile private var desiredFps: Int = 60
     @Volatile private var fpsRestartPending: Boolean = false
+    @Volatile private var desiredMaxSize: Int = 0
+    @Volatile private var maxSizeRestartPending: Boolean = false
 
     private var aiStream: AiStream? = null
 
@@ -104,7 +109,17 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    private val maxSizeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == ACTION_VIDEO_MAXSIZE) {
+                val maxSize = intent.getIntExtra(EXTRA_MAX_SIZE, 0)
+                Log.i(TAG, "BroadcastReceiver: ACTION_VIDEO_MAXSIZE maxSize=$maxSize")
+                if (maxSize > 0) updateMaxSize(maxSize)
+            }
+        }
+    }
+
+        override fun onBind(intent: Intent?): IBinder? = null
 
 
     private fun loadAiPrefs(): Map<String, Any> {
@@ -173,6 +188,13 @@ class ScreenCaptureService : Service() {
             registerReceiver(fpsReceiver, fpsFilter)
         }
         Log.i(TAG, "FPS receiver registered")
+        val maxSizeFilter = android.content.IntentFilter(ACTION_VIDEO_MAXSIZE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(maxSizeReceiver, maxSizeFilter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(maxSizeReceiver, maxSizeFilter)
+        }
+        Log.i(TAG, "MaxSize receiver registered")
         // Probe existing USB: if AccessoryIoService was already running when this service started,
         // attach to its TCP video forwarding port without waiting for ACTION_USB_CONNECTED broadcast.
         ipcReceiver?.probeExistingUsb(this)
@@ -215,7 +237,12 @@ class ScreenCaptureService : Service() {
                         saveAiPrefs(true, host, aiPort, w, h, fps, q)
                     }
                 }
-                CMD_AI_STOP -> {
+                CMD_SET_MAX_SIZE -> {
+                    val maxSize = intent.getIntExtra(EXTRA_MAX_SIZE, 0)
+                    Log.i(TAG, "CMD: SET_MAX_SIZE=$maxSize")
+                    if (maxSize > 0) updateMaxSize(maxSize)
+                }
+                                CMD_AI_STOP -> {
                     Log.i(TAG, "CMD: AI_STOP")
                     aiStream?.stop()
                     aiStream = null
@@ -341,6 +368,7 @@ class ScreenCaptureService : Service() {
         Log.i(TAG, "Stopping capture (mode=$mirrorMode)")
         instance = null
         try { unregisterReceiver(fpsReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(maxSizeReceiver) } catch (_: Exception) {}
         try { ipcReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
         ipcReceiver = null
         stopTcpSecondary()
@@ -470,7 +498,37 @@ class ScreenCaptureService : Service() {
     }
 
 
-    fun requestIdr() {
+    fun updateMaxSize(maxSize: Int) {
+        val sz = maxSize.coerceAtLeast(0)
+        desiredMaxSize = sz
+        Log.i(TAG, "Updating MaxSize to $sz")
+        if (projection == null || encoder == null) return
+        restartEncoderForMaxSize(sz)
+    }
+
+    private fun restartEncoderForMaxSize(maxSize: Int) {
+        if (maxSizeRestartPending) return
+        maxSizeRestartPending = true
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                val proj = projection ?: return@postDelayed
+                val sender = videoSender ?: return@postDelayed
+                Log.i(TAG, "Restarting encoder for MaxSize=$maxSize (mode=$mirrorMode)")
+                stopTcpSecondary()
+                encoder?.stop()
+                encoder = H264Encoder(this, proj, sender, desiredFps, maxSize)
+                encoder?.start()
+                startTcpSecondary()
+                Log.i(TAG, "Encoder restarted for MaxSize=$maxSize")
+            } catch (e: Exception) {
+                Log.w(TAG, "Encoder MaxSize restart failed: ${e.message}")
+            } finally {
+                maxSizeRestartPending = false
+            }
+        }, 350)
+    }
+
+        fun requestIdr() {
         Log.i(TAG, "Requesting IDR frame")
         encoder?.requestIdr()
     }
