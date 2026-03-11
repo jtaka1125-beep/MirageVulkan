@@ -6572,13 +6572,20 @@ public:
 
 
 
+            // Layer 0: タイムアウトチェック (STANDBY→IDLE)
+            vision_engine_->checkLayer0Timeout(device_id);
+
             auto decision = vision_engine_->update(device_id, vision_matches);
 
-
-
-
-
-
+            // 状態遷移ログ (Layer 0/1 デバッグ用)
+            if (decision.prev_state != decision.state) {
+                MLOG_INFO("vde", "[%s] %s -> %s (tpl=%s score=%.2f)",
+                    device_id.c_str(),
+                    visionStateToString(decision.prev_state),
+                    visionStateToString(decision.state),
+                    decision.template_id.c_str(),
+                    decision.score);
+            }
 
             // Layer 1 が解決したら Layer 3 を破棄
 
