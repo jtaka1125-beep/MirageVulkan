@@ -40,8 +40,17 @@ bool HybridCommandSender::start() {
         return true;
     });
 
+    // Helper to setup HID callback after registration
+    auto setup_hid_callback = [this](const std::string& usb_id, std::shared_ptr<mirage::AoaHidTouch>& touch) {
+        if (user_input_callback_) {
+            touch->setUserInputCallback([this, usb_id]() {
+                if (user_input_callback_) user_input_callback_(usb_id);
+            });
+        }
+    };
+
     // Move pending HID registration to the real device ID after re-enumeration
-    usb_sender_->set_device_opened_callback([this](const std::string& usb_id, libusb_device_handle* handle) {
+    usb_sender_->set_device_opened_callback([this, setup_hid_callback](const std::string& usb_id, libusb_device_handle* handle) {
         std::lock_guard<std::mutex> lock(hid_mutex_);
         // ISSUE-3: find any pending entry by "_pending_" prefix
         auto it = hid_touches_.end();
@@ -53,6 +62,7 @@ bool HybridCommandSender::start() {
             it->second->set_handle(handle);
             hid_touches_[usb_id] = std::move(it->second);
             hid_touches_.erase(it);
+            setup_hid_callback(usb_id, hid_touches_[usb_id]);
             MLOG_INFO("hybridcmd", "HID touch registered for device %s (from pending)", usb_id.c_str());
         } else if (hid_touches_.count(usb_id) && hid_touches_[usb_id]->is_registered()) {
             // Already registered; just update handle (e.g. device re-enumeration)
@@ -66,6 +76,7 @@ bool HybridCommandSender::start() {
             // AOA v2 is required for HID; try to register directly with the open handle.
             if (touch->register_device(handle)) {
                 hid_touches_[usb_id] = std::move(touch);
+                setup_hid_callback(usb_id, hid_touches_[usb_id]);
                 MLOG_INFO("hybridcmd", "HID touch late-registered for device %s", usb_id.c_str());
             } else {
                 MLOG_WARN("hybridcmd", "HID late-registration failed for %s (AOA v1 or unsupported)", usb_id.c_str());
@@ -667,6 +678,28 @@ std::string HybridCommandSender::get_touch_mode_str() const {
         case TouchMode::WIFI_TCP:    return "WiFi TCP";
         case TouchMode::ADB_FALLBACK: return "ADB";
         default: return "UNKNOWN";
+    }
+}
+
+void HybridCommandSender::setUserInputCallback(UserInputCallback cb) {
+    user_input_callback_ = std::move(cb);
+    // Update existing HID touches with new callback
+    {
+        std::lock_guard<std::mutex> lock(hid_mutex_);
+        for (auto& [usb_id, touch] : hid_touches_) {
+            if (touch && user_input_callback_) {
+                touch->setUserInputCallback([this, usb_id]() {
+                    if (user_input_callback_) user_input_callback_(usb_id);
+                });
+            }
+        }
+    }
+    // Update ADB fallback
+    if (adb_fallback_ && user_input_callback_) {
+        adb_fallback_->setUserInputCallback([this]() {
+            // ADB fallback doesn't know device_id, use empty string
+            if (user_input_callback_) user_input_callback_("");
+        });
     }
 }
 

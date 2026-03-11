@@ -1,4 +1,4 @@
-# MirageSystem Project State
+﻿# MirageSystem Project State
 # Updated: 2026-03-10
 # Read at session start, updated at session end.
 # THIS IS THE MAIN REPOSITORY (MirageComplete is legacy/migrated)
@@ -79,7 +79,7 @@
   - AudioCaptureService, ML: ScreenAnalyzer, ChangeDetector, OcrEngine
   - BootReceiver: WiFi ADB port 55555固定 (2026-03-08追加)
   - ※ソース未コミット変更あり (H264Encoder.kt HEVC移行等)
-- :accessory (com.mirage.accessory) - 2026/02/24 accessory-release.apk
+- :accessory (LEGACY - merged to :capture on 2026-03-08, no longer built)
   - AccessoryIoService (AOA USB I/O), MirageAccessibilityService
   - Protocol.kt (MIRA protocol, cmd 0x00-0x27)
   - directBootAware=true, USB_ACCESSORY_ATTACHED intent-filter
@@ -114,17 +114,17 @@
 7. TileCompositor E2Eテスト: X1でport0/port1合成フレームの確認
 8. AOA full-path test [BLOCKED: physical USB]
 
-## GUI File Line Counts (Updated 2026-03-10)
+## GUI File Line Counts (Updated 2026-03-11)
 - gui_ai_panel.cpp:       663
-- gui_init.cpp:          1189
-- gui_threads.cpp:        676
+- gui_init.cpp:          1219
+- gui_threads.cpp:        728
 - gui_device_control.cpp: 539
-- gui_command.cpp:        455
+- gui_command.cpp:        504
 - gui_window.cpp:         224
 - gui_main.cpp:           360
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4117 lines
+- TOTAL:                 4248 lines
 
 ## Key Decisions Log
 - 2026-03-10: AIパイプライン実コード確認。Layer 2.5 LfmClassifierモデルをLFM2系→qwen3系に変更済み(日本語対応)。AiStream.kt(Android側AIサブストリーム)実装確認。AI_STATUS.md新規作成。

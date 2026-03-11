@@ -752,6 +752,11 @@ public:
 
 
 
+    // Layer 0 support: ユーザー操作通知 → STANDBY状態へ遷移
+    void notifyUserInput(const std::string& device_id);
+
+
+
 
 
 

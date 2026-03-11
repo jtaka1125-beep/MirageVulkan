@@ -63,6 +63,10 @@ public:
     void set_enabled(bool en) { enabled_.store(en); }
     bool is_enabled() const { return enabled_.load(); }
 
+    // User input callback (Layer 0 support)
+    using UserInputCallback = std::function<void()>;
+    void setUserInputCallback(UserInputCallback cb) { user_input_callback_ = std::move(cb); }
+
     // Device screen size (cached). 0 if not yet queried or query failed.
     int device_width();
     int device_height();
@@ -110,6 +114,10 @@ private:
     static constexpr size_t ASYNC_QUEUE_MAX = 32;
     void async_worker_loop();
     void enqueue_async(const std::string& cmd);
+
+    // User input callback
+    UserInputCallback user_input_callback_;
+    void notifyUserInput() { if (user_input_callback_) user_input_callback_(); }
 };
 
 } // namespace mirage

@@ -22,6 +22,7 @@ class HybridCommandSender {
 public:
     using AckCallback = std::function<void(const std::string& device_id, uint32_t seq, uint8_t status)>;
     using VideoDataCallback = std::function<void(const std::string& device_id, const uint8_t* data, size_t len)>;
+    using UserInputCallback = std::function<void(const std::string& device_id)>;
 
     // Touch input mode tracking
     enum class TouchMode { AOA_HID, MIRA_USB, WIFI_TCP, ADB_FALLBACK };
@@ -115,6 +116,10 @@ public:
     // ADB fallback
     mirage::AdbTouchFallback* get_adb_fallback() { return adb_fallback_.get(); }
 
+    // Set user input callback (Layer 0 support)
+    // Called whenever tap/swipe/long_press/pinch is executed
+    void setUserInputCallback(UserInputCallback cb);
+
     // Video control commands
     uint32_t send_video_fps(const std::string& device_id, int fps) {
         if (usb_sender_ && usb_sender_->is_device_connected(device_id)) return usb_sender_->send_video_fps(device_id, fps);
@@ -172,6 +177,9 @@ private:
     // Lookup: resolve any device_id to a WiFi sender
     std::shared_ptr<gui::WifiCommandSender> get_wifi_sender(
             const std::string& device_id) const;
+
+    // User input callback for Layer 0 support
+    UserInputCallback user_input_callback_;
 
     // Internal: try AOA HID tap/swipe for a specific device, return true if succeeded
     bool try_hid_tap(const std::string& device_id, int x, int y, int screen_w, int screen_h);

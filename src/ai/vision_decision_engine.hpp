@@ -147,7 +147,7 @@ struct DeviceVisionState {
     // ── Layer 2: LLM Vision (非同期) ──
     std::chrono::steady_clock::time_point layer2_last_call;  // Layer 2最終呼び出し時刻
     std::chrono::steady_clock::time_point layer2_start_time; // Layer 2 開始時刻 (フリーズ検出用)
-    std::shared_ptr<Layer3Task> layer2_task;  // 実行中の非同期タスク
+    std::shared_ptr<Layer2Task> layer2_task;  // 実行中の非同期タスク
     // ── Layer 2 トリガー条件 ──
     int  consecutive_no_match = 0;        // 連続マッチなしフレーム数
     int  consecutive_same_match = 0;      // 同一テンプレート継続フレーム数

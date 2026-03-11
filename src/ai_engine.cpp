@@ -2510,23 +2510,11 @@ public:
 
 
 
-        vde_config.enable_layer3          = config.vde_enable_layer3;
-
-
-
-        vde_config.layer3_no_match_frames = config.vde_layer3_no_match_frames;
-
-
-
-        vde_config.layer3_stuck_frames    = config.vde_layer3_stuck_frames;
-
-
-
-        vde_config.layer3_no_match_ms     = config.vde_layer3_no_match_ms;
-
-
-
-        vde_config.layer3_cooldown_ms     = config.vde_layer3_cooldown_ms;
+        vde_config.enable_layer2          = config.vde_enable_layer3;
+        vde_config.layer2_no_match_frames = config.vde_layer3_no_match_frames;
+        vde_config.layer2_stuck_frames    = config.vde_layer3_stuck_frames;
+        vde_config.layer2_no_match_ms     = config.vde_layer3_no_match_ms;
+        vde_config.layer2_cooldown_ms     = config.vde_layer3_cooldown_ms;
 
 
 
@@ -5020,14 +5008,8 @@ public:
 
 
 
-    void registerLayer3Template(
-
-
-
-        const VisionDecisionEngine::Layer3Result& l3,
-
-
-
+    void registerLayer2Template(
+        const VisionDecisionEngine::Layer2Result& l2,
         const uint8_t* rgba, int frame_w, int frame_h)
 
 
@@ -5052,7 +5034,7 @@ public:
 
 
 
-        int cx = l3.x, cy = l3.y;
+        int cx = l2.x, cy = l2.y;
 
 
 
@@ -5156,7 +5138,7 @@ public:
 
 
 
-        std::string fname = "auto_" + l3.type + "_" + std::to_string(now_ms) + ".png";
+        std::string fname = "auto_" + l2.type + "_" + std::to_string(now_ms) + ".png";
 
 
 
@@ -5232,7 +5214,7 @@ public:
 
 
 
-        entry.name  = "auto_" + l3.type + "_" + l3.button_text;
+        entry.name  = "auto_" + l2.type + "_" + l2.button_text;
 
 
 
@@ -6606,7 +6588,7 @@ public:
 
 
 
-                vision_engine_->cancelLayer3(device_id);
+                vision_engine_->cancelLayer2(device_id);
 
 
 
@@ -7150,7 +7132,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        if (vision_engine_->shouldTriggerLayer3(device_id)) {
+                        if (vision_engine_->shouldTriggerLayer2(device_id)) {
                             static std::mutex s_l3_cd_mu1;
                             static std::unordered_map<std::string, int64_t> s_last_l3_ms1;
                             const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7161,7 +7143,7 @@ if (decision.should_act && can_send) {
                                 int64_t &last = s_last_l3_ms1[device_id];
                                 if (now_ms - last >= 2000) { last = now_ms; allow_l3 = true; }
                             }
-                            if (allow_l3) vision_engine_->launchLayer3Async(device_id, rgba, width, height);
+                            if (allow_l3) vision_engine_->launchLayer2Async(device_id, rgba, width, height);
 
 
 
@@ -7173,11 +7155,11 @@ if (decision.should_act && can_send) {
 
 
 
-                        auto l3 = vision_engine_->pollLayer3Result(device_id);
+                        auto l2 = vision_engine_->pollLayer2Result(device_id);
 
 
 
-                        if (l3.has_result && l3.found) {
+                        if (l2.has_result && l2.found) {
 
 
 
@@ -7185,15 +7167,15 @@ if (decision.should_act && can_send) {
 
 
 
-                            action.x    = l3.x;
+                            action.x    = l2.x;
 
 
 
-                            action.y    = l3.y;
+                            action.y    = l2.y;
 
 
 
-                            action.reason = "Layer3: " + l3.type + " button=" + l3.button_text;
+                            action.reason = "Layer3: " + l2.type + " button=" + l2.button_text;
 
 
 
@@ -7213,11 +7195,11 @@ if (decision.should_act && can_send) {
 
 
 
-                                      slot, l3.x, l3.y, l3.button_text.c_str());
+                                      slot, l2.x, l2.y, l2.button_text.c_str());
 
 
 
-                            registerLayer3Template(l3, rgba, width, height);
+                            registerLayer2Template(l2, rgba, width, height);
 
 
 
@@ -7437,7 +7419,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        if (vision_engine_->shouldTriggerLayer3(device_id)) {
+                        if (vision_engine_->shouldTriggerLayer2(device_id)) {
 
 
 
@@ -7445,7 +7427,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            vision_engine_->launchLayer3Async(device_id, rgba, width, height);
+                            vision_engine_->launchLayer2Async(device_id, rgba, width, height);
 
 
 
@@ -7461,11 +7443,11 @@ if (decision.should_act && can_send) {
 
 
 
-                        auto l3 = vision_engine_->pollLayer3Result(device_id);
+                        auto l2 = vision_engine_->pollLayer2Result(device_id);
 
 
 
-                        if (l3.has_result && l3.found) {
+                        if (l2.has_result && l2.found) {
 
 
 
@@ -7473,15 +7455,15 @@ if (decision.should_act && can_send) {
 
 
 
-                            action.x    = l3.x;
+                            action.x    = l2.x;
 
 
 
-                            action.y    = l3.y;
+                            action.y    = l2.y;
 
 
 
-                            action.reason = "Layer3: " + l3.type + " button=" + l3.button_text;
+                            action.reason = "Layer3: " + l2.type + " button=" + l2.button_text;
 
 
 
@@ -7497,7 +7479,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            MLOG_INFO("ai", "Layer 3 TAP: slot=%d (%d,%d) %s", slot, l3.x, l3.y, l3.button_text.c_str());
+                            MLOG_INFO("ai", "Layer 3 TAP: slot=%d (%d,%d) %s", slot, l2.x, l2.y, l2.button_text.c_str());
 
 
 
@@ -7505,7 +7487,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            registerLayer3Template(l3, rgba, width, height);
+                            registerLayer2Template(l2, rgba, width, height);
 
 
 
@@ -8786,6 +8768,12 @@ if (decision.should_act && can_send) {
 
 
         if (vision_engine_) vision_engine_->resetAll();
+    }
+
+    // Layer 0 support: ユーザー操作通知
+    void notifyUserInput(const std::string& device_id) {
+        if (vision_engine_) vision_engine_->notifyUserInput(device_id);
+
 
 
 
@@ -19346,10 +19334,6 @@ void AIEngine::resetAllVision() {
 
 
 
-
-
-
-
     if (impl_) impl_->resetAllVision();
 
 
@@ -19557,6 +19541,12 @@ std::vector<std::pair<std::string, int>> AIEngine::getAllDeviceVisionStates() co
 
 
 
+// Layer 0 support: ユーザー操作通知 → STANDBY状態へ遷移
+void AIEngine::notifyUserInput(const std::string& device_id) {
+    if (impl_) {
+        impl_->notifyUserInput(device_id);
+    }
+}
 
 void AIEngine::setVDEConfig(const VDEConfig& cfg) {
 
@@ -20981,6 +20971,7 @@ AIEngine::VDEConfig AIEngine::getVDEConfig() const { return {}; }
 
 
 void AIEngine::setVDEConfig(const VDEConfig&) {}
+void AIEngine::notifyUserInput(const std::string&) {}
 
 
 

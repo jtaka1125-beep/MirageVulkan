@@ -515,6 +515,15 @@ int success = 0;
                 std::string tcp_host = dev.ip_address.empty() ? "127.0.0.1" : dev.ip_address;
                 { std::string h; if (mirage::config::ExpectedSizeRegistry::instance().getTcpHost(dev.hardware_id, h)) tcp_host = h; }
                 MLOG_INFO("mirror", "VID0 TCP host: %s port=%d for %s", tcp_host.c_str(), local_port, dev.display_name.c_str());
+
+                // Send VIDEO_ROUTE(mode=2=TCP) to APK before TCP connect (APK starts TcpVideoSender on receive)
+                if (!dev.ip_address.empty() && g_hybrid_cmd) {
+                    const uint8_t VIDEO_ROUTE_TCP = 2;
+                    g_hybrid_cmd->send_video_route(dev.hardware_id, VIDEO_ROUTE_TCP, tcp_host, local_port);
+                    MLOG_INFO("mirror", "Sent VIDEO_ROUTE(TCP) to %s port=%d", dev.hardware_id.c_str(), local_port);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // Wait for APK to start TcpVideoSender
+                }
+
                 started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port, tcp_host);
             }
             if (started) success++;
@@ -540,6 +549,15 @@ void initializeHybridCommand() {
     });
 
     setupUsbVideoCallback();
+
+    // Layer 0 support: ユーザー操作検出 → AIEngine.notifyUserInput → VDE STANDBY遷移
+#ifdef USE_AI
+    g_hybrid_cmd->setUserInputCallback([](const std::string& device_id) {
+        if (g_ai_engine) {
+            g_ai_engine->notifyUserInput(device_id);
+        }
+    });
+#endif
 
     g_hybrid_cmd->set_aoa_auto_switch(mirage::config::getConfig().aoa.auto_switch);
     MLOG_INFO("gui", "AOA auto-switch: %s",
@@ -740,6 +758,18 @@ static void onFpsCommand(const std::string& device_id, int fps) {
 static void onRouteCommand(const std::string& device_id,
                            ::gui::RouteController::VideoRoute route,
                            const std::string& host, int port) {
+    // Skip RouteController auto-switching for TCP-direct devices (USBLAN/WiFi with ip_address)
+    // These devices use explicit VIDEO_ROUTE(TCP) sent in initializeMultiReceiver()
+    if (g_adb_manager) {
+        auto devs = g_adb_manager->getUniqueDevices();
+        for (const auto& d : devs) {
+            if (d.hardware_id == device_id && !d.ip_address.empty()) {
+                MLOG_INFO("RouteCtrl", "Skipped Route=%s for TCP-direct device %s (has ip_address)",
+                          (route == ::gui::RouteController::VideoRoute::WIFI) ? "WiFi" : "USB", device_id.c_str());
+                return;
+            }
+        }
+    }
     if (g_hybrid_cmd) {
         uint8_t mode = (route == ::gui::RouteController::VideoRoute::WIFI) ? 1 : 0;
         g_hybrid_cmd->send_video_route(device_id, mode, host, port);

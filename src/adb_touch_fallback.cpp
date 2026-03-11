@@ -277,18 +277,21 @@ void AdbTouchFallback::async_worker_loop() {
 }
 
 bool AdbTouchFallback::tap(int x, int y) {
+    notifyUserInput();  // Layer 0 support
     std::ostringstream oss;
     oss << "shell input tap " << x << " " << y;
     return exec_adb_async(oss.str());
 }
 
 bool AdbTouchFallback::swipe(int x1, int y1, int x2, int y2, int duration_ms) {
+    notifyUserInput();  // Layer 0 support
     std::ostringstream oss;
     oss << "shell input swipe " << x1 << " " << y1 << " " << x2 << " " << y2 << " " << duration_ms;
     return exec_adb_async(oss.str());
 }
 
 bool AdbTouchFallback::long_press(int x, int y, int hold_ms) {
+    notifyUserInput();  // Layer 0 support
     // Long press = swipe from same point to same point with duration
     return swipe(x, y, x, y, hold_ms);
 }
