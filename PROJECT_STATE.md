@@ -1,5 +1,5 @@
 ﻿# MirageSystem Project State
-# Updated: 2026-03-10
+# Updated: 2026-03-11
 # Read at session start, updated at session end.
 # THIS IS THE MAIN REPOSITORY (MirageComplete is legacy/migrated)
 
@@ -8,10 +8,7 @@
 ## Active Blockers / Known Issues
 - AOA full-path verification: requires physical USB connection (currently WiFi-only)
 - Ollama: Session 1 (ユーザーセッション) での手動起動が必要
-- X1 APKデプロイ: WiFiADB shellゾンビ問題は修正済み、次回Ollama起動後に再実行
-- AnnexBSplitter.kt: HEVC NALタイプ(VPS=32等)の正確な判定を要確認
-- git未コミット: H264Encoder.kt他多数 (HEVC移行含む) → 要コミット
-- AiJpegReceiver (PC側): AiJpegSender対応のTCP受信コードが未確認 → 要調査
+- AiJpegReceiver (PC側): 未実装 (現状FrameReadyEvent経由で動作、低優先度)
 
 ## Architecture (Video Pipeline)
 - Engine: FULLY CUSTOM. No scrcpy.
@@ -44,7 +41,7 @@
              ※ qwen3.5:4b はvision projectorなしのため不使用
   VDE設定: confirm_count=3, cooldown_ms=2000
            Layer3トリガー: 5s無マッチ or 10s同一テンプレートスタック, cooldown=30s
-  テンプレート: build/templates/ (現在0枚 → GUIのLearning Modeで追加)
+  テンプレート: build/templates/ (現在6枚 → GUIのLearning Modeで追加)
 
 ### Android AIストリーム (AiStream.kt) ← 2026-03-10確認, 実装済み
   H.264とは独立したVirtualDisplay → ImageReader(RGBA_8888) → JPEG → TCP送信
@@ -105,14 +102,13 @@
 - post-commit hook: Ollama停止時はメモリ保存スキップ (エラーは無害)
 
 ## Next Priorities (Ordered)
-1. AnnexBSplitter.kt HEVCのNALタイプ判定確認 (VPS=32, SPS=33, PPS=34)
-2. X1でH.265 E2Eテスト: ScreenCaptureService起動→GUI表示確認
-3. AiJpegReceiver (PC側): TCP受信コード有無を確認
-4. git commit: 未コミット変更一括コミット (HEVC移行等)
-5. Ollama起動後: LfmClassifier (qwen3) E2Eテスト
-6. GUIのLearning Modeでテンプレート収集 → AIEngine Layer1/2テスト
-7. TileCompositor E2Eテスト: X1でport0/port1合成フレームの確認
-8. AOA full-path test [BLOCKED: physical USB]
+1. ✅ AnnexBSplitter.kt HEVC - RtpH264Packetizerで正しく処理済み (2026-03-11確認)
+2. ✅ H.265 E2E - X1 HEVC 1080x1800@60fps, TCP接続確立, GUI表示OK (2026-03-11確認)
+3. ✅ git commit - 未コミット変更一括コミット完了 (2026-03-11, 7件)
+4. ✅ LfmClassifier - qwen3:0.6b + /no_think モード動作確認 (2026-03-11)
+5. ✅ TileCompositor - 9dd4b29で削除済み (不要)
+6. GUIのLearning Modeでテンプレート収集 → AIEngine Layer1テスト
+7. AOA full-path test [BLOCKED: physical USB]
 
 ## GUI File Line Counts (Updated 2026-03-11)
 - gui_ai_panel.cpp:       663
@@ -127,6 +123,7 @@
 - TOTAL:                 4256 lines
 
 ## Key Decisions Log
+- 2026-03-11: H.265 E2E確認完了。AnnexBSplitter/RtpH264Packetizer HEVC対応確認。LfmClassifier動作確認。TileCompositor削除確認。検出オーバーレイ可視化実装。座標スケーリング実装。7件コミット。
 - 2026-03-10: AIパイプライン実コード確認。Layer 2.5 LfmClassifierモデルをLFM2系→qwen3系に変更済み(日本語対応)。AiStream.kt(Android側AIサブストリーム)実装確認。AI_STATUS.md新規作成。
 - 2026-03-10: ビデオコーデックをH.265/HEVCに確認。実機APK(X1)・ソースコード(MirageVulkan)を直接調査。PC受信側はHEVC自動検出+FFmpegデコード対応済み。VIDEO_PIPELINE_STATUS.md新規作成。
 - 2026-03-08: BootReceiver追加、WiFi ADB port 55555固定。X1 APK 2026-03-10更新確認。
