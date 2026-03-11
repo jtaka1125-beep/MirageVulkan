@@ -5004,6 +5004,47 @@ public:
 
 
 
+    // CPU版NCC類似度計算（テンプレート重複検出用）
+    // サイズが異なる場合は0.0を返す
+    float computeNccSimilarity(const uint8_t* a, int wa, int ha,
+                               const uint8_t* b, int wb, int hb) const {
+        if (wa != wb || ha != hb || wa <= 0 || ha <= 0) return 0.0f;
+
+        const int n = wa * ha;
+        double sum_a = 0, sum_b = 0;
+        double sum_aa = 0, sum_bb = 0, sum_ab = 0;
+
+        for (int i = 0; i < n; ++i) {
+            double va = a[i];
+            double vb = b[i];
+            sum_a += va;
+            sum_b += vb;
+            sum_aa += va * va;
+            sum_bb += vb * vb;
+            sum_ab += va * vb;
+        }
+
+        double mean_a = sum_a / n;
+        double mean_b = sum_b / n;
+        double var_a = sum_aa / n - mean_a * mean_a;
+        double var_b = sum_bb / n - mean_b * mean_b;
+        double cov = sum_ab / n - mean_a * mean_b;
+
+        if (var_a < 1e-10 || var_b < 1e-10) return 0.0f;
+        return static_cast<float>(cov / std::sqrt(var_a * var_b));
+    }
+
+    // 既存Layer3キャッシュとの最大類似度を計算
+    float maxSimilarityWithCache(const uint8_t* gray, int w, int h) const {
+        float max_sim = 0.0f;
+        for (const auto& cached : layer3_cache_) {
+            float sim = computeNccSimilarity(gray, w, h,
+                                             cached.gray.data(), cached.w, cached.h);
+            if (sim > max_sim) max_sim = sim;
+        }
+        return max_sim;
+    }
+
     // Layer 3 検出成功時にテンプレートをファイル保存 & ランタイム登録
 
 
@@ -5120,11 +5161,13 @@ public:
 
         }
 
-
-
-
-
-
+        // 重複チェック: 既存Layer3キャッシュとの類似度を確認
+        float max_sim = maxSimilarityWithCache(gray.data(), rw, rh);
+        if (max_sim >= LAYER3_DEDUP_THRESHOLD) {
+            MLOG_INFO("ai", "Layer3 重複スキップ: 類似度=%.3f (閾値=%.2f)",
+                      max_sim, LAYER3_DEDUP_THRESHOLD);
+            return;
+        }
 
         // ファイル名: auto_<type>_<timestamp>.png
 
@@ -5149,6 +5192,9 @@ public:
 
 
 
+
+        // キャッシュ用にgrayデータのコピーを保持
+        std::vector<uint8_t> gray_copy = gray;
 
         // PNG 保存
 
@@ -5276,8 +5322,15 @@ public:
 
             MLOG_INFO("ai", "Layer3 テンプレート自動登録: %s (%dx%d) -> tap", entry.name.c_str(), rw, rh);
 
-
-
+            // キャッシュに追加（重複検出用）
+            Layer3TemplateCache cache_entry;
+            cache_entry.name = entry.name;
+            cache_entry.gray = std::move(gray_copy);
+            cache_entry.w = rw;
+            cache_entry.h = rh;
+            layer3_cache_.push_back(std::move(cache_entry));
+            MLOG_DEBUG("ai", "Layer3 キャッシュ追加: %s (total=%zu)",
+                       entry.name.c_str(), layer3_cache_.size());
         }
 
 
@@ -17934,6 +17987,16 @@ private:
 
 
     std::vector<AIEngine::MatchRect> last_matches_;
+
+    // Layer3 自動登録テンプレートの重複検出用キャッシュ
+    struct Layer3TemplateCache {
+        std::string name;
+        std::vector<uint8_t> gray;
+        int w = 0;
+        int h = 0;
+    };
+    std::vector<Layer3TemplateCache> layer3_cache_;
+    static constexpr float LAYER3_DEDUP_THRESHOLD = 0.90f;  // 類似度閾値
 
 
 
