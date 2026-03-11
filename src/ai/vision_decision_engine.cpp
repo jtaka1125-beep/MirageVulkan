@@ -301,7 +301,7 @@ VisionDecision VisionDecisionEngine::update(
 }
 
 // =============================================================================
-// アクション実行完了通知 → CONFIRMED → COOLDOWN
+// アクション実行完了通知 → CONFIRMED → VERIFYING (検証有効時) or COOLDOWN
 // =============================================================================
 
 void VisionDecisionEngine::notifyActionExecuted(
@@ -315,28 +315,49 @@ void VisionDecisionEngine::notifyActionExecuted(
 
     if (ds.state == VisionState::CONFIRMED) {
         VisionState old_state = ds.state;
-        ds.cooldown_template_id = ds.detected_template_id;
-        ds.cooldown_start = now;
-        transitionTo(ds, VisionState::COOLDOWN);
+        
+        if (config_.enable_verify) {
+            // 検証有効: VERIFYING状態へ遷移
+            ds.verify_template_id = ds.detected_template_id;
+            ds.verify_start = now;
+            ds.verify_retry_count = 0;
+            transitionTo(ds, VisionState::VERIFYING);
 
-        // デバウンスマップ更新
-        DebounceKey key{device_id, ds.detected_template_id};
-        debounce_map_[key] = now;
+            MLOG_INFO("ai.vision", "アクション実行 → VERIFYING: device=%s tpl=%s",
+                       device_id.c_str(), ds.verify_template_id.c_str());
 
-        MLOG_DEBUG("ai.vision", "アクション実行完了 → COOLDOWN: device=%s tpl=%s",
-                   device_id.c_str(), ds.cooldown_template_id.c_str());
+            mirage::StateChangeEvent evt;
+            evt.device_id = device_id;
+            evt.old_state = static_cast<int>(old_state);
+            evt.new_state = static_cast<int>(VisionState::VERIFYING);
+            evt.template_id = ds.verify_template_id;
+            evt.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count();
+            mirage::bus().publish(evt);
+        } else {
+            // 検証無効: 従来通りCOOLDOWNへ
+            ds.cooldown_template_id = ds.detected_template_id;
+            ds.cooldown_start = now;
+            transitionTo(ds, VisionState::COOLDOWN);
 
-        mirage::StateChangeEvent evt;
-        evt.device_id = device_id;
-        evt.old_state = static_cast<int>(old_state);
-        evt.new_state = static_cast<int>(VisionState::COOLDOWN);
-        evt.template_id = ds.cooldown_template_id;
-        evt.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
-        mirage::bus().publish(evt);
+            DebounceKey key{device_id, ds.detected_template_id};
+            debounce_map_[key] = now;
 
-        ds.detected_template_id.clear();
-        ds.consecutive_count = 0;
+            MLOG_DEBUG("ai.vision", "アクション実行完了 → COOLDOWN: device=%s tpl=%s",
+                       device_id.c_str(), ds.cooldown_template_id.c_str());
+
+            mirage::StateChangeEvent evt;
+            evt.device_id = device_id;
+            evt.old_state = static_cast<int>(old_state);
+            evt.new_state = static_cast<int>(VisionState::COOLDOWN);
+            evt.template_id = ds.cooldown_template_id;
+            evt.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count();
+            mirage::bus().publish(evt);
+
+            ds.detected_template_id.clear();
+            ds.consecutive_count = 0;
+        }
     } else if (ds.state == VisionState::ERROR_RECOVERY) {
         // エラー回復アクション実行完了 → IDLE
         VisionState old_state = ds.state;
@@ -375,6 +396,121 @@ void VisionDecisionEngine::resetDevice(const std::string& device_id) {
 void VisionDecisionEngine::resetAll() {
     device_states_.clear();
     debounce_map_.clear();
+}
+
+// =============================================================================
+// アクション検証 (VERIFYING状態)
+// =============================================================================
+
+VisionDecisionEngine::VerifyResult VisionDecisionEngine::checkVerification(
+    const std::string& device_id,
+    const std::vector<VisionMatch>& matches,
+    std::chrono::steady_clock::time_point now)
+{
+    VerifyResult result;
+    
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return result;
+    
+    auto& ds = it->second;
+    if (ds.state != VisionState::VERIFYING) return result;
+    
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - ds.verify_start).count();
+    
+    // 待機時間経過前は何もしない
+    if (elapsed_ms < config_.verify_delay_ms) {
+        return result;
+    }
+    
+    // 同じテンプレートがまだ検出されているか確認
+    bool still_detected = false;
+    for (const auto& m : matches) {
+        if (m.template_id == ds.verify_template_id) {
+            still_detected = true;
+            result.x = m.x;
+            result.y = m.y;
+            break;
+        }
+    }
+    
+    if (!still_detected) {
+        // テンプレート消失 → 検証成功
+        result.verified_success = true;
+        
+        VisionState old_state = ds.state;
+        ds.cooldown_template_id = ds.verify_template_id;
+        ds.cooldown_start = now;
+        transitionTo(ds, VisionState::COOLDOWN);
+        
+        DebounceKey key{device_id, ds.verify_template_id};
+        debounce_map_[key] = now;
+        
+        MLOG_INFO("ai.vision", "検証成功 (消失確認) → COOLDOWN: device=%s tpl=%s",
+                   device_id.c_str(), ds.verify_template_id.c_str());
+        
+        mirage::StateChangeEvent evt;
+        evt.device_id = device_id;
+        evt.old_state = static_cast<int>(old_state);
+        evt.new_state = static_cast<int>(VisionState::COOLDOWN);
+        evt.template_id = ds.cooldown_template_id;
+        evt.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        mirage::bus().publish(evt);
+        
+        ds.verify_template_id.clear();
+        ds.detected_template_id.clear();
+        ds.consecutive_count = 0;
+        
+    } else if (elapsed_ms >= config_.verify_timeout_ms) {
+        // タイムアウト: まだ検出されている → リトライまたは失敗
+        result.retry_count = ds.verify_retry_count;
+        
+        if (ds.verify_retry_count < config_.verify_max_retry) {
+            // リトライ
+            result.should_retry = true;
+            result.x = ds.verify_x;
+            result.y = ds.verify_y;
+            ds.verify_retry_count++;
+            ds.verify_start = now;  // タイマーリセット
+            
+            MLOG_WARN("ai.vision", "検証失敗 → リトライ %d/%d: device=%s tpl=%s",
+                       ds.verify_retry_count, config_.verify_max_retry,
+                       device_id.c_str(), ds.verify_template_id.c_str());
+        } else {
+            // 最大リトライ超過 → 失敗として COOLDOWN へ
+            result.timeout = true;
+            
+            VisionState old_state = ds.state;
+            ds.cooldown_template_id = ds.verify_template_id;
+            ds.cooldown_start = now;
+            transitionTo(ds, VisionState::COOLDOWN);
+            
+            MLOG_WARN("ai.vision", "検証失敗 (タイムアウト) → COOLDOWN: device=%s tpl=%s retry=%d",
+                       device_id.c_str(), ds.verify_template_id.c_str(), ds.verify_retry_count);
+            
+            mirage::StateChangeEvent evt;
+            evt.device_id = device_id;
+            evt.old_state = static_cast<int>(old_state);
+            evt.new_state = static_cast<int>(VisionState::COOLDOWN);
+            evt.template_id = ds.cooldown_template_id;
+            evt.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count();
+            mirage::bus().publish(evt);
+            
+            ds.verify_template_id.clear();
+            ds.detected_template_id.clear();
+            ds.consecutive_count = 0;
+        }
+    }
+    
+    return result;
+}
+
+bool VisionDecisionEngine::isVerifying(const std::string& device_id) const {
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return false;
+    return it->second.state == VisionState::VERIFYING;
 }
 
 // =============================================================================

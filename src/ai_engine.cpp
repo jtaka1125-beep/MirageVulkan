@@ -6652,6 +6652,31 @@ public:
             // Layer 0: タイムアウトチェック (STANDBY→IDLE)
             vision_engine_->checkLayer0Timeout(device_id);
 
+            // VERIFYING状態: アクション実行後の検証フェーズ
+            if (vision_engine_->isVerifying(device_id)) {
+                auto verify = vision_engine_->checkVerification(device_id, vision_matches);
+                if (verify.should_retry && can_send) {
+                    // リトライ: 同じ座標を再タップ
+                    action.type = AIAction::Type::TAP;
+                    action.x = verify.x;
+                    action.y = verify.y;
+                    action.reason = "検証リトライ (" + std::to_string(verify.retry_count) + "/"
+                                  + std::to_string(vision_engine_->config().verify_max_retry) + ")";
+                    MLOG_INFO("vde", "[%s] VERIFY retry %d at (%d,%d)",
+                        device_id.c_str(), verify.retry_count, verify.x, verify.y);
+                }
+                if (verify.verified_success) {
+                    MLOG_INFO("vde", "[%s] VERIFY success - popup dismissed", device_id.c_str());
+                }
+                if (verify.timeout) {
+                    MLOG_WARN("vde", "[%s] VERIFY timeout - max retry exceeded", device_id.c_str());
+                }
+                // VERIFYING中は通常のupdateをスキップ（リトライアクションがあれば返す）
+                if (action.type != AIAction::Type::NONE) {
+                    return action;
+                }
+            }
+
             auto decision = vision_engine_->update(device_id, vision_matches);
 
             // 状態遷移ログ (Layer 0/1 デバッグ用)

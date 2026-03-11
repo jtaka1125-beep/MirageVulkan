@@ -31,6 +31,7 @@ enum class VisionState {
     IDLE,             // Layer 1: マッチなし（テンプレートマッチング稼働）
     DETECTED,         // テンプレート検出、確認待ち（N回連続で確定）
     CONFIRMED,        // 確定、アクション実行可
+    VERIFYING,        // アクション実行後の検証中（ポップアップ消失確認）
     COOLDOWN,         // 実行後冷却（同一テンプレート再実行防止）
     ERROR_RECOVERY    // エラーポップアップ検出時の自動回復
 };
@@ -41,6 +42,7 @@ inline const char* visionStateToString(VisionState s) {
         case VisionState::IDLE:           return "IDLE";
         case VisionState::DETECTED:       return "DETECTED";
         case VisionState::CONFIRMED:      return "CONFIRMED";
+        case VisionState::VERIFYING:      return "VERIFYING";
         case VisionState::COOLDOWN:       return "COOLDOWN";
         case VisionState::ERROR_RECOVERY: return "ERROR_RECOVERY";
     }
@@ -71,6 +73,11 @@ struct VisionDecisionConfig {
     int layer2_no_match_frames = 150; // 連続マッチなしフレーム数 (~5秒@30fps)
     int layer2_stuck_frames    = 300; // 同一テンプレート継続フレーム数 (~10秒@30fps)
     int layer2_no_match_ms     = 90000;// 時間ベーストリガー (90秒)
+    // ── アクション検証 (VERIFYING状態) ──
+    bool enable_verify = false;       // アクション後の検証を有効化（デフォルトOFF=後方互換）
+    int  verify_delay_ms = 500;       // アクション実行後、検証開始までの待機時間(ms)
+    int  verify_timeout_ms = 2000;    // 検証タイムアウト(ms) - この間に消失確認
+    int  verify_max_retry = 2;        // 検証失敗時の最大リトライ回数
 };
 
 // =============================================================================
@@ -153,6 +160,11 @@ struct DeviceVisionState {
     int  consecutive_same_match = 0;      // 同一テンプレート継続フレーム数
     std::string last_matched_template;    // 前フレームのマッチID
     std::chrono::steady_clock::time_point last_any_match_time;  // 最後にマッチした時刻
+    // ── アクション検証 (VERIFYING状態) ──
+    std::chrono::steady_clock::time_point verify_start;  // VERIFYING開始時刻
+    std::string verify_template_id;       // 検証対象テンプレートID
+    int verify_retry_count = 0;           // 現在のリトライ回数
+    int verify_x = 0, verify_y = 0;       // 検証対象の座標（リトライ用）
 };
 
 // =============================================================================
@@ -170,10 +182,30 @@ public:
                           std::chrono::steady_clock::time_point now =
                               std::chrono::steady_clock::now());
 
-    // アクション実行完了通知（CONFIRMED→COOLDOWN遷移）
+    // アクション実行完了通知（CONFIRMED→VERIFYING遷移、検証無効時はCOOLDOWN）
     void notifyActionExecuted(const std::string& device_id,
                               std::chrono::steady_clock::time_point now =
                                   std::chrono::steady_clock::now());
+
+    // ── アクション検証 ──
+    // 検証結果を表す構造体
+    struct VerifyResult {
+        bool should_retry = false;      // リトライすべきか
+        bool verified_success = false;  // 検証成功（テンプレート消失確認）
+        bool timeout = false;           // 検証タイムアウト
+        int retry_count = 0;            // 現在のリトライ回数
+        int x = 0, y = 0;               // リトライ用座標
+    };
+
+    // VERIFYING状態でのフレーム検証（毎フレーム呼び出し）
+    // @return 検証結果（リトライ要否、成功/タイムアウト）
+    VerifyResult checkVerification(const std::string& device_id,
+                                   const std::vector<VisionMatch>& matches,
+                                   std::chrono::steady_clock::time_point now =
+                                       std::chrono::steady_clock::now());
+
+    // 検証中か確認
+    bool isVerifying(const std::string& device_id) const;
 
     // デバイス状態リセット
     void resetDevice(const std::string& device_id);
