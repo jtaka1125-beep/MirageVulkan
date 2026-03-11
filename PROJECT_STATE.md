@@ -111,7 +111,7 @@
 7. AOA full-path test [BLOCKED: physical USB]
 
 ## GUI File Line Counts (Updated 2026-03-11)
-- gui_ai_panel.cpp:       768
+- gui_ai_panel.cpp:       815
 - gui_init.cpp:          1223
 - gui_threads.cpp:        736
 - gui_device_control.cpp: 539
@@ -120,7 +120,7 @@
 - gui_main.cpp:           360
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4365 lines
+- TOTAL:                 4412 lines
 
 ## Key Decisions Log
 - 2026-03-11: AiJpegReceiver実装（PC側AIストリーム受信）。MirageContext統合。

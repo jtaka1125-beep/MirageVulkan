@@ -601,8 +601,49 @@ static void renderLearningMode() {
 }
 
 // =============================================================================
-// セクション5: マッチオーバーレイ設定
 // =============================================================================
+// Section 5: AI Stream Control (AiJpegReceiver)
+// =============================================================================
+
+static void renderAiStreamControl() {
+    if (!g_ai_jpeg_receiver) {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "AI Stream: not initialized");
+        return;
+    }
+    bool running = g_ai_jpeg_receiver->isRunning();
+    if (running) {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[Listening]");
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "[Stopped]");
+    }
+    static int s_ai_port = 51200;
+    static char s_device_id[64] = "default";
+    ImGui::SameLine(100);
+    ImGui::SetNextItemWidth(80);
+    ImGui::InputInt("Port##aistream", &s_ai_port);
+    s_ai_port = std::max(1024, std::min(65535, s_ai_port));
+    ImGui::SameLine();
+    if (running) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::SmallButton("Stop##aistream")) { g_ai_jpeg_receiver->stop(); }
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+        if (ImGui::SmallButton("Start##aistream")) { g_ai_jpeg_receiver->start(s_device_id, s_ai_port); }
+        ImGui::PopStyleColor();
+    }
+    if (running) {
+        ImGui::Text("Frames: %llu  KB: %llu",
+            (unsigned long long)g_ai_jpeg_receiver->framesReceived(),
+            (unsigned long long)(g_ai_jpeg_receiver->bytesReceived() / 1024));
+    }
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "adb forward tcp:%d tcp:51200", s_ai_port);
+}
+
+// =============================================================================
+// Section 6: Match Overlay Settings
+// =============================================================================
+
 
 static void renderOverlaySettings() {
     ImGui::Checkbox("Overlay##match_overlay", &s_overlay_enabled);
@@ -733,7 +774,13 @@ void renderAIPanel() {
         renderLearningMode();
     }
 
-    // セクション5: オーバーレイ設定
+    // Section 5: AI Stream
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("AI Stream (JPEG)")) {
+        renderAiStreamControl();
+    }
+
+    // Section 6: Match Overlay
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Match Overlay")) {
         renderOverlaySettings();
