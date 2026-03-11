@@ -1,19 +1,27 @@
 # AI Vision System Status
+# Updated: 2026-03-11
 
 ## 3層アーキテクチャ
 
-| Layer | 状態 | 機能 | 負荷 |
-|-------|------|------|------|
-| Layer 0 | STANDBY | 待機モード (テンプレートマッチング停止) | 低 |
-| Layer 1 | IDLE/DETECTED/CONFIRMED/COOLDOWN | VulkanTemplateMatcher | 中 |
-| Layer 2 | AI並列投票 | qwen2.5vl + qwen3-vl + Gemini | 高 |
+| Layer | 状態 | 機能 | 負荷 | オーバーレイ色 |
+|-------|------|------|------|---------------|
+| Layer 0 | STANDBY | 待機モード (テンプレートマッチング停止) | 低 | なし |
+| Layer 1 | IDLE/DETECTED/CONFIRMED/COOLDOWN | VulkanTemplateMatcher | 中 | スコア基準 |
+| Layer 2.5 | LfmClassifier | qwen3:0.6b テキスト分類 | 低 | - |
+| Layer 3 | OllamaVision | llava-phi3 ポップアップ検出 | 高 | マゼンタ |
+
+## テンプレート状況 (2026-03-11)
+- 自動生成: 6枚 (Layer 3による自動収集)
+- 保存先: build/templates/
+- タグ: layer3_auto
+- 重複排除: NCC類似度 > 0.85 でスキップ
 
 ## 状態遷移トリガー
 
 - **Layer 0 → 1**: 操作なし 5秒
 - **Layer 1 → 0**: ユーザー操作検出 (tap/swipe/pinch)
-- **Layer 1 → 2**: 90秒マッチなし
-- **Layer 2 → 0**: 60秒フリーズ → ホームボタン押下
+- **Layer 1 → 3**: 60フレーム(~2秒)マッチなし or 90フレーム(~3秒)同一テンプレート
+- **Layer 3 → 1**: ポップアップ検出・アクション実行後
 
 ## AI モデル選定 (2026年ベンチマーク)
 
@@ -21,15 +29,14 @@
 |--------|-----------------|----------|------|
 | qwen2.5vl:3b | ~1秒 ✅ | ✅ | ローカル高速 |
 | qwen3-vl:4b | ~12秒 ✅ | ✅ | ローカル高精度 |
-| Gemini Flash | ~2秒 ✅ | ✅ | クラウド (無料枠) |
-| SmolVLM2:2.2b | ~0.8秒 ❌ | ❌ | 精度不足で除外 |
+| llava-phi3 | ~2秒 ✅ | ⚠️ | 現在使用中 |
+| qwen3:0.6b | ~0.5秒 | - | LfmClassifier用 |
 
-## 並列投票システム
-
-- 3モデル並列実行
-- 多数決 (2/3以上でYES)
-- Geminiエラー時は2モデルフォールバック
-- 実装: `mcp-server/gemini_router.py` の `vision_vote_parallel()`
+## テスト結果 (2026-03-11)
+- CTest: 32/32 PASSED
+- VDE: 40/40 PASSED
+- TemplateStore: 12/12 PASSED
+- TemplateManifest: 21/21 PASSED
 
 ---
 
