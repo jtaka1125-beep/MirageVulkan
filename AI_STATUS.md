@@ -6,7 +6,7 @@
 | Layer | 状態 | 機能 | 負荷 | オーバーレイ色 |
 |-------|------|------|------|---------------|
 | Layer 0 | STANDBY | 待機モード (テンプレートマッチング停止) | 低 | なし |
-| Layer 1 | IDLE/DETECTED/CONFIRMED/COOLDOWN | VulkanTemplateMatcher | 中 | スコア基準 |
+| Layer 1 | IDLE/DETECTED/CONFIRMED/VERIFYING/COOLDOWN | VulkanTemplateMatcher | 中 | スコア基準 |
 | Layer 2.5 | LfmClassifier | qwen3:0.6b テキスト分類 | 低 | - |
 | Layer 3 | OllamaVision | llava-phi3 ポップアップ検出 | 高 | マゼンタ |
 
@@ -22,6 +22,22 @@
 - **Layer 1 → 0**: ユーザー操作検出 (tap/swipe/pinch)
 - **Layer 1 → 3**: 60フレーム(~2秒)マッチなし or 90フレーム(~3秒)同一テンプレート
 - **Layer 3 → 1**: ポップアップ検出・アクション実行後
+
+## アクション検証 (VERIFYING状態) - 2026-03-11追加
+
+アクション実行後、ポップアップが消失したか検証するフェーズ:
+
+| 設定項目 | デフォルト | 説明 |
+|---------|-----------|------|
+| enable_verify | false | 検証を有効化（後方互換のためデフォルトOFF）|
+| verify_delay_ms | 500 | アクション後、検証開始までの待機時間 |
+| verify_timeout_ms | 2000 | 検証タイムアウト |
+| verify_max_retry | 2 | 最大リトライ回数 |
+
+状態遷移:
+- enable_verify=false: CONFIRMED → TAP → COOLDOWN (従来動作)
+- enable_verify=true:  CONFIRMED → TAP → VERIFYING → (消失確認) → COOLDOWN
+                       VERIFYING → (テンプレート残存) → リトライTAP → VERIFYING
 
 ## AI モデル選定 (2026年ベンチマーク)
 
