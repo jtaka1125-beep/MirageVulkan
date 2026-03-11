@@ -1,4 +1,4 @@
-# MirageVulkan
+﻿# MirageVulkan
 
 Android端末の画面ミラーリング・一括操作プラットフォーム。  
 USB AOA + WiFi ハイブリッド通信、Vulkan GPU H.264デコード、AI画像認識による自動操作を統合。
@@ -31,7 +31,7 @@ MirageVulkan/
 ├── tests/                  Google Test テストスイート (10本)
 ├── android/                Android APKソース (3モジュール)
 │   ├── app/                    MirageAndroid (映像送信)
-│   ├── accessory/              MirageAccessory (AOAコマンド受信)
+│   ├── accessory/              [LEGACY merged to capture 2026-03-08] (AOAコマンド受信)
 │   ├── capture/                MirageCapture (権限管理)
 │   └── mirage.keystore         APK署名鍵 (.gitignore除外)
 ├── scripts/                運用スクリプト

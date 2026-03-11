@@ -1,4 +1,4 @@
-# MirageTestKit v2.0 セットアップガイド
+﻿# MirageTestKit v2.0 セットアップガイド
 
 ## 目次
 1. [必要要件](#必要要件)
@@ -48,7 +48,7 @@ ninja
 ```bash
 cd android/MirageAndroid
 ./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r android/capture/build/outputs/apk/release/capture-release.apk
 ```
 
 ### 4. 設定ファイル編集
@@ -158,18 +158,18 @@ cd android/MirageAndroid
 ./gradlew assembleDebug
 
 # APKの場所
-# app/build/outputs/apk/debug/app-debug.apk
+# android/capture/build/outputs/apk/release/capture-release.apk
 ```
 
 ### インストール
 
 ```bash
 # 単一デバイス
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r android/capture/build/outputs/apk/release/capture-release.apk
 
 # 複数デバイス
 adb devices  # シリアル番号確認
-adb -s <SERIAL> install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s <SERIAL> install -r android/capture/build/outputs/apk/release/capture-release.apk
 ```
 
 ### 権限設定

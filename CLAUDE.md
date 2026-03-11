@@ -1,4 +1,4 @@
-# MirageSystem — Claude Code Instructions
+﻿# MirageSystem — Claude Code Instructions
 
 ## Project Overview
 MirageVulkan: Windows-based Android device automation and screen mirroring platform.
@@ -13,7 +13,7 @@ This is the main repository (successor to MirageComplete, full upper-compatible)
 ## Architecture
 - **C++ GUI** (src/, ~90 files): Vulkan + ImGui, Vulkan Video H.264 decode, libusb AOA, EventBus
 - **GPU Shaders** (shaders/, 7 .comp files): YUV->RGBA, NCC template matching, pyramid downsampling
-- **Android APKs** (android/): MirageAndroid (video), MirageAccessory (AOA commands), MirageCapture (permissions)
+- **Android APKs** (android/): com.mirage.capture (all-in-one: video+AOA+AI) [1APK since 2026-03-08]
 - **Scripts** (scripts/, 31 files): deploy_apk.py, device_health.py, mirage_cli.py, bt_auto_pair.py
 - **MCP Server** (../mcp-server/): server.py (SSE+Streamable HTTP), task_queue.py, watchdog.py
 
@@ -48,7 +48,7 @@ This is the main repository (successor to MirageComplete, full upper-compatible)
 - 2 channels (control + video) x 2 pipes (USB + WiFi)
 - USB priority; bandwidth pressure -> video to WiFi -> FPS reduction fallback
 - AOA requires no USB debugging (security by design)
-- APK split: MirageCapture (video) + MirageAccessory (control) for fault isolation
+- Single APK: com.mirage.capture (merged 2026-03-08)
 
 ## Key Decisions
 - scrcpy-server for MediaProjection bypass (Android 15)
@@ -135,7 +135,7 @@ src/
 
 android/
 ├── capture/     # com.mirage.capture (映像送信, ML)
-├── accessory/   # com.mirage.accessory (AOA, コマンド受信)
+├── accessory/   # [LEGACY] com.mirage.accessory (merged to capture 2026-03-08, AOA, コマンド受信)
 └── app/         # [除外] レガシーモノリス
 
 scripts/         # Python ユーティリティ
