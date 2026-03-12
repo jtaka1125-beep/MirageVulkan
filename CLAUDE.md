@@ -9,8 +9,7 @@
 Why: These contain prior decisions, resolved bugs, and architecture choices.
 Skipping causes duplicate work and contradicts past decisions.
 
-On task completion, record important findings:
-- Call MCP tool: memory_append_decision  (namespace matching the area changed)
+Done? -> 記録 (memory_append_decision)
 
 # ===== END MANDATORY FIRST STEP =====
 
