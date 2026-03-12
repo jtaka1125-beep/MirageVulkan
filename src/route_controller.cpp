@@ -99,7 +99,9 @@ RouteController::RouteDecision RouteController::evaluate(
 
         if (!usb.is_alive) {
             consecutive_usb_failure_++;
-            consecutive_recovery_ = 0;
+            if (state_ != State::WIFI_FAILED) {
+                consecutive_recovery_ = 0;
+            }
         } else {
             consecutive_usb_failure_ = 0;
         }
@@ -107,7 +109,11 @@ RouteController::RouteDecision RouteController::evaluate(
 
     if (!wifi.is_alive) {
         consecutive_wifi_failure_++;
-        consecutive_recovery_ = 0;
+        // Only reset recovery counter if not recovering USB
+        // (USB_FAILED recovery must not be blocked by WiFi being dead)
+        if (state_ != State::USB_FAILED) {
+            consecutive_recovery_ = 0;
+        }
     } else {
         consecutive_wifi_failure_ = 0;
     }
