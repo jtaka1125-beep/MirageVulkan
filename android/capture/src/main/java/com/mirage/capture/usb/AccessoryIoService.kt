@@ -133,6 +133,9 @@ class AccessoryIoService : Service() {
 
     }
 
+    /** USB OutputStream を外部（AccessoryCommandReceiver等）から直接取得 */
+    fun getOutputStream(): java.io.OutputStream? = outputStream
+
 
 
     private var fileDescriptor: ParcelFileDescriptor? = null

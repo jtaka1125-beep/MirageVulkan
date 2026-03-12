@@ -102,8 +102,16 @@ class AccessoryCommandReceiver : BroadcastReceiver() {
                 }
             }
             ACTION_USB_CONNECTED -> {
-                Log.i(TAG, "USB connected → connecting video socket")
-                connectVideoSocket(svc)
+                Log.i(TAG, "USB connected → attaching USB stream directly")
+                val accSvc = com.mirage.capture.usb.AccessoryIoService.instance
+                val os = accSvc?.getOutputStream()
+                if (os != null && svc != null) {
+                    svc.attachUsbStream(os)
+                    Log.i(TAG, "USB connected: attachUsbStream via AccessoryIoService.instance")
+                } else {
+                    Log.w(TAG, "USB connected: accSvc=$accSvc os=$os svc=$svc, falling back to TCP probe")
+                    connectVideoSocket(svc)
+                }
             }
             ACTION_USB_DISCONNECTED -> {
                 Log.i(TAG, "USB disconnected")
@@ -118,6 +126,16 @@ class AccessoryCommandReceiver : BroadcastReceiver() {
      * without waiting for ACTION_USB_CONNECTED broadcast.
      */
     fun probeExistingUsb(svc: ScreenCaptureService) {
+        // 直接 AccessoryIoService の OutputStream を取得して attach を試みる
+        val accSvc = com.mirage.capture.usb.AccessoryIoService.instance
+        val os = accSvc?.getOutputStream()
+        if (os != null) {
+            svc.attachUsbStream(os)
+            Log.i(TAG, "probeExistingUsb: direct attachUsbStream via AccessoryIoService.instance")
+            return
+        }
+
+        // fallback: 旧TCP probe（互換性のため残す）
         // ✅ FIX-2: stale socket を sendUrgentData で実通信確認してからスキップ判定
         val existing = videoSocket
         if (existing != null && !existing.isClosed && existing.isConnected) {
@@ -131,7 +149,6 @@ class AccessoryCommandReceiver : BroadcastReceiver() {
                 videoSocket = null
             }
         }
-        // ✅ FIX-5: 固定 800ms sleep → 250ms × 8回ポーリング (最大 2秒)
         Thread({
             for (attempt in 1..8) {
                 try {
