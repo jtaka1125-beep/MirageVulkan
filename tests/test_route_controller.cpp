@@ -102,7 +102,7 @@ TEST_F(RouteControllerTest, InitialState) {
     auto decision = controller->getCurrentDecision();
     EXPECT_EQ(decision.video, RouteController::VideoRoute::USB);
     EXPECT_EQ(decision.control, RouteController::ControlRoute::USB);
-    EXPECT_EQ(decision.main_fps, 60);
+    EXPECT_EQ(decision.main_fps, 30);
     EXPECT_EQ(decision.sub_fps, 30);
 }
 
@@ -146,7 +146,7 @@ TEST_F(RouteControllerTest, NormalOperation) {
 
     EXPECT_EQ(decision.state, RouteController::State::NORMAL);
     EXPECT_EQ(decision.video, RouteController::VideoRoute::USB);
-    EXPECT_EQ(decision.main_fps, 60);
+    EXPECT_EQ(decision.main_fps, 30);
 }
 
 // =============================================================================
@@ -273,7 +273,7 @@ TEST_F(RouteControllerTest, FpsDecisionValues) {
     auto decision = controller->evaluate(healthyUsb(), healthyWifi());
 
     // In normal state: main=60, sub=30
-    EXPECT_EQ(decision.main_fps, 60);
+    EXPECT_EQ(decision.main_fps, 30);
     EXPECT_EQ(decision.sub_fps, 30);
 }
 

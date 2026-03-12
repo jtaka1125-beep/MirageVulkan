@@ -238,7 +238,7 @@ struct GuiConfig {
     
     // Colors (ABGR format)
     uint32_t color_disconnected = 0xFF404040;
-    uint32_t color_idle = 0xFF808080;
+    uint32_t color_idle = 0x00000000;
     uint32_t color_android_active = 0xFF00FF00;  // Green
     uint32_t color_ai_active = 0xFFFF8800;       // Blue (BGR)
     uint32_t color_stuck = 0xFF0000FF;           // Red

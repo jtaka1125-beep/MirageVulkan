@@ -284,11 +284,13 @@ void GuiApplication::renderDeviceView(DeviceInfo& device,
             main_view_rect_.valid = true;
         }
 
-        // Draw texture
+        // Draw texture - always full white tint (no gray-out on stale frames)
         draw_list->AddImage(
             reinterpret_cast<ImTextureID>(device.vk_texture_ds),
             ImVec2(img_x, img_y),
-            ImVec2(img_x + img_w, img_y + img_h)
+            ImVec2(img_x + img_w, img_y + img_h),
+            ImVec2(0, 0), ImVec2(1, 1),
+            IM_COL32(255, 255, 255, 255)
         );
 
 
@@ -398,7 +400,7 @@ void GuiApplication::renderStatusBorder(float x, float y, float w, float h,
         (col >> 0) & 0xFF,
         (col >> 8) & 0xFF,
         (col >> 16) & 0xFF,
-        255
+        (col >> 24) & 0xFF
     );
 
     // Pulsing effect for active states
