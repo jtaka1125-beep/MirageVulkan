@@ -9,7 +9,7 @@
 // 遷移ルール:
 //   Layer 0→1: 操作なし 5秒 (layer0_idle_timeout_ms)
 //   Layer 1→0: ユーザー操作検出 (notifyUserInput)
-//   Layer 1→2: 90秒マッチなし (layer3_no_match_ms)
+//   Layer 1→2: 90秒マッチなし (layer2_no_match_ms)
 //   Layer 2→0: フリーズ60秒 → ホームボタン → STANDBY
 //
 //   IDLE → DETECTED: score > threshold
@@ -108,7 +108,7 @@ VisionDecision VisionDecisionEngine::update(
             mirage::bus().publish(evt);
         }
         // ERROR_RECOVERY中はエラー以外のアクション抑制
-        // Layer3トリガーカウンタをリセット（エラー対応中は未知UIではない）
+        // Layer2トリガーカウンタをリセット（エラー対応中は未知UIではない）
         ds.consecutive_no_match = 0;
         ds.consecutive_same_match = 0;
         ds.last_any_match_time = now;
@@ -139,7 +139,7 @@ VisionDecision VisionDecisionEngine::update(
             ds.cooldown_template_id.clear();
         } else {
             // まだCOOLDOWN中 — アクション抑制
-            // Layer3トリガーカウンタをリセット（冷却中は正常な待機状態）
+            // Layer2トリガーカウンタをリセット（冷却中は正常な待機状態）
             ds.consecutive_no_match = 0;
             ds.consecutive_same_match = 0;
             ds.last_any_match_time = now;
@@ -547,7 +547,7 @@ DeviceVisionState& VisionDecisionEngine::getOrCreateState(const std::string& dev
         // 新規デバイス: last_any_match_time を now で初期化して起動即トリガーを防ぐ
         DeviceVisionState& ds = device_states_[device_id];
         ds.last_any_match_time = std::chrono::steady_clock::now();
-        ds.layer3_last_call   = std::chrono::steady_clock::now();
+        ds.layer2_last_call   = std::chrono::steady_clock::now();
         // Layer 0 無効時は IDLE から開始
         ds.state = config_.enable_layer0 ? VisionState::STANDBY : VisionState::IDLE;
         return ds;
@@ -611,9 +611,9 @@ void VisionDecisionEngine::notifyUserInput(
         transitionTo(ds, VisionState::STANDBY);
 
         // Layer 2 タスク実行中なら中断
-        if (ds.layer3_task && ds.layer3_task->valid) {
-            ds.layer3_task->valid = false;
-            ds.layer3_task.reset();
+        if (ds.layer2_task && ds.layer2_task->valid) {
+            ds.layer2_task->valid = false;
+            ds.layer2_task.reset();
         }
 
         MLOG_DEBUG("ai.vision", "ユーザー操作検出 → STANDBY (Layer 0): device=%s from=%s",
@@ -750,22 +750,95 @@ void VisionDecisionEngine::loadIgnoredTemplates(const std::string& path) {
 }
 
 
-// --- Layer3 stub implementations (Layer 3 removed) ---
-bool VisionDecisionEngine::launchLayer3Async(
-    const std::string&, const uint8_t*, int, int,
-    std::chrono::steady_clock::time_point) { return false; }
+void VisionDecisionEngine::setOllamaVision(std::shared_ptr<OllamaVision> ollama) {
+    ollama_vision_ = std::move(ollama);
+}
 
-VisionDecisionEngine::Layer3Result VisionDecisionEngine::pollLayer3Result(
-    const std::string&) { return {}; }
+void VisionDecisionEngine::setLayer2Client(std::shared_ptr<Layer2Client> client) {
+    layer2_client_ = std::move(client);
+}
 
-bool VisionDecisionEngine::isLayer3Running(const std::string&) const { return false; }
+// --- Layer2: Layer2Client委譲実装 ---
 
-bool VisionDecisionEngine::isLayer3OnCooldown(
-    const std::string&, std::chrono::steady_clock::time_point) const { return false; }
+bool VisionDecisionEngine::launchLayer2Async(
+    const std::string& device_id, const uint8_t* rgba, int width, int height,
+    std::chrono::steady_clock::time_point now)
+{
+    if (!layer2_client_) return false;
+    if (!config_.enable_layer2) return false;
 
-void VisionDecisionEngine::cancelLayer3(const std::string&) {}
+    // RGBAをJPEGに変換せずに、簡易的に生データをbase64渡し。
+    // callScript側では jpeg_data として扱うため、実際の用途では
+    // ai_engine.cppからJPEGデータを直接渡すことを推奨。
+    // ここではRGBA生データをそのままJPEGバッファとして渡す。
+    // （ai_engine.cppのlaunchLayer2AsyncはJPEGバッファを持っているので
+    //   将来的にはAPIを変更してJPEGを直接渡すべき）
+    (void)width; (void)height;
+    return layer2_client_->launchAsync(device_id, rgba, width * height * 4, now);
+}
 
-bool VisionDecisionEngine::shouldTriggerLayer3(
-    const std::string&, std::chrono::steady_clock::time_point) const { return false; }
+VisionDecisionEngine::Layer2Result VisionDecisionEngine::pollLayer2Result(
+    const std::string& device_id)
+{
+    if (!layer2_client_) return {};
+    auto r = layer2_client_->pollResult(device_id);
+    if (!r.valid) return {};
+
+    Layer2Result out;
+    out.has_result   = true;
+    out.found        = r.popup_detected;
+    out.type         = r.popup_detected ? "popup" : "none";
+    out.button_text  = "";
+    out.x            = (r.click_x >= 0) ? r.click_x : 0;
+    out.y            = (r.click_y >= 0) ? r.click_y : 0;
+    out.elapsed_ms   = 0;
+    out.error        = r.error;
+    return out;
+}
+
+bool VisionDecisionEngine::isLayer2Running(const std::string& device_id) const {
+    if (!layer2_client_) return false;
+    return layer2_client_->isRunning(device_id);
+}
+
+bool VisionDecisionEngine::isLayer2OnCooldown(
+    const std::string& device_id, std::chrono::steady_clock::time_point now) const
+{
+    if (!layer2_client_) return false;
+    return layer2_client_->isOnCooldown(device_id, now);
+}
+
+void VisionDecisionEngine::cancelLayer2(const std::string& device_id) {
+    if (layer2_client_) layer2_client_->cancel(device_id);
+}
+
+bool VisionDecisionEngine::shouldTriggerLayer2(
+    const std::string& device_id, std::chrono::steady_clock::time_point now) const
+{
+    if (!layer2_client_) return false;
+    if (!config_.enable_layer2) return false;
+    if (layer2_client_->isRunning(device_id)) return false;
+    if (layer2_client_->isOnCooldown(device_id, now)) return false;
+
+    // デバイス状態チェック
+    auto it = device_states_.find(device_id);
+    if (it == device_states_.end()) return false;
+    const auto& ds = it->second;
+
+    // 連続マッチなしフレーム数でトリガー
+    if (ds.consecutive_no_match >= config_.layer2_no_match_frames) return true;
+
+    // 時間ベーストリガー
+    if (config_.layer2_no_match_ms > 0) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - ds.last_any_match_time).count();
+        if (elapsed >= config_.layer2_no_match_ms) return true;
+    }
+
+    return false;
+}
+
+bool VisionDecisionEngine::checkLayer2Freeze(
+    const std::string&, std::chrono::steady_clock::time_point) { return false; }
 
 } // namespace mirage::ai

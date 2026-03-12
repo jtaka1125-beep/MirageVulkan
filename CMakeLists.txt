@@ -241,6 +241,12 @@ set(AI_SOURCES
     src/ai/vision_decision_engine.hpp
 
 
+    src/ai/layer2_client.cpp
+
+
+    src/ai/layer2_client.hpp
+
+
 
     src/ai/lfm_classifier.cpp
 
@@ -1800,6 +1806,8 @@ if(BUILD_TESTS)
 
             src/ai/vision_decision_engine.cpp
 
+
+            src/ai/layer2_client.cpp
 
 
     src/ai/lfm_classifier.cpp

@@ -2505,7 +2505,7 @@ public:
 
 
 
-        // Layer 3 設定反映
+        // Layer 2 設定反映
 
 
 
@@ -2525,6 +2525,16 @@ public:
 
 
         vision_engine_ = std::make_unique<VisionDecisionEngine>(vde_config);
+
+        // Layer 2: Gemini並列投票クライアントを生成・注入
+        {
+            auto layer2_client = std::make_shared<mirage::ai::Layer2Client>(
+                "C:\\MirageWork\\mcp-server\\venv\\Scripts\\python.exe",
+                "C:\\MirageWork\\mcp-server\\gemini_router.py"
+            );
+            vision_engine_->setLayer2Client(layer2_client);
+            MLOG_INFO("ai", "Layer2Client初期化完了 (Gemini並列投票)");
+        }
 
 
 
@@ -3988,7 +3998,7 @@ public:
 
                 count++;
 
-                // Layer3 重複検出キャッシュへの追加（Layer1既存テンプレートも含む全テンプレート）
+                // Layer2 重複検出キャッシュへの追加（Layer1既存テンプレートも含む全テンプレート）
                 // 改善E: マニフェストのROIをマッチャーに反映
 
 
@@ -4988,26 +4998,26 @@ public:
             float sim = computeNccSimilarity(gray, w, h, img_data, img_w, img_h);
             stbi_image_free(img_data);
             if (sim > max_sim) max_sim = sim;
-            if (max_sim >= LAYER3_DEDUP_THRESHOLD) break;  // early exit
+            if (max_sim >= LAYER2_DEDUP_THRESHOLD) break;  // early exit
         }
         return max_sim;
     }
 
     // Layer 2/3 検出結果をオーバーレイ用に追加
-    void addLayer3Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+    void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
         AIEngine::MatchRect rect;
         rect.template_id = "layer" + std::to_string(layer_num) + "_detection";
         rect.label = "[L" + std::to_string(layer_num) + "] " + label;
-        layer3_matches_.push_back(rect);
-        layer3_last_time_ = std::chrono::steady_clock::now();
+        layer2_matches_.push_back(rect);
+        layer2_last_time_ = std::chrono::steady_clock::now();
     }
 
-    // Layer 3 検出成功時にテンプレートをファイル保存 & ランタイム登録
+    // Layer 2 検出成功時にテンプレートをファイル保存 & ランタイム登録
 
 
 
-    void registerLayer3Template(
-        const VisionDecisionEngine::Layer3Result& l2,
+    void registerLayer2Template(
+        const VisionDecisionEngine::Layer2Result& l2,
         const uint8_t* rgba, int frame_w, int frame_h)
 
 
@@ -5108,7 +5118,7 @@ public:
 
 
 
-            MLOG_WARN("ai", "Layer3 テンプレート: Gray変換失敗");
+            MLOG_WARN("ai", "Layer2 テンプレート: Gray変換失敗");
 
 
 
@@ -5118,11 +5128,11 @@ public:
 
         }
 
-        // 重複チェック: 既存Layer3キャッシュとの類似度を確認
+        // 重複チェック: 既存Layer2キャッシュとの類似度を確認
         float max_sim = maxSimilarityFromManifest(gray.data(), rw, rh);
-        if (max_sim >= LAYER3_DEDUP_THRESHOLD) {
-            MLOG_INFO("ai", "Layer3 重複スキップ: 類似度=%.3f (閾値=%.2f)",
-                      max_sim, LAYER3_DEDUP_THRESHOLD);
+        if (max_sim >= LAYER2_DEDUP_THRESHOLD) {
+            MLOG_INFO("ai", "Layer2 重複スキップ: 類似度=%.3f (閾値=%.2f)",
+                      max_sim, LAYER2_DEDUP_THRESHOLD);
             return;
         }
 
@@ -5164,8 +5174,8 @@ public:
                     std::string old_file = config_.templates_dir + "/" + dup_it->file;
                     std::error_code ec;
                     fs::remove(old_file, ec);
-                    if (!ec) MLOG_INFO("ai", "Layer3 重複パターン削除: %s", old_file.c_str());
-                    else     MLOG_WARN("ai", "Layer3 重複パターン削除失敗: %s (%s)", old_file.c_str(), ec.message().c_str());
+                    if (!ec) MLOG_INFO("ai", "Layer2 重複パターン削除: %s", old_file.c_str());
+                    else     MLOG_WARN("ai", "Layer2 重複パターン削除失敗: %s (%s)", old_file.c_str(), ec.message().c_str());
                     manifest2.entries.erase(dup_it);
                     mirage::ai::saveManifestJson(manifest_path2, manifest2);
                     // fallthrough: 新しい検出を登録する（returnしない）
@@ -5197,7 +5207,7 @@ public:
 
 
 
-            MLOG_WARN("ai", "Layer3 PNG保存失敗: %s", wr.error().message.c_str());
+            MLOG_WARN("ai", "Layer2 PNG保存失敗: %s", wr.error().message.c_str());
 
 
 
@@ -5261,7 +5271,7 @@ public:
 
 
 
-            MLOG_WARN("ai", "Layer3 manifest保存失敗");
+            MLOG_WARN("ai", "Layer2 manifest保存失敗");
 
 
 
@@ -5297,9 +5307,9 @@ public:
 
 
 
-            MLOG_INFO("ai", "Layer3 テンプレート自動登録: %s (%dx%d) -> tap", entry.name.c_str(), rw, rh);
+            MLOG_INFO("ai", "Layer2 テンプレート自動登録: %s (%dx%d) -> tap", entry.name.c_str(), rw, rh);
 
-            // Layer3 dedup: manifest直読み方式のためキャッシュ追加不要
+            // Layer2 dedup: manifest直読み方式のためキャッシュ追加不要
         }
 
 
@@ -6634,7 +6644,7 @@ public:
                     decision.score);
             }
 
-            // Layer 1 が解決したら Layer 3 を破棄
+            // Layer 1 が解決したら Layer 2 を破棄
 
 
 
@@ -6642,7 +6652,7 @@ public:
 
 
 
-                vision_engine_->cancelLayer3(device_id);
+                vision_engine_->cancelLayer2(device_id);
 
 
 
@@ -7150,7 +7160,7 @@ if (decision.should_act && can_send) {
 
 
 
-                    // Layer 3 トリガー判定 (テンプレートなし・マッチなし共通)
+                    // Layer 2 トリガー判定 (テンプレートなし・マッチなし共通)
 
 
 
@@ -7186,7 +7196,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        if (vision_engine_->shouldTriggerLayer3(device_id)) {
+                        if (vision_engine_->shouldTriggerLayer2(device_id)) {
                             static std::mutex s_l3_cd_mu1;
                             static std::unordered_map<std::string, int64_t> s_last_l3_ms1;
                             const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7197,11 +7207,11 @@ if (decision.should_act && can_send) {
                                 int64_t &last = s_last_l3_ms1[device_id];
                                 if (now_ms - last >= 2000) { last = now_ms; allow_l3 = true; }
                             }
-                            if (allow_l3) vision_engine_->launchLayer3Async(device_id, rgba, width, height);
+                            if (allow_l3) vision_engine_->launchLayer2Async(device_id, rgba, width, height);
 
 
 
-                            MLOG_INFO("ai", "Layer 3起動(no-template): slot=%d device=%s", slot, device_id.c_str());
+                            MLOG_INFO("ai", "Layer 2起動(no-template): slot=%d device=%s", slot, device_id.c_str());
 
 
 
@@ -7209,7 +7219,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        auto l2 = vision_engine_->pollLayer3Result(device_id);
+                        auto l2 = vision_engine_->pollLayer2Result(device_id);
 
 
 
@@ -7229,7 +7239,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            action.reason = "Layer3: " + l2.type + " button=" + l2.button_text;
+                            action.reason = "Layer2: " + l2.type + " button=" + l2.button_text;
 
 
 
@@ -7245,7 +7255,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            MLOG_INFO("ai", "Layer 3 TAP(no-template): slot=%d (%d,%d) %s",
+                            MLOG_INFO("ai", "Layer 2 TAP(no-template): slot=%d (%d,%d) %s",
 
 
 
@@ -7253,10 +7263,10 @@ if (decision.should_act && can_send) {
 
 
 
-                            registerLayer3Template(l2, rgba, width, height);
+                            registerLayer2Template(l2, rgba, width, height);
 
                             // オーバーレイ表示用に検出を追加
-                            addLayer3Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
+                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
 
                         }
 
@@ -7466,7 +7476,7 @@ if (decision.should_act && can_send) {
 
 
 
-                    // Layer 3 トリガー判定
+                    // Layer 2 トリガー判定
 
 
 
@@ -7474,7 +7484,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        if (vision_engine_->shouldTriggerLayer3(device_id)) {
+                        if (vision_engine_->shouldTriggerLayer2(device_id)) {
 
 
 
@@ -7482,11 +7492,11 @@ if (decision.should_act && can_send) {
 
 
 
-                            vision_engine_->launchLayer3Async(device_id, rgba, width, height);
+                            vision_engine_->launchLayer2Async(device_id, rgba, width, height);
 
 
 
-                            MLOG_INFO("ai", "Layer 3起動: slot=%d device=%s", slot, device_id.c_str());
+                            MLOG_INFO("ai", "Layer 2起動: slot=%d device=%s", slot, device_id.c_str());
 
 
 
@@ -7494,11 +7504,11 @@ if (decision.should_act && can_send) {
 
 
 
-                        // Layer 3 完了ポーリング
+                        // Layer 2 完了ポーリング
 
 
 
-                        auto l2 = vision_engine_->pollLayer3Result(device_id);
+                        auto l2 = vision_engine_->pollLayer2Result(device_id);
 
 
 
@@ -7518,7 +7528,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            action.reason = "Layer3: " + l2.type + " button=" + l2.button_text;
+                            action.reason = "Layer2: " + l2.type + " button=" + l2.button_text;
 
 
 
@@ -7534,18 +7544,18 @@ if (decision.should_act && can_send) {
 
 
 
-                            MLOG_INFO("ai", "Layer 3 TAP: slot=%d (%d,%d) %s", slot, l2.x, l2.y, l2.button_text.c_str());
+                            MLOG_INFO("ai", "Layer 2 TAP: slot=%d (%d,%d) %s", slot, l2.x, l2.y, l2.button_text.c_str());
 
 
 
-                            // Layer 3 成功 → テンプレート自動登録（次回から Layer 1 で検出）
+                            // Layer 2 成功 → テンプレート自動登録（次回から Layer 1 で検出）
 
 
 
-                            registerLayer3Template(l2, rgba, width, height);
+                            registerLayer2Template(l2, rgba, width, height);
 
                             // オーバーレイ表示用に検出を追加
-                            addLayer3Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
+                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
 
                         }
 
@@ -8354,11 +8364,11 @@ if (decision.should_act && can_send) {
 
         // Layer 2/3 (LLM) 結果を追加（3秒以内の検出のみ）
         {
-            std::lock_guard<std::mutex> lock(layer3_matches_mutex_);
+            std::lock_guard<std::mutex> lock(layer2_matches_mutex_);
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - layer3_last_time_).count();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - layer2_last_time_).count();
             if (elapsed < 3000) {  // 3秒間表示
-                result.insert(result.end(), layer3_matches_.begin(), layer3_matches_.end());
+                result.insert(result.end(), layer2_matches_.begin(), layer2_matches_.end());
             }
         }
 
@@ -17844,7 +17854,7 @@ private:
 
 
 
-    std::shared_ptr<mirage::ai::OllamaVision> ollama_vision_;  // Layer 3
+    std::shared_ptr<mirage::ai::OllamaVision> ollama_vision_;  // Layer 2
 
 
     std::shared_ptr<mirage::ai::LfmClassifier> lfm_classifier_;  // Layer 2.5
@@ -17992,12 +18002,12 @@ private:
 
 
     std::vector<AIEngine::MatchRect> last_matches_;
-    std::vector<AIEngine::MatchRect> layer3_matches_;  // Layer 2/3 (LLM) 検出結果
-    mutable std::mutex layer3_matches_mutex_;
-    std::chrono::steady_clock::time_point layer3_last_time_;  // 最終検出時刻
+    std::vector<AIEngine::MatchRect> layer2_matches_;  // Layer 2/3 (LLM) 検出結果
+    mutable std::mutex layer2_matches_mutex_;
+    std::chrono::steady_clock::time_point layer2_last_time_;  // 最終検出時刻
 
-    // Layer3 dedup: manifest直読み方式（layer3_cache_廃止済み）
-    static constexpr float LAYER3_DEDUP_THRESHOLD = 0.90f;  // 類似度閾値
+    // Layer2 dedup: manifest直読み方式（layer3_cache_廃止済み）
+    static constexpr float LAYER2_DEDUP_THRESHOLD = 0.90f;  // 類似度閾値
 
 
 
