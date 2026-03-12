@@ -259,8 +259,8 @@ set(AI_SOURCES
 
     src/ai/ai_jpeg_receiver.hpp
 
-
-
+    src/perception/template_matcher.cpp
+    src/perception/template_matcher.hpp
 
 )
 

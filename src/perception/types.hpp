@@ -17,7 +17,6 @@
 // =============================================================================
 
 #pragma once
-#include <span>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -47,7 +46,8 @@ enum class PixelFormat {
 // timestamp_ms is wall-clock milliseconds (steady_clock epoch).
 // ---------------------------------------------------------------------------
 struct Frame {
-    std::span<const uint8_t> data;  // non-owning view of compressed/raw bytes
+    const uint8_t* data      = nullptr;  // non-owning pointer to compressed/raw bytes
+    size_t         data_size = 0;
     int width        = 0;
     int height       = 0;
     PixelFormat format = PixelFormat::kJPEG;
