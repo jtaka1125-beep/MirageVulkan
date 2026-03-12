@@ -3988,8 +3988,8 @@ public:
 
                 count++;
 
-                // Layer3 重複検出キャッシュへの追加（layer3_autoタグ付きテンプレート）
-                if (entry.tags == "layer3_auto") {
+                // Layer3 重複検出キャッシュへの追加（Layer1既存テンプレートも含む全テンプレート）
+                {
                     int img_w = 0, img_h = 0, img_ch = 0;
                     unsigned char* img_data = stbi_load(full_path.c_str(), &img_w, &img_h, &img_ch, 1);
                     if (img_data && img_w > 0 && img_h > 0) {
@@ -3999,7 +3999,7 @@ public:
                         cache_entry.w = img_w;
                         cache_entry.h = img_h;
                         layer3_cache_.push_back(std::move(cache_entry));
-                        MLOG_INFO("ai", "Layer3キャッシュにロード: %s (%dx%d)",
+                        MLOG_DEBUG("ai", "Layer3キャッシュにロード: %s (%dx%d)",
                                   entry.name.c_str(), img_w, img_h);
                     }
                     if (img_data) stbi_image_free(img_data);
@@ -5132,6 +5132,15 @@ public:
 
 
 
+        }
+
+        // 名前ベース重複チェック（同名テンプレートは即スキップ）
+        std::string candidate_name = "auto_" + l2.type + "_" + l2.button_text;
+        for (const auto& cached : layer3_cache_) {
+            if (cached.name == candidate_name) {
+                MLOG_DEBUG("ai", "Layer3 重複スキップ (同名): %s", candidate_name.c_str());
+                return;
+            }
         }
 
         // 重複チェック: 既存Layer3キャッシュとの類似度を確認
