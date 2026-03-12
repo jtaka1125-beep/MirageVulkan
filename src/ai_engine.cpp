@@ -583,6 +583,11 @@
 
 
 #include <condition_variable>
+#include "perception/detect.hpp"
+
+
+
+
 
 
 
@@ -661,6 +666,67 @@ namespace mirage::ai {
 
 
 
+
+// ---------------------------------------------------------------------------
+// AiTemplateSource - ITemplateSource adapter over TemplateStore
+// ---------------------------------------------------------------------------
+// TemplateStore にはランダムアクセス用インデックスがないため、
+// コンストラクタで listTemplateIds() のスナップショットを取得する。
+// ---------------------------------------------------------------------------
+namespace {
+
+class AiTemplateSource : public mirage::perception::ITemplateSource {
+public:
+    explicit AiTemplateSource(const TemplateStore& store) {
+        auto ids = store.listTemplateIds();
+        for (int id : ids) {
+            const TemplateHandle* h = store.get(id);
+            if (h) {
+                mirage::perception::Template t;
+                t.name       = h->debug.empty() ? ("tpl_" + std::to_string(id)) : h->debug;
+                t.image      = h->gray_data.empty() ? nullptr : h->gray_data.data();
+                t.image_size = h->gray_data.size();
+                t.width      = h->w;
+                t.height     = h->h;
+                templates_.push_back(std::move(t));
+                matcher_ids_.push_back(h->matcher_id);
+                widths_.push_back(h->w);
+                heights_.push_back(h->h);
+            }
+        }
+    }
+
+    size_t size() const override { return templates_.size(); }
+    const mirage::perception::Template& at(size_t i) const override { return templates_[i]; }
+
+    // 名前 -> matcher_id 逆引き (DetectionBundle -> VkMatchResult 変換用)
+    int findMatcherId(const std::string& name) const {
+        for (size_t i = 0; i < templates_.size(); ++i) {
+            if (templates_[i].name == name) return matcher_ids_[i];
+        }
+        return -1;
+    }
+    int findWidth(const std::string& name) const {
+        for (size_t i = 0; i < templates_.size(); ++i) {
+            if (templates_[i].name == name) return widths_[i];
+        }
+        return 0;
+    }
+    int findHeight(const std::string& name) const {
+        for (size_t i = 0; i < templates_.size(); ++i) {
+            if (templates_[i].name == name) return heights_[i];
+        }
+        return 0;
+    }
+
+private:
+    std::vector<mirage::perception::Template> templates_;
+    std::vector<int>                          matcher_ids_;
+    std::vector<int>                          widths_;
+    std::vector<int>                          heights_;
+};
+
+} // anonymous namespace
 
 // アクションマッパー — テンプレートIDからアクション文字列を決定
 
@@ -5759,25 +5825,10 @@ public:
 
         std::lock_guard<std::mutex> vk_lk(vk_processor_mutex_);
 
-
-
-        auto* gray_gpu = vk_processor_->rgbaToGrayGpu(rgba, width, height);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        if (!gray_gpu) {
+        // RGBA -> Gray (CPU バッファ。perception::detect() は match() CPU パスを使用するため)
+        std::vector<uint8_t> gray_buf(static_cast<size_t>(width) * static_cast<size_t>(height));
+        if (!vk_processor_->rgbaToGray(rgba, width, height, gray_buf.data()))
+        {
 
 
 
@@ -5793,7 +5844,7 @@ public:
 
 
 
-            action.reason = "RGBA→Gray変換失敗";
+        // (removed: if (!gray_gpu) -- outer condition handles this)
 
 
 
@@ -5809,7 +5860,23 @@ public:
 
 
 
-            MLOG_WARN("ai", "Vulkan RGBA→Gray失敗");
+            action.reason = "RGBA->Gray変換失敗(CPU)";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            MLOG_WARN("ai", "Vulkan RGBA->Gray失敗(CPU)");
 
 
 
@@ -5889,7 +5956,18 @@ public:
 
 
 
-        auto matchResult = vk_matcher_->matchGpu(gray_gpu, width, height);
+        // perception::detect() で全テンプレートマッチング (CPU gray パス)
+        if (!template_store_) { action.reason = "template_store_ null"; return action; }
+        AiTemplateSource tpl_src(*template_store_);
+        mirage::perception::Frame pf;
+        pf.data       = gray_buf.data();
+        pf.data_size  = gray_buf.size();
+        pf.width      = width;
+        pf.height     = height;
+        pf.format     = mirage::perception::PixelFormat::kNV21;  // gray8 single plane
+        auto bundle   = mirage::perception::detect(*vk_matcher_, pf, tpl_src);
+        // (旧 matchGpu 呼び出しを perception::detect() 経由に置換)
+        // auto matchResult = vk_matcher_->matchGpu(gray_gpu, width, height);
 
 
 
@@ -5905,7 +5983,7 @@ public:
 
 
 
-        if (matchResult.is_err()) {
+        // (旧 matchResult.is_err() ブロック削除: perception::detect() 経由に置換済み)
 
 
 
@@ -5921,71 +5999,21 @@ public:
 
 
 
-            action.reason = "マッチング失敗: " + matchResult.error().message;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            MLOG_WARN("ai", "Vulkan match失敗: %s", matchResult.error().message.c_str());
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            return action;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        // DetectionBundle -> vector<VkMatchResult> 変換 (後段コードとの互換性維持)
+        std::vector<mirage::vk::VkMatchResult> vk_results;
+        vk_results.reserve(bundle.template_results.size());
+        for (const auto& tr : bundle.template_results) {
+            mirage::vk::VkMatchResult r;
+            r.template_id     = tpl_src.findMatcherId(tr.template_id);
+            r.x               = tr.bounds.x;
+            r.y               = tr.bounds.y;
+            r.template_width  = tr.bounds.w;
+            r.template_height = tr.bounds.h;
+            r.center_x        = tr.bounds.cx();
+            r.center_y        = tr.bounds.cy();
+            r.score           = tr.score;
+            vk_results.push_back(r);
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        auto vk_results = std::move(matchResult).value();
 
 
 
