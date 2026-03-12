@@ -3989,22 +3989,6 @@ public:
                 count++;
 
                 // Layer3 重複検出キャッシュへの追加（Layer1既存テンプレートも含む全テンプレート）
-                {
-                    int img_w = 0, img_h = 0, img_ch = 0;
-                    unsigned char* img_data = stbi_load(full_path.c_str(), &img_w, &img_h, &img_ch, 1);
-                    if (img_data && img_w > 0 && img_h > 0) {
-                        Layer3TemplateCache cache_entry;
-                        cache_entry.name = entry.name;
-                        cache_entry.gray.assign(img_data, img_data + img_w * img_h);
-                        cache_entry.w = img_w;
-                        cache_entry.h = img_h;
-                        layer3_cache_.push_back(std::move(cache_entry));
-                        MLOG_DEBUG("ai", "Layer3キャッシュにロード: %s (%dx%d)",
-                                  entry.name.c_str(), img_w, img_h);
-                    }
-                    if (img_data) stbi_image_free(img_data);
-                }
-
                 // 改善E: マニフェストのROIをマッチャーに反映
 
 
@@ -4987,13 +4971,24 @@ public:
         return static_cast<float>(cov / std::sqrt(var_a * var_b));
     }
 
-    // 既存Layer3キャッシュとの最大類似度を計算
-    float maxSimilarityWithCache(const uint8_t* gray, int w, int h) const {
+    // manifest全テンプレートを直接読んでNCC類似度を算出（精度優先・キャッシュなし）
+    float maxSimilarityFromManifest(const uint8_t* gray, int w, int h) const {
+        if (config_.templates_dir.empty()) return 0.0f;
+        namespace fs = std::filesystem;
+        std::string manifest_path = config_.templates_dir + "/manifest.json";
+        mirage::ai::TemplateManifest manifest;
+        if (!mirage::ai::loadManifestJson(manifest_path, manifest)) return 0.0f;
         float max_sim = 0.0f;
-        for (const auto& cached : layer3_cache_) {
-            float sim = computeNccSimilarity(gray, w, h,
-                                             cached.gray.data(), cached.w, cached.h);
+        for (const auto& entry : manifest.entries) {
+            std::string fpath = config_.templates_dir + "/" + entry.file;
+            if (!fs::exists(fpath)) continue;
+            int img_w = 0, img_h = 0, img_ch = 0;
+            unsigned char* img_data = stbi_load(fpath.c_str(), &img_w, &img_h, &img_ch, 1);
+            if (!img_data) continue;
+            float sim = computeNccSimilarity(gray, w, h, img_data, img_w, img_h);
+            stbi_image_free(img_data);
             if (sim > max_sim) max_sim = sim;
+            if (max_sim >= LAYER3_DEDUP_THRESHOLD) break;  // early exit
         }
         return max_sim;
     }
@@ -5003,17 +4998,6 @@ public:
         AIEngine::MatchRect rect;
         rect.template_id = "layer" + std::to_string(layer_num) + "_detection";
         rect.label = "[L" + std::to_string(layer_num) + "] " + label;
-        rect.x = std::max(0, x - 80);
-        rect.y = std::max(0, y - 80);
-        rect.w = 160;
-        rect.h = 160;
-        rect.center_x = x;
-        rect.center_y = y;
-        rect.score = 1.0f;
-        rect.layer = layer_num;
-
-        std::lock_guard<std::mutex> lock(layer3_matches_mutex_);
-        layer3_matches_.clear();  // 最新の検出のみ保持
         layer3_matches_.push_back(rect);
         layer3_last_time_ = std::chrono::steady_clock::now();
     }
@@ -5134,17 +5118,8 @@ public:
 
         }
 
-        // 名前ベース重複チェック（同名テンプレートは即スキップ）
-        std::string candidate_name = "auto_" + l2.type + "_" + l2.button_text;
-        for (const auto& cached : layer3_cache_) {
-            if (cached.name == candidate_name) {
-                MLOG_DEBUG("ai", "Layer3 重複スキップ (同名): %s", candidate_name.c_str());
-                return;
-            }
-        }
-
         // 重複チェック: 既存Layer3キャッシュとの類似度を確認
-        float max_sim = maxSimilarityWithCache(gray.data(), rw, rh);
+        float max_sim = maxSimilarityFromManifest(gray.data(), rw, rh);
         if (max_sim >= LAYER3_DEDUP_THRESHOLD) {
             MLOG_INFO("ai", "Layer3 重複スキップ: 類似度=%.3f (閾値=%.2f)",
                       max_sim, LAYER3_DEDUP_THRESHOLD);
@@ -5175,8 +5150,20 @@ public:
 
 
 
-        // キャッシュ用にgrayデータのコピーを保持
-        std::vector<uint8_t> gray_copy = gray;
+        // 名前ベース重複チェック（manifest直読み・同名エントリがあれば即スキップ）
+        {
+            std::string candidate_name = "auto_" + l2.type + "_" + l2.button_text;
+            std::string manifest_path2 = config_.templates_dir + "/manifest.json";
+            mirage::ai::TemplateManifest manifest2;
+            if (mirage::ai::loadManifestJson(manifest_path2, manifest2)) {
+                for (const auto& me : manifest2.entries) {
+                    if (me.name == candidate_name) {
+                        MLOG_DEBUG("ai", "Layer3 dedup skip (name@manifest): %s", candidate_name.c_str());
+                        return;
+                    }
+                }
+            }
+        }
 
         // PNG 保存
 
@@ -5304,15 +5291,7 @@ public:
 
             MLOG_INFO("ai", "Layer3 テンプレート自動登録: %s (%dx%d) -> tap", entry.name.c_str(), rw, rh);
 
-            // キャッシュに追加（重複検出用）
-            Layer3TemplateCache cache_entry;
-            cache_entry.name = entry.name;
-            cache_entry.gray = std::move(gray_copy);
-            cache_entry.w = rw;
-            cache_entry.h = rh;
-            layer3_cache_.push_back(std::move(cache_entry));
-            MLOG_DEBUG("ai", "Layer3 キャッシュ追加: %s (total=%zu)",
-                       entry.name.c_str(), layer3_cache_.size());
+            // Layer3 dedup: manifest直読み方式のためキャッシュ追加不要
         }
 
 
@@ -18009,14 +17988,7 @@ private:
     mutable std::mutex layer3_matches_mutex_;
     std::chrono::steady_clock::time_point layer3_last_time_;  // 最終検出時刻
 
-    // Layer3 自動登録テンプレートの重複検出用キャッシュ
-    struct Layer3TemplateCache {
-        std::string name;
-        std::vector<uint8_t> gray;
-        int w = 0;
-        int h = 0;
-    };
-    std::vector<Layer3TemplateCache> layer3_cache_;
+    // Layer3 dedup: manifest直読み方式（layer3_cache_廃止済み）
     static constexpr float LAYER3_DEDUP_THRESHOLD = 0.90f;  // 類似度閾値
 
 
