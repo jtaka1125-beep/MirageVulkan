@@ -1,14 +1,13 @@
 // =============================================================================
 // MirageSystem v2 - Frame Capture Implementation
 // =============================================================================
-// Owns STB_IMAGE_WRITE_IMPLEMENTATION to avoid duplicate definitions.
-// Provides mirageGuiSavePng() called from GuiApplication::updateDeviceFrame.
+// stb_image_write symbols are provided by stb_image_impl.cpp (STB_IMAGE_WRITE_IMPLEMENTATION).
+// This file provides mirageGuiSavePng() called from GuiApplication::updateDeviceFrame.
 // =============================================================================
 #include "mirage_log.hpp"
 #include <string>
 #include <cstdint>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
 namespace mirage::gui {

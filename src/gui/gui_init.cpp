@@ -521,16 +521,15 @@ int success = 0;
                 MLOG_INFO("mirror", "VID0 TCP host: %s port=%d for %s", tcp_host.c_str(), local_port, dev.display_name.c_str());
 
                 // Send VIDEO_ROUTE(mode=2=TCP) to APK before TCP connect (APK starts TcpVideoSender on receive)
-                // Skip for USB-preferred devices already connected via AOA — RouteController will manage routing.
+                // Skip USB-preferred: RouteController sends VIDEO_ROUTE(WiFi) on USB failure.
                 const bool usb_preferred = (preferred_route_map.count(dev.hardware_id) && preferred_route_map[dev.hardware_id] == "usb");
-                const bool usb_connected = g_hybrid_cmd && g_hybrid_cmd->is_device_connected(dev.usb_serial);
-                if (!dev.ip_address.empty() && g_hybrid_cmd && !(usb_preferred && usb_connected)) {
+                if (!dev.ip_address.empty() && g_hybrid_cmd && !usb_preferred) {
                     const uint8_t VIDEO_ROUTE_TCP = 2;
                     g_hybrid_cmd->send_video_route(dev.hardware_id, VIDEO_ROUTE_TCP, tcp_host, local_port);
                     MLOG_INFO("mirror", "Sent VIDEO_ROUTE(TCP) to %s port=%d", dev.hardware_id.c_str(), local_port);
                     std::this_thread::sleep_for(std::chrono::milliseconds(300));  // Wait for APK to start TcpVideoSender
-                } else if (usb_preferred && usb_connected) {
-                    MLOG_INFO("mirror", "Skipped VIDEO_ROUTE(TCP) for USB-preferred device %s (USB AOA active)", dev.hardware_id.c_str());
+                } else if (usb_preferred) {
+                    MLOG_INFO("mirror", "Skipped VIDEO_ROUTE(TCP) for USB-preferred %s (RouteCtrl manages)", dev.hardware_id.c_str());
                 }
 
                 started = g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, local_port, tcp_host);
