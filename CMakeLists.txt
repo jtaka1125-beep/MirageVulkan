@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 
 
 # MirageVulkan - Vulkan Video Unified Pipeline
@@ -1824,6 +1824,8 @@ if(BUILD_TESTS)
     src/ai/lfm_classifier.cpp
 
     src/ai/lfm_classifier.hpp
+
+            src/stb_image_impl.cpp
 
 
         )
