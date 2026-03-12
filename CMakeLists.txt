@@ -261,6 +261,8 @@ set(AI_SOURCES
 
     src/perception/template_matcher.cpp
     src/perception/template_matcher.hpp
+    src/perception/detect.cpp
+    src/perception/detect.hpp
 
 )
 
