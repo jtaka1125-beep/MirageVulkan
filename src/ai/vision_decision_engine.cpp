@@ -767,14 +767,7 @@ bool VisionDecisionEngine::launchLayer2Async(
     if (!layer2_client_) return false;
     if (!config_.enable_layer2) return false;
 
-    // RGBAをJPEGに変換せずに、簡易的に生データをbase64渡し。
-    // callScript側では jpeg_data として扱うため、実際の用途では
-    // ai_engine.cppからJPEGデータを直接渡すことを推奨。
-    // ここではRGBA生データをそのままJPEGバッファとして渡す。
-    // （ai_engine.cppのlaunchLayer2AsyncはJPEGバッファを持っているので
-    //   将来的にはAPIを変更してJPEGを直接渡すべき）
-    (void)width; (void)height;
-    return layer2_client_->launchAsync(device_id, rgba, width * height * 4, now);
+    return layer2_client_->launchAsync(device_id, rgba, width, height, now);
 }
 
 VisionDecisionEngine::Layer2Result VisionDecisionEngine::pollLayer2Result(
