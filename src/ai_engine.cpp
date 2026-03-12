@@ -5150,17 +5150,25 @@ public:
 
 
 
-        // 名前ベース重複チェック（manifest直読み・同名エントリがあれば即スキップ）
+        // 名前ベース重複チェック（manifest直読み・同名エントリがあれば古いパターンを削除して上書き）
         {
             std::string candidate_name = "auto_" + l2.type + "_" + l2.button_text;
             std::string manifest_path2 = config_.templates_dir + "/manifest.json";
             mirage::ai::TemplateManifest manifest2;
             if (mirage::ai::loadManifestJson(manifest_path2, manifest2)) {
-                for (const auto& me : manifest2.entries) {
-                    if (me.name == candidate_name) {
-                        MLOG_DEBUG("ai", "Layer3 dedup skip (name@manifest): %s", candidate_name.c_str());
-                        return;
-                    }
+                auto dup_it = std::find_if(manifest2.entries.begin(), manifest2.entries.end(),
+                    [&](const mirage::ai::TemplateEntry& me) { return me.name == candidate_name; });
+                if (dup_it != manifest2.entries.end()) {
+                    // 精度優先: 古いパターンを削除し、新しい検出で上書き登録する
+                    namespace fs = std::filesystem;
+                    std::string old_file = config_.templates_dir + "/" + dup_it->file;
+                    std::error_code ec;
+                    fs::remove(old_file, ec);
+                    if (!ec) MLOG_INFO("ai", "Layer3 重複パターン削除: %s", old_file.c_str());
+                    else     MLOG_WARN("ai", "Layer3 重複パターン削除失敗: %s (%s)", old_file.c_str(), ec.message().c_str());
+                    manifest2.entries.erase(dup_it);
+                    mirage::ai::saveManifestJson(manifest_path2, manifest2);
+                    // fallthrough: 新しい検出を登録する（returnしない）
                 }
             }
         }
