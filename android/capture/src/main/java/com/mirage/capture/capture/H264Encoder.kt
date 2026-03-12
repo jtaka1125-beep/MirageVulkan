@@ -77,12 +77,12 @@ class H264Encoder(
 
                 private const val MIN_FPS = 10
         private const val MAX_FPS = 60
-        private const val BASE_BITRATE = 10_000_000
+        private const val BASE_BITRATE = 5_000_000
         private const val BASE_FPS = 30
-        private const val BITRATE_CAP = 32_000_000
+        private const val BITRATE_CAP = 10_000_000
         private const val LOG_INTERVAL_MS = 5000L
         private const val SPS_PPS_RESEND_INTERVAL_MS = 5000L
-        private const val I_FRAME_INTERVAL = 5   // IDR every 5s: clears MTK HEVC stale reference frames (subtitle ghost fix)
+        private const val I_FRAME_INTERVAL = 2   // IDR every 2s: faster recovery from frame errors
     }
 
     private var codec: MediaCodec? = null

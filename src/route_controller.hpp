@@ -323,10 +323,10 @@ private:
     // FPS levels
 
 
-    static constexpr int MAIN_FPS_HIGH = 60;
+    static constexpr int MAIN_FPS_HIGH = 30;
 
 
-    static constexpr int MAIN_FPS_MED  = 45;   // was 30
+    static constexpr int MAIN_FPS_MED  = 30;   // was 30
 
 
     static constexpr int MAIN_FPS_LOW  = 30;
