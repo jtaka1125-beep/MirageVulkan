@@ -1,4 +1,20 @@
-﻿# MirageSystem — Claude Code Instructions
+﻿# ===== MANDATORY FIRST STEP - DO NOT SKIP =====
+# Every task MUST start by calling these MCP tools. No exceptions.
+
+1. Call MCP tool: memory_bootstrap  (namespace="mirage-vulkan")
+2. Call MCP tool: memory_bootstrap  (namespace="mirage-android")
+3. Call MCP tool: memory_bootstrap  (namespace="mirage-infra")
+4. Read file: C:\MirageWork\MirageVulkan\PROJECT_STATE.md
+
+Why: These contain prior decisions, resolved bugs, and architecture choices.
+Skipping causes duplicate work and contradicts past decisions.
+
+On task completion, record important findings:
+- Call MCP tool: memory_append_decision  (namespace matching the area changed)
+
+# ===== END MANDATORY FIRST STEP =====
+
+# MirageSystem — Claude Code Instructions
 
 ## Project Overview
 MirageVulkan: Windows-based Android device automation and screen mirroring platform.
