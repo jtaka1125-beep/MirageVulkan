@@ -14,15 +14,6 @@ namespace mirage::video {
 
 static std::mutex g_vulkan_queue_submit_mutex;
 
-// Embedded SPIR-V shader (compiled from yuv_to_rgba.comp)
-// This is a placeholder - in production, load from file or embed compiled SPIR-V
-static const uint32_t YUV_TO_RGBA_SPIRV[] = {
-    // SPIR-V magic number and version
-    0x07230203, 0x00010500, 0x00080001, 0x00000050,
-    // ... (full SPIR-V would be here)
-    // For now, we'll load from file in createPipeline()
-};
-
 VulkanYuvConverter::VulkanYuvConverter() = default;
 
 VulkanYuvConverter::~VulkanYuvConverter() {
