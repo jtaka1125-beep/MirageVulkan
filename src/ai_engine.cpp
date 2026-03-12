@@ -271,6 +271,7 @@
 
 #include "ai/template_writer.hpp"
 #include "ai/ui_element_adapters.hpp"
+#include "ai/continuous_learning_v2.hpp"
 
 
 
@@ -2606,6 +2607,21 @@ public:
             MLOG_INFO("ai", "Layer2Client初期化完了 (Gemini並列投票)");
         }
 
+        // Continuous Learning v2 初期化
+        {
+            CLv2Config clv2_cfg;
+            clv2_cfg.enabled              = config.clv2_enabled;
+            clv2_cfg.confidence_threshold = config.clv2_confidence_threshold;
+            clv2_cfg.cooldown_frames      = config.clv2_cooldown_frames;
+            clv2_cfg.max_templates_total  = config.clv2_max_templates_total;
+            clv2_cfg.templates_dir        = config.clv2_templates_dir;
+            clv2_cfg.manifest_path        = config.templates_dir + "/manifest.json";
+            clv2_ = std::make_unique<ContinuousLearningV2>(clv2_cfg);
+            clv2_->start();  // FrameReadyEvent購読開始（学習自体はenabled制御）
+            MLOG_INFO("ai", "ContinuousLearningV2 初期化完了 (enabled=%s threshold=%.2f)",
+                      clv2_cfg.enabled ? "true" : "false", clv2_cfg.confidence_threshold);
+        }
+
 
 
 
@@ -3092,7 +3108,7 @@ public:
 
         vision_engine_.reset();
 
-
+        if (clv2_) { clv2_->stop(); clv2_.reset(); }
 
 
 
@@ -6229,7 +6245,14 @@ public:
 
         cacheMatches(vk_results);
 
-
+        // Continuous Learning v2: 低信頼度時の自動テンプレート学習
+        if (clv2_) {
+            float best_score = 0.0f;
+            for (const auto& r : vk_results) {
+                if (r.score > best_score) best_score = r.score;
+            }
+            clv2_->onLayer1Result(best_score, device_id, width, height, rgba);
+        }
 
 
 
@@ -17906,7 +17929,7 @@ private:
 
     std::unique_ptr<VisionDecisionEngine> vision_engine_;
 
-
+    std::unique_ptr<ContinuousLearningV2> clv2_;  // Continuous Learning v2
 
     std::shared_ptr<mirage::ai::OllamaVision> ollama_vision_;  // Layer 2
 

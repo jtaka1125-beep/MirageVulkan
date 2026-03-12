@@ -48,6 +48,12 @@ struct AiConfig {
     int  vde_confirm_count      = 3;
     int  vde_cooldown_ms        = 2000;
     int  vde_debounce_window_ms = 500;
+    // Continuous Learning v2 (config.json "continuous_learning_v2" section)
+    bool  clv2_enabled              = false;
+    float clv2_confidence_threshold = 0.65f;
+    int   clv2_cooldown_frames      = 60;
+    int   clv2_max_templates_total  = 200;
+    std::string clv2_templates_dir  = "templates/auto";
 };
 
 struct AoaConfig {
@@ -188,6 +194,13 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ai.vde_confirm_count = jsonGet<int>(j, "ai", "vde_confirm_count", 3);
         config.ai.vde_cooldown_ms = jsonGet<int>(j, "ai", "vde_cooldown_ms", 2000);
         config.ai.vde_debounce_window_ms = jsonGet<int>(j, "ai", "vde_debounce_window_ms", 500);
+
+        // Continuous Learning v2
+        config.ai.clv2_enabled = jsonGet<bool>(j, "continuous_learning_v2", "enabled", false);
+        config.ai.clv2_confidence_threshold = jsonGet<float>(j, "continuous_learning_v2", "confidence_threshold", 0.65f);
+        config.ai.clv2_cooldown_frames = jsonGet<int>(j, "continuous_learning_v2", "cooldown_frames", 60);
+        config.ai.clv2_max_templates_total = jsonGet<int>(j, "continuous_learning_v2", "max_templates_total", 200);
+        config.ai.clv2_templates_dir = jsonGet<std::string>(j, "continuous_learning_v2", "templates_dir", "templates/auto");
         // Layer 3
 
         config.ollama.host       = jsonGet<std::string>(j, "ollama", "host",       "127.0.0.1");

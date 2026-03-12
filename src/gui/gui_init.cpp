@@ -1138,6 +1138,13 @@ void initializeAI() {
     if (ai_cfg.vde_debounce_window_ms > 0)
         ai_config.vde_debounce_window_ms = ai_cfg.vde_debounce_window_ms;
 
+    // Continuous Learning v2
+    ai_config.clv2_enabled              = ai_cfg.clv2_enabled;
+    ai_config.clv2_confidence_threshold = ai_cfg.clv2_confidence_threshold;
+    ai_config.clv2_cooldown_frames      = ai_cfg.clv2_cooldown_frames;
+    ai_config.clv2_max_templates_total  = ai_cfg.clv2_max_templates_total;
+    if (!ai_cfg.clv2_templates_dir.empty())
+        ai_config.clv2_templates_dir    = ai_cfg.clv2_templates_dir;
 
     {
         const auto& oc = mirage::config::getConfig().ollama;

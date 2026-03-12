@@ -199,6 +199,12 @@ set(AI_SOURCES
     src/ai/learning_mode.hpp
 
 
+    src/ai/continuous_learning_v2.cpp
+
+
+    src/ai/continuous_learning_v2.hpp
+
+
     src/ai/template_manifest.cpp
 
 

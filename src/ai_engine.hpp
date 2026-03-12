@@ -182,6 +182,13 @@ struct AIConfig {
 
 
 
+    // Continuous Learning v2
+    bool  clv2_enabled              = false;
+    float clv2_confidence_threshold = 0.65f;
+    int   clv2_cooldown_frames      = 60;
+    int   clv2_max_templates_total  = 200;
+    std::string clv2_templates_dir  = "templates/auto";
+
     // VisionDecisionEngine initial config
 
 
