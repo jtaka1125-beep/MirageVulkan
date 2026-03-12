@@ -2456,6 +2456,9 @@ public:
 
 
 
+        // template_store_ 自己設定（外部からsetTemplateStore未呼出時の保険）
+        template_store_ = &template_store_owned_;
+
         // アクションマッパー
 
 
@@ -5891,7 +5894,6 @@ public:
 
 
 
-
             return action;
 
 
@@ -5909,6 +5911,7 @@ public:
 
 
         }
+
 
 
 
@@ -5965,7 +5968,14 @@ public:
         pf.width      = width;
         pf.height     = height;
         pf.format     = mirage::perception::PixelFormat::kNV21;  // gray8 single plane
+        auto t_detect_start = std::chrono::steady_clock::now();
         auto bundle   = mirage::perception::detect(*vk_matcher_, pf, tpl_src);
+        auto t_detect_end = std::chrono::steady_clock::now();
+        int detect_us = static_cast<int>(std::chrono::duration_cast<std::chrono::microseconds>(t_detect_end - t_detect_start).count());
+        MLOG_INFO("perception", "detect() done: templates=%d results=%d time_us=%d",
+                  static_cast<int>(tpl_src.size()),
+                  static_cast<int>(bundle.template_results.size()),
+                  detect_us);
         // (旧 matchGpu 呼び出しを perception::detect() 経由に置換)
         // auto matchResult = vk_matcher_->matchGpu(gray_gpu, width, height);
 
@@ -17665,6 +17675,7 @@ private:
 
 
 
+    TemplateStore template_store_owned_;  // 所有インスタンス
     TemplateStore* template_store_ = nullptr;
 
 
