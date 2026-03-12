@@ -27,6 +27,7 @@
 #include <tuple>
 #include <fstream>
 #include <mutex>
+#include "stb_image.h"
 using namespace mirage::gui::state;
 using namespace mirage::gui::command;
 
@@ -1192,11 +1193,27 @@ void initializeAI() {
                                             const std::vector<uint8_t>& jpeg,
                                             int width, int height,
                                             int64_t /*timestamp_us*/) {
-        // Log frame receipt (future: feed to AIEngine for analysis)
-        static uint64_t s_frame_count = 0;
-        if (++s_frame_count % 30 == 1) {  // Log every 30 frames
+        // Decode JPEG -> RGA using stb_image, dispatch via EventBus
+        static std::atomic<uint64_t> s_frame_count{0};
+        const uint64_t fnum = ++s_frame_count;
+        int w = width, h = height, c_;
+        uint8_t* px = stbi_load_from_memory(jpeg.data(), (int)jpeg.size(), &w, &h, &c_, 4);
+        if (px) {
+            auto frame = std::make_shared<mirage::SharedFrame>();
+            auto buf = new uint8_t[(size_t)w * h * 4];
+            std::memcpy(buf, px, (size_t)w * h * 4);
+            stbi_image_free(px);
+            frame->rgba = std::shared_ptr<const uint8_t[]>(buf);
+            frame->width = w;
+            frame->height = h;
+            frame->device_id = device_id;
+            frame->frame_id = fnum;
+            frame->pts_us = static_cast<uint64_t>(/*timestamp_us*/ 0);
+            mirage::dispatcher().dispatchSharedFrame(frame);
+        }
+        if (fnum % 30 == 1) {
             MLOG_DEBUG("ai.jpeg", "Frame #%llu from %s: %dx%d, %zu bytes",
-                (unsigned long long)s_frame_count, device_id.c_str(),
+                (unsigned long long)fnum, device_id.c_str(),
                 width, height, jpeg.size());
         }
     });
