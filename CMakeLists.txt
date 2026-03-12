@@ -919,6 +919,7 @@ if(USE_AI)
 
 
     target_compile_definitions(mirage_core PRIVATE USE_AI)
+    target_compile_definitions(mirage_vulkan PRIVATE USE_AI)
 
 
     message(STATUS "AI Engine enabled")
@@ -1147,6 +1148,9 @@ target_link_libraries(mirage_vulkan_debug PRIVATE ${MIRAGE_LIBS})
 
 
 target_compile_definitions(mirage_vulkan_debug PRIVATE _DEBUG)
+if(USE_AI)
+    target_compile_definitions(mirage_vulkan_debug PRIVATE USE_AI)
+endif()
 
 
 
