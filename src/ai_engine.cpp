@@ -270,6 +270,7 @@
 
 
 #include "ai/template_writer.hpp"
+#include "ai/ui_element_adapters.hpp"
 
 
 
