@@ -241,7 +241,6 @@ set(AI_SOURCES
     src/ai/vision_decision_engine.hpp
 
 
-    src/ai/ollama_vision.cpp
 
     src/ai/lfm_classifier.cpp
 
@@ -252,7 +251,6 @@ set(AI_SOURCES
     src/ai/ai_jpeg_receiver.hpp
 
 
-    src/ai/ollama_vision.hpp
 
 
 )
@@ -1803,7 +1801,6 @@ if(BUILD_TESTS)
             src/ai/vision_decision_engine.cpp
 
 
-            src/ai/ollama_vision.cpp
 
     src/ai/lfm_classifier.cpp
 

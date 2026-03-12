@@ -196,14 +196,7 @@ struct AIConfig {
 
     int  vde_debounce_window_ms = 500;   // Debounce window (ms)
 
-    // Layer 3 (OllamaVision) 設定
-    bool vde_enable_layer3          = false; // Layer 3 有効化
-    int  vde_layer3_no_match_frames = 150;   // 連続マッチなしフレーム数トリガー (~5秒@30fps)
-    int  vde_layer3_stuck_frames    = 300;   // 同一テンプレート継続フレーム数トリガー (~10秒@30fps)
-    int  vde_layer3_no_match_ms     = 5000;  // 時間ベーストリガー (ms)
-    int  vde_layer3_cooldown_ms     = 30000; // Layer 3 呼び出し後の冷却時間 (ms)
 
-    // OllamaVision 直接設定 (config.json の ollama ブロックから)
     std::string ollama_host       = "127.0.0.1";
     int         ollama_port       = 11434;
     std::string ollama_model      = "llava:7b";

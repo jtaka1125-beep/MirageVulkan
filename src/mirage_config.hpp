@@ -228,10 +228,10 @@ inline void applyEnvironmentOverrides(MirageConfig& config) {
     if ((val = std::getenv("MIRAGE_LOG_DIR"))) config.log_directory = val;
     if ((val = std::getenv("MIRAGE_ADB_PATH"))) config.adb_path = val;
     if ((val = std::getenv("MIRAGE_TEMP_DIR"))) config.temp_directory = val;
-    if ((val = std::getenv("MIRAVE_AOA_SWITCH"))) config.aoa_switch_path = val;
+    if ((val = std::getenv("MIRAGE_AOA_SWITCH"))) config.aoa_switch_path = val;
     if ((val = std::getenv("MIRAGE_VIDEO_FPS"))) config.default_video_fps = std::stoi(val);
     if ((val = std::getenv("MIRAGE_UDP_PORT"))) config.udp_listen_port = std::stoi(val);
-    if ((val = std::getenv("MIRAVE_AOA_ENABLED"))) config.aoa_enabled = (std::string(val) == "true" || std::string(val) == "1");
+    if ((val = std::getenv("MIRAGE_AOA_ENABLED"))) config.aoa_enabled = (std::string(val) == "true" || std::string(val) == "1");
 }
 
 } // namespace mirage::config

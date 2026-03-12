@@ -1137,14 +1137,7 @@ void initializeAI() {
     if (ai_cfg.vde_debounce_window_ms > 0)
         ai_config.vde_debounce_window_ms = ai_cfg.vde_debounce_window_ms;
 
-    // Layer 3 (OllamaVision) 設定反映
-    ai_config.vde_enable_layer3          = ai_cfg.vde_enable_layer3;
-    ai_config.vde_layer3_no_match_frames = ai_cfg.vde_layer3_no_match_frames;
-    ai_config.vde_layer3_stuck_frames    = ai_cfg.vde_layer3_stuck_frames;
-    ai_config.vde_layer3_no_match_ms     = ai_cfg.vde_layer3_no_match_ms;
-    ai_config.vde_layer3_cooldown_ms     = ai_cfg.vde_layer3_cooldown_ms;
 
-    // OllamaVision 設定 (config.json の ollama ブロック)
     {
         const auto& oc = mirage::config::getConfig().ollama;
         if (!oc.host.empty())   ai_config.ollama_host       = oc.host;

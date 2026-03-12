@@ -258,7 +258,6 @@
 
 
 
-#include "ai/ollama_vision.hpp"
 
 
 
@@ -2510,11 +2509,6 @@ public:
 
 
 
-        vde_config.enable_layer3          = config.vde_enable_layer3;
-        vde_config.layer3_no_match_frames = config.vde_layer3_no_match_frames;
-        vde_config.layer3_stuck_frames    = config.vde_layer3_stuck_frames;
-        vde_config.layer3_no_match_ms     = config.vde_layer3_no_match_ms;
-        vde_config.layer3_cooldown_ms     = config.vde_layer3_cooldown_ms;
 
 
 
@@ -2534,49 +2528,6 @@ public:
 
 
 
-        // Layer 3: OllamaVision 生成 & VDE に注入
-
-
-
-        mirage::ai::OllamaVisionConfig ollama_cfg;
-
-
-
-        ollama_cfg.host       = config.ollama_host;
-
-
-
-        ollama_cfg.port       = config.ollama_port;
-
-
-
-        ollama_cfg.model      = config.ollama_model;
-
-
-
-        ollama_cfg.timeout_sec = (config.ollama_timeout_ms / 1000);
-
-
-
-        ollama_cfg.max_tokens  = config.ollama_max_tokens;
-
-
-
-        ollama_vision_ = std::make_shared<mirage::ai::OllamaVision>(ollama_cfg);
-        // CLIPエンコーダーをバックグラウンドでプリロード（初回推論レイテンシ ~45s → ~4s に短縮）
-        ollama_vision_->warmupAsync();
-
-
-
-        MLOG_INFO("ai", "OllamaVision設定: model=%s host=%s:%d max_tokens=%d timeout=%ds",
-
-
-
-                  ollama_cfg.model.c_str(), ollama_cfg.host.c_str(), ollama_cfg.port,
-
-
-
-                  ollama_cfg.max_tokens, ollama_cfg.timeout_sec);
 
 
 
@@ -2588,7 +2539,6 @@ public:
 
 
 
-        vision_engine_->setOllamaVision(ollama_vision_);
 
 
 
@@ -4391,8 +4341,7 @@ public:
 
 
 
-        MLOG_INFO("ai", "テンプレート %d 個読み込み完了 (dir=%s), Layer3キャッシュ=%zu",
-                  count, dir.c_str(), layer3_cache_.size());
+        MLOG_INFO("ai", "テンプレート %d 個読み込み完了 (dir=%s)", count, dir.c_str());
 
 
 
@@ -17900,7 +17849,6 @@ private:
 
 
     std::shared_ptr<mirage::ai::OllamaVision> ollama_vision_;  // Layer 3
-
 
 
     std::shared_ptr<mirage::ai::LfmClassifier> lfm_classifier_;  // Layer 2.5
