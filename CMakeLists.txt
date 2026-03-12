@@ -245,6 +245,9 @@ set(AI_SOURCES
 
 
     src/ai/layer2_client.hpp
+    src/ai/ui_element.cpp
+    src/ai/ui_element.hpp
+    src/ai/layer2_input.hpp
 
 
 
