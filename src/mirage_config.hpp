@@ -1,9 +1,9 @@
 #pragma once
-// =============================================================================
+// ==========================================================================
 // MirageSystem - Configuration Management
-// =============================================================================
+// ===========================================================================
 // Centralizes hardcoded paths and settings for external configuration.
-// =============================================================================
+// ===========================================================================
 
 #include <string>
 #include <vector>
@@ -30,7 +30,7 @@ struct MirageConfig {
     std::string adb_path;
 
     // Logging
-    std::string log_directory;      // Default: exe directory or temp
+    std::string log_directory;      // Default: <exedir>\logs
     std::string log_filename = "mirage_vulkan.log";
     bool log_to_console = true;
     bool log_to_file = true;
@@ -142,8 +142,8 @@ inline void MirageConfig::initDefaults() {
     // Temp directory
     temp_directory = getTempDirectory();
 
-    // Log directory - prefer user data, fallback to exe directory
-    log_directory = getUserDataDirectory();
+    // Log directory - use exe-relative path (works in both Session 0 and Session 1)
+    log_directory = getExeDirectory() + "\\logs";
 
     // Font paths (Windows)
 #ifdef _WIN32
@@ -228,10 +228,10 @@ inline void applyEnvironmentOverrides(MirageConfig& config) {
     if ((val = std::getenv("MIRAGE_LOG_DIR"))) config.log_directory = val;
     if ((val = std::getenv("MIRAGE_ADB_PATH"))) config.adb_path = val;
     if ((val = std::getenv("MIRAGE_TEMP_DIR"))) config.temp_directory = val;
-    if ((val = std::getenv("MIRAGE_AOA_SWITCH"))) config.aoa_switch_path = val;
+    if ((val = std::getenv("MIRAVE_AOA_SWITCH"))) config.aoa_switch_path = val;
     if ((val = std::getenv("MIRAGE_VIDEO_FPS"))) config.default_video_fps = std::stoi(val);
     if ((val = std::getenv("MIRAGE_UDP_PORT"))) config.udp_listen_port = std::stoi(val);
-    if ((val = std::getenv("MIRAGE_AOA_ENABLED"))) config.aoa_enabled = (std::string(val) == "true" || std::string(val) == "1");
+    if ((val = std::getenv("MIRAVE_AOA_ENABLED"))) config.aoa_enabled = (std::string(val) == "true" || std::string(val) == "1");
 }
 
 } // namespace mirage::config
