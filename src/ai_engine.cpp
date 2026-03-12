@@ -7225,6 +7225,13 @@ if (decision.should_act && can_send) {
 
 
                         if (l2.has_result && l2.found) {
+                            // Layer2Result -> Layer2Input (Step4)
+                            auto l2inp = mirage::ai::buildLayer2Input(
+                                {}, [](int){ return std::string{}; },
+                                &l2, width, height);
+                            const auto& top = l2inp.elements.empty()
+                                ? mirage::ai::fromLayer2Result(l2, width, height)
+                                : l2inp.elements.front();
 
 
 
@@ -7240,7 +7247,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            action.reason = "Layer2: " + l2.type + " button=" + l2.button_text;
+                            action.reason = "Layer2: " + top.type + " button=" + top.text;
 
 
 
@@ -7260,14 +7267,14 @@ if (decision.should_act && can_send) {
 
 
 
-                                      slot, l2.x, l2.y, l2.button_text.c_str());
+                                      slot, l2.x, l2.y, top.text.c_str());
 
 
 
                             registerLayer2Template(l2, rgba, width, height);
 
                             // オーバーレイ表示用に検出を追加
-                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
+                            addLayer2Detection(l2.x, l2.y, top.type + ":" + top.text, 3, width, height);
 
                         }
 
@@ -7514,6 +7521,13 @@ if (decision.should_act && can_send) {
 
 
                         if (l2.has_result && l2.found) {
+                            // Layer2Result -> Layer2Input (Step4)
+                            auto l2inp = mirage::ai::buildLayer2Input(
+                                {}, [](int){ return std::string{}; },
+                                &l2, width, height);
+                            const auto& top = l2inp.elements.empty()
+                                ? mirage::ai::fromLayer2Result(l2, width, height)
+                                : l2inp.elements.front();
 
 
 
@@ -7529,7 +7543,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            action.reason = "Layer2: " + l2.type + " button=" + l2.button_text;
+                            action.reason = "Layer2: " + top.type + " button=" + top.text;
 
 
 
@@ -7545,7 +7559,7 @@ if (decision.should_act && can_send) {
 
 
 
-                            MLOG_INFO("ai", "Layer 2 TAP: slot=%d (%d,%d) %s", slot, l2.x, l2.y, l2.button_text.c_str());
+                            MLOG_INFO("ai", "Layer 2 TAP: slot=%d (%d,%d) %s", slot, l2.x, l2.y, top.text.c_str());
 
 
 
@@ -7556,7 +7570,7 @@ if (decision.should_act && can_send) {
                             registerLayer2Template(l2, rgba, width, height);
 
                             // オーバーレイ表示用に検出を追加
-                            addLayer2Detection(l2.x, l2.y, l2.type + ":" + l2.button_text, 3, width, height);
+                            addLayer2Detection(l2.x, l2.y, top.type + ":" + top.text, 3, width, height);
 
                         }
 
