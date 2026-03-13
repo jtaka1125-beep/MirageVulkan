@@ -589,6 +589,12 @@ void AdbDeviceManager::refresh() {
                 ud.assigned_tcp_port = p;
                 MLOG_INFO("adb", "Applied fixed tcp_port=%d to %s", p, hw_id.c_str());
             }
+            std::string usblan;
+            if (reg.getUsblanIp(hw_id, usblan)) {
+                ud.usblan_ip = usblan;
+                MLOG_INFO("adb", "Applied usblan_ip=%s to %s", usblan.c_str(), hw_id.c_str());
+                MLOG_INFO("adb", "Applied fixed tcp_port=%d to %s", p, hw_id.c_str());
+            }
         }
     } catch (...) {
         // ignore

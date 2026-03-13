@@ -715,9 +715,62 @@ void wifiAdbWatchdogThread() {
                     if (g_route_controller) g_route_controller->resetDeviceFps(dev.hardware_id);
                 }
             }
+
+            // D) USBLAN auto-recovery: If device has usblan_ip configured but unreachable,
+            //    try to re-enable USB tethering via UI automation
+            if (!dev.wifi_connections.empty() && !dev.usblan_ip.empty()) {
+                // Quick USBLAN reachability check (1 ping, 500ms timeout)
+                std::string ping_cmd = "ping -n 1 -w 500 " + dev.usblan_ip;
+                int ping_result = execHidden(ping_cmd);
+
+                if (ping_result != 0) {
+                    // USBLAN unreachable - attempt recovery via UI automation
+                    static std::unordered_map<std::string, uint64_t> usblan_recovery_last;
+                    constexpr uint64_t USBLAN_RECOVERY_COOLDOWN_MS = 60000;  // 1 minute cooldown
+
+                    const uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+
+                    uint64_t last_attempt = 0;
+                    auto it = usblan_recovery_last.find(dev.hardware_id);
+                    if (it != usblan_recovery_last.end()) last_attempt = it->second;
+
+                    if (now_ms - last_attempt > USBLAN_RECOVERY_COOLDOWN_MS) {
+                        usblan_recovery_last[dev.hardware_id] = now_ms;
+                        MLOG_INFO("watchdog", "USBLAN %s unreachable on %s, attempting UI recovery...",
+                                  dev.usblan_ip.c_str(), dev.display_name.c_str());
+
+                        const auto& adb_id = dev.wifi_connections[0];
+                        // Open tethering settings
+                        g_adb_manager->adbCommand(adb_id,
+                            "shell am start -n com.android.settings/.TetherSettings");
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+
+                        // Tap USB tethering toggle (coordinates for X1: 1200x2000)
+                        int tap_x = dev.screen_width / 2;  // center horizontally
+                        int tap_y = (dev.screen_height > 1500) ? 450 : 300;  // adjust for screen size
+                        g_adb_manager->adbCommand(adb_id,
+                            "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+
+                        // Verify recovery
+                        ping_result = execHidden(ping_cmd);
+                        if (ping_result == 0) {
+                            MLOG_INFO("watchdog", "USBLAN %s recovered on %s",
+                                      dev.usblan_ip.c_str(), dev.display_name.c_str());
+                            // Return to home
+                            g_adb_manager->adbCommand(adb_id, "shell input keyevent KEYCODE_HOME");
+                        } else {
+                            MLOG_WARN("watchdog", "USBLAN recovery failed on %s - manual intervention needed",
+                                      dev.display_name.c_str());
+                        }
+                    }
+                }
+            }
+
         }
 
-        // D) MultiReceiver鬮ｫ・ｴ陝ｷ・｢繝ｻ・ｽ繝ｻ・ｪ鬮ｯ蜈ｷ・ｽ・ｻ髫ｴ蠑ｱ繝ｻ繝ｻ繝ｻ蛻ｹ繝ｻ・ｹ髫ｰ雋ｻ・ｽ・ｶ驍ｵ・ｲ陜｣・､繝ｻ・ｹ隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩搾ｽｵ繝ｻ・ｺ髫ｰ逍ｲ・ｻ繧托ｽｽ・ｽ繝ｻ・ｭ髣費ｽｨ隲帛､ｷ蟶昴＠繝ｻ・ｺ髯ｷ・ｷ繝ｻ・ｶ郢晢ｽｻ驍・戟謐礼ｹ晢ｽｻ繝ｻ・ｴ鬮ｯ・ｷ繝ｻ・ｷ髯具ｽｹ繝ｻ・ｻ驛｢譎｢・ｽ・ｻ鬮ｯ・ｷ・つ髫ｶ螳茨ｽｿ・ｫ郢晢ｽｻ鬮ｫ・ｴ陝ｶ・ｶ繝ｻ・ｺ繝ｻ・ｷ髯懈ｻゑｽｽ・ｧ
+        // E) MultiReceiver uninitialized check鬮ｫ・ｴ陝ｷ・｢繝ｻ・ｽ繝ｻ・ｪ鬮ｯ蜈ｷ・ｽ・ｻ髫ｴ蠑ｱ繝ｻ繝ｻ繝ｻ蛻ｹ繝ｻ・ｹ髫ｰ雋ｻ・ｽ・ｶ驍ｵ・ｲ陜｣・､繝ｻ・ｹ隴擾ｽｴ郢晢ｽｻ驛｢譎｢・ｽ・ｰ鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・､鬩幢ｽ｢繝ｻ・ｧ郢晢ｽｻ繝ｻ・ｹ鬩搾ｽｵ繝ｻ・ｺ髫ｰ逍ｲ・ｻ繧托ｽｽ・ｽ繝ｻ・ｭ髣費ｽｨ隲帛､ｷ蟶昴＠繝ｻ・ｺ髯ｷ・ｷ繝ｻ・ｶ郢晢ｽｻ驍・戟謐礼ｹ晢ｽｻ繝ｻ・ｴ鬮ｯ・ｷ繝ｻ・ｷ髯具ｽｹ繝ｻ・ｻ驛｢譎｢・ｽ・ｻ鬮ｯ・ｷ・つ髫ｶ螳茨ｽｿ・ｫ郢晢ｽｻ鬮ｫ・ｴ陝ｶ・ｶ繝ｻ・ｺ繝ｻ・ｷ髯懈ｻゑｽｽ・ｧ
         if (!g_multi_receiver && !devices.empty()) {
             MLOG_INFO("watchdog", "MultiReceiver uninitialized but %zu device(s) found 鬩包ｽｯ繝ｻ・ｶ驛｢譎｢・ｽ・ｻre-initializing",
                       devices.size());

@@ -280,6 +280,7 @@ struct ExpectedDeviceSpec {
     int screen_density = 0;
     int tcp_port = 0;
     std::string tcp_host;  // override host for TCP video (e.g. "127.0.0.1" for ADB forward)
+    std::string usblan_ip;  // USB tethering IP (e.g. "10.189.194.30") for auto-recovery
     int display_rotation = 0;  // GUI display rotation offset (0/90/180/270 CW)
 };
 
@@ -317,6 +318,7 @@ public:
                 spec.screen_density = dev.value("screen_density", 0);
                 spec.tcp_port = dev.value("tcp_port", 0);
                 spec.tcp_host = dev.value("tcp_host", "");
+                spec.usblan_ip = dev.value("usblan_ip", "");
                 spec.display_rotation = dev.value("display_rotation", 0);
 
                 if (!spec.hardware_id.empty() && spec.screen_width > 0 && spec.screen_height > 0) {
@@ -361,6 +363,14 @@ public:
         auto it = devices_.find(hardware_id);
         if (it != devices_.end() && !it->second.tcp_host.empty()) {
             out_host = it->second.tcp_host;
+            return true;
+        }
+        return false;
+    }
+    bool getUsblanIp(const std::string& hardware_id, std::string& out_ip) const {
+        auto it = devices_.find(hardware_id);
+        if (it != devices_.end() && !it->second.usblan_ip.empty()) {
+            out_ip = it->second.usblan_ip;
             return true;
         }
         return false;

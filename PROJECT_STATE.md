@@ -101,28 +101,45 @@
 - Status: 要手動起動 (Session 1 / タスクトレイから)
 - post-commit hook: Ollama停止時はメモリ保存スキップ (エラーは無害)
 
+## MirageMemory 外部記憶 (2026-03-13 v2完成)
+- 状態: **実用水準（評価 8.5 相当）**
+- v2 により、MirageMemory は append-only な会話保存層から、状態遷移を伴う知識管理層へ移行した。
+- commit: 58c5a12 (mcp-server/memory_store.py, server.py, test_memory_v2.py)
+- DB stats (mirage-infra): raw 2018 / decision 59 / fact 6 / todo 6 / total 2089
+- v2 主な変更:
+  - decision 構造化（9カラム追加: decision_text/rationale/status/supersedes/superseded_by等）
+  - compact_store_extracted() — compact結果をfact/todo/risk/decisionとして永続化
+  - LIKE dedup — FTS5非依存の重複候補検出
+  - supersedes chain — 旧decisionをsupersededに遷移させる寿命管理
+  - search() CJK fallback — 日本語短文でFTS5が空振りする問題を修正
+- 受け入れ確認: test_memory_v2.py 全8テスト通過、cleanup 12/12 ✅
+- 残件: git push（帰宅後SSH）、Phase 2 compact dedup（同NS/24h/同文字列スキップ）
+
 ## Next Priorities (Ordered)
 1. ✅ AnnexBSplitter.kt HEVC - RtpH264Packetizerで正しく処理済み (2026-03-11確認)
 2. ✅ H.265 E2E - X1 HEVC 1080x1800@60fps, TCP接続確立, GUI表示OK (2026-03-11確認)
 3. ✅ git commit - 未コミット変更一括コミット完了 (2026-03-11, 7件)
 4. ✅ LfmClassifier - qwen3:0.6b + /no_think モード動作確認 (2026-03-11)
 5. ✅ TileCompositor - 9dd4b29で削除済み (不要)
-6. GUIのLearning Modeでテンプレート収集 → AIEngine Layer1テスト
-7. AOA full-path test [BLOCKED: physical USB]
+6. ✅ MirageMemory v2 実装完了 (2026-03-13, commit 58c5a12)
+7. GUIのLearning Modeでテンプレート収集 → AIEngine Layer1テスト
+8. AOA full-path test [BLOCKED: physical USB]
+9. MirageMemory Phase 2: compact dedup
 
 ## GUI File Line Counts (Updated 2026-03-13)
 - gui_ai_panel.cpp:       815
 - gui_init.cpp:          1274
-- gui_threads.cpp:        736
+- gui_threads.cpp:        789
 - gui_device_control.cpp: 554
 - gui_command.cpp:        490
 - gui_window.cpp:         224
 - gui_main.cpp:           362
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4466 lines
+- TOTAL:                 4519 lines
 
 ## Key Decisions Log
+- 2026-03-13: MirageMemory v2 実装完了。decision構造化・compact再格納・lifecycle管理・受け入れ確認まで一巡完了。append-only保存層から状態遷移を伴う知識管理層へ移行。commit 58c5a12。
 - 2026-03-13: USBLAN(RNDIS)復旧完了。前回セッションが誤ってtcp_hostを削除していた問題を修正。X1: tcp_host=10.189.194.30, preferred_route=tcp。TCP動画14Mbps、遅延<1ms。コミット33ec0ed。
 - 2026-03-11: AiJpegReceiver実装（PC側AIストリーム受信）。MirageContext統合。
 - 2026-03-11: VERIFYING状態追加（アクション後検証+リトライ）。テンプレート無視リスト追加（永続化+GUI編集）。

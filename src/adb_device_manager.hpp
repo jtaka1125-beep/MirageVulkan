@@ -68,6 +68,9 @@ public:
 
         std::string usb_serial;         // USB physical serial (e.g. "A9250700479")
 
+        // USBLAN (USB tethering) IP address for low-latency connection
+        std::string usblan_ip;          // e.g. "10.189.194.30" (empty if not configured)
+
         // Assigned port for screen capture (each device gets unique port)
         int assigned_port = 0;
         int assigned_tcp_port = 0;  // MirageCapture TcpVideoSender port (assigned by adb forward)

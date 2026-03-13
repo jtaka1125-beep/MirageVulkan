@@ -51,7 +51,7 @@
       "screen_density": 213,
       "android_sdk": 33,
       "android_version": "13",
-      "ip_address": "10.189.194.30",
+      "ip_address": "192.168.0.3",
       "apk_version": "2.1.0-audio",
       "wifi_adb_port": 5555,
       "target_fps": 60,
@@ -59,7 +59,8 @@
       "video_bitrate_kbps": 4800,
       "tcp_port": 50000,
       "cmd_port": 50001,
-      "tcp_host": "10.189.194.30"
+      "tcp_host": "10.189.194.30",
+      "usblan_ip": "10.189.194.30"
     }
   ]
 }
