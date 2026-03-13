@@ -83,6 +83,11 @@ public:
                                                       int width, int height);
 
     int getTemplateCount() const { return static_cast<int>(templates_.size()); }
+    std::string getTemplateName(int template_id) const {
+        auto it = templates_.find(template_id);
+        if (it != templates_.end()) return it->second->name;
+        return "";
+    }
     void clearAll();
     bool isInitialized() const { return initialized_; }
 

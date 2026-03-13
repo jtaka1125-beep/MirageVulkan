@@ -31,11 +31,14 @@ matchTemplate(mirage::vk::VulkanTemplateMatcher& matcher,
         return std::nullopt;
     }
 
-    // スコア最大のヒットを採用
-    const mirage::vk::VkMatchResult* best = &hits[0];
+    // templ.name に一致する template_id のみ対象でスコア最大を採用
+    const mirage::vk::VkMatchResult* best = nullptr;
     for (const auto& h : hits) {
-        if (h.score > best->score) best = &h;
+        if (matcher.getTemplateName(h.template_id) != templ.name) continue;
+        if (!best || h.score > best->score) best = &h;
     }
+
+    if (!best) return std::nullopt;
 
     TemplateMatchResult r;
     r.template_id  = templ.name;
