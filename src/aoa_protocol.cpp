@@ -260,6 +260,36 @@ bool MultiUsbCommandSender::open_aoa_device(libusb_device* dev, uint16_t pid) {
         devices_[usb_id] = std::move(device);
     }
 
+    // Wait for Android AccessoryIoService to open /dev/usb_accessory.
+    // EP_IN LIBUSB_ERROR_IO happens when the PC tries to read before Android
+    // has opened the accessory fd. We ping via EP_OUT (Android reads first),
+    // which returns LIBUSB_SUCCESS only after AccessoryIoService is ready.
+    // Max wait: 20 * 100ms = 2s.  Non-blocking: proceed on timeout.
+    if (ep_out != 0) {
+        const uint8_t ping[4] = {0x4D, 0x49, 0x52, 0x47}; // "MIRG"
+        int transferred = 0;
+        bool android_ready = false;
+        const int kMaxAttempts = 20;
+        for (int i = 0; i < kMaxAttempts; i++) {
+            int r = libusb_bulk_transfer(handle, ep_out,
+                                         const_cast<uint8_t*>(ping), sizeof(ping),
+                                         &transferred, 200 /*ms*/);
+            if (r == LIBUSB_SUCCESS) {
+                MLOG_INFO("multicmd", "[%s] Android accessory ready after %d attempt(s)",
+                          usb_id.c_str(), i + 1);
+                android_ready = true;
+                break;
+            }
+            MLOG_DEBUG("multicmd", "[%s] Waiting for Android accessory (attempt %d/%d): %s",
+                       usb_id.c_str(), i + 1, kMaxAttempts, libusb_error_name(r));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (!android_ready) {
+            MLOG_WARN("multicmd", "[%s] Android accessory not ready after 2s, proceeding anyway",
+                      usb_id.c_str());
+        }
+    }
+
     if (device_opened_callback_) {
         device_opened_callback_(usb_id, handle);
     }
