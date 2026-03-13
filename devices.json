@@ -46,8 +46,8 @@
       "model": "Npad X1",
       "manufacturer": "N-one",
       "usb_serial": "93020523431940",
-      "screen_width": 1920,
-      "screen_height": 1080,
+      "screen_width": 1200,
+      "screen_height": 2000,
       "screen_density": 213,
       "android_sdk": 33,
       "android_version": "13",
@@ -58,7 +58,6 @@
       "preferred_route": "tcp",
       "video_bitrate_kbps": 4800,
       "tcp_port": 50000,
-      "display_rotation": 180,
       "cmd_port": 50001,
       "tcp_host": "10.189.194.30"
     }

@@ -274,10 +274,8 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
                 // Scale from encoded coords to physical coords if needed
                 int tap_x = x, tap_y = y;
                 int enc_w = 0, enc_h = 0, phys_w = 0, phys_h = 0;
-                int disp_rot = 0;
                 auto& reg = mirage::config::ExpectedSizeRegistry::instance();
-                reg.getDisplayRotation(device_id, disp_rot);
-                
+
                 if (reg.getExpectedSize(device_id, enc_w, enc_h) &&
                     reg.getPhysicalSize(device_id, phys_w, phys_h) &&
                     enc_w > 0 && enc_h > 0) {
@@ -286,24 +284,12 @@ void sendTapCommand(const std::string& device_id, int x, int y) {
                     float scale_y = static_cast<float>(phys_h) / enc_h;
                     tap_x = static_cast<int>(x * scale_x + 0.5f);
                     tap_y = static_cast<int>(y * scale_y + 0.5f);
-                    
-                    // Apply display_rotation compensation (GUI shows rotated image)
-                    // display_rotation=180 means GUI image is flipped, so we need to flip tap coords
-                    if (disp_rot == 180) {
-                        tap_x = phys_w - tap_x;
-                        tap_y = phys_h - tap_y;
-                    } else if (disp_rot == 90) {
-                        int tmp = tap_x;
-                        tap_x = tap_y;
-                        tap_y = phys_w - tmp;
-                    } else if (disp_rot == 270) {
-                        int tmp = tap_x;
-                        tap_x = phys_h - tap_y;
-                        tap_y = tmp;
-                    }
-                    
-                    MLOG_INFO("cmd", "Scaled coords (%d,%d)->(%d,%d) enc=%dx%d phys=%dx%d rot=%d",
-                              x, y, tap_x, tap_y, enc_w, enc_h, phys_w, phys_h, disp_rot);
+
+                    // NOTE: display_rotation compensation removed (2026-03-13)
+                    // APK sends correctly-oriented video, so no coordinate rotation needed.
+
+                    MLOG_INFO("cmd", "Scaled coords (%d,%d)->(%d,%d) enc=%dx%d phys=%dx%d",
+                              x, y, tap_x, tap_y, enc_w, enc_h, phys_w, phys_h);
                 }
                 std::string cmd = "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y);
                 std::string adb_id = resolvePreferredAdbIdForInput(dev);

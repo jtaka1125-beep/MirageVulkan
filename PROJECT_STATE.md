@@ -1,5 +1,5 @@
 ﻿# MirageSystem Project State
-# Updated: 2026-03-11
+# Updated: 2026-03-13
 # Read at session start, updated at session end.
 # THIS IS THE MAIN REPOSITORY (MirageComplete is legacy/migrated)
 
@@ -110,19 +110,20 @@
 6. GUIのLearning Modeでテンプレート収集 → AIEngine Layer1テスト
 7. AOA full-path test [BLOCKED: physical USB]
 
-## GUI File Line Counts (Updated 2026-03-12)
+## GUI File Line Counts (Updated 2026-03-13)
 - gui_ai_panel.cpp:       815
-- gui_init.cpp:          1263
+- gui_init.cpp:          1274
 - gui_threads.cpp:        736
 - gui_device_control.cpp: 554
-- gui_command.cpp:        504
+- gui_command.cpp:        490
 - gui_window.cpp:         224
 - gui_main.cpp:           362
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4469 lines
+- TOTAL:                 4466 lines
 
 ## Key Decisions Log
+- 2026-03-13: USBLAN(RNDIS)復旧完了。前回セッションが誤ってtcp_hostを削除していた問題を修正。X1: tcp_host=10.189.194.30, preferred_route=tcp。TCP動画14Mbps、遅延<1ms。コミット33ec0ed。
 - 2026-03-11: AiJpegReceiver実装（PC側AIストリーム受信）。MirageContext統合。
 - 2026-03-11: VERIFYING状態追加（アクション後検証+リトライ）。テンプレート無視リスト追加（永続化+GUI編集）。
 - 2026-03-11: H.265 E2E確認完了。AnnexBSplitter/RtpH264Packetizer HEVC対応確認。LfmClassifier動作確認。TileCompositor削除確認。検出オーバーレイ可視化実装。座標スケーリング実装。7件コミット。
