@@ -861,6 +861,13 @@ void MirrorReceiver::process_rtp_packet(const uint8_t* data, size_t len) {
 
   packets_received_.fetch_add(1);
 
+  // RTP受信時刻を更新（フェイルオーバー検知用）
+  {
+    uint64_t now_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    last_rtp_recv_ms_.store(now_ms, std::memory_order_relaxed);
+  }
+
   uint16_t seq = rd16(data + 2);
 
   // RTP seq discontinuity monitor (helps diagnose FU-A gaps on TCP)

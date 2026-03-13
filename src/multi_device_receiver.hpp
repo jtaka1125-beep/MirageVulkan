@@ -106,6 +106,10 @@ public:
     // Get first device's hardware_id (for USB video)
     std::string getFirstDeviceId() const;
 
+    // RTPサイレンス検知（フェイルオーバー用）
+    uint64_t getLastRtpRecvMs(const std::string& hardware_id) const;
+    uint64_t getRtpSilenceMs(const std::string& hardware_id) const;
+
 private:
     struct ReceiverEntry {
         std::unique_ptr<MirrorReceiver> receiver;

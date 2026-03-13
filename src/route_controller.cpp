@@ -12,6 +12,7 @@ static const char* stateToStr(RouteController::State s) {
     case RouteController::State::USB_FAILED: return "USB_FAILED";
     case RouteController::State::WIFI_FAILED: return "WIFI_FAILED";
     case RouteController::State::BOTH_DEGRADED: return "BOTH_DEGRADED";
+    case RouteController::State::FAILOVER_DUAL: return "FAILOVER_DUAL";
     default: return "?";
     }
 }
@@ -439,6 +440,18 @@ void RouteController::resetToNormal() {
     }
 
     MLOG_INFO("RouteCtrl", "Reset to normal");
+}
+
+void RouteController::setFailoverActive(bool v) {
+    failover_active_.store(v);
+    if (v) failover_start_time_ = std::chrono::steady_clock::now();
+    MLOG_INFO("RouteCtrl", "setFailoverActive(%d)", v ? 1 : 0);
+}
+
+int RouteController::failoverElapsedMs() const {
+    auto now = std::chrono::steady_clock::now();
+    return (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - failover_start_time_).count();
 }
 
 void RouteController::setMainDevice(const std::string& device_id) {

@@ -716,6 +716,56 @@ void wifiAdbWatchdogThread() {
                 }
             }
 
+            // D-pre) RTPサイレンス検知: USBLAN中に300ms以上RTP無受信→フェイルオーバー起動
+            if (g_multi_receiver && g_route_controller && !dev.usblan_ip.empty()) {
+                uint64_t silence_ms = g_multi_receiver->getRtpSilenceMs(dev.hardware_id);
+                // 現在のreceiverがUSBLAN IPに繋がっているかチェック（silence_ms>0 = 一度でも受信済み）
+                if (silence_ms > 300 && silence_ms < 5000) {
+                    if (!g_route_controller->isFailoverActive()) {
+                        MLOG_WARN("watchdog", "RTPサイレンス %llums on USBLAN(%s) → フェイルオーバー起動",
+                                  (unsigned long long)silence_ms, dev.hardware_id.c_str());
+                        g_route_controller->setFailoverActive(true);
+                    }
+                }
+            }
+
+            // D-fo) フェイルオーバー中の処理: 二重送信期間→WiFi単独移行
+            if (g_route_controller && g_route_controller->isFailoverActive() &&
+                !dev.wifi_connections.empty() && !dev.usblan_ip.empty() && dev.assigned_tcp_port > 0) {
+                int elapsed = g_route_controller->failoverElapsedMs();
+                constexpr int FAILOVER_DUAL_DURATION_MS = 3000;
+                if (elapsed < FAILOVER_DUAL_DURATION_MS) {
+                    // 二重送信期間: WiFi IP向けにもVIDEO_ROUTEを送信（一度だけ）
+                    static std::unordered_map<std::string, bool> failover_wifi_sent;
+                    if (!failover_wifi_sent[dev.hardware_id]) {
+                        failover_wifi_sent[dev.hardware_id] = true;
+                        std::string wifi_target = mirage::config::getConfig().network.pc_ip;
+                        if (g_hybrid_cmd && !wifi_target.empty()) {
+                            const uint8_t VIDEO_ROUTE_TCP = 2;
+                            g_hybrid_cmd->send_video_route(dev.hardware_id, VIDEO_ROUTE_TCP,
+                                                           wifi_target, dev.assigned_tcp_port);
+                            MLOG_INFO("watchdog", "フェイルオーバー二重送信: VIDEO_ROUTE → WiFi %s:%d",
+                                      wifi_target.c_str(), dev.assigned_tcp_port);
+                        }
+                        if (g_multi_receiver) {
+                            std::string wifi_host = dev.ip_address;
+                            MLOG_INFO("watchdog", "フェイルオーバー: PC receiverをWiFi %s:%dに切替",
+                                      wifi_host.c_str(), dev.assigned_tcp_port);
+                            g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id,
+                                                                   dev.assigned_tcp_port,
+                                                                   wifi_host);
+                        }
+                    }
+                } else {
+                    // 3秒経過→フェイルオーバー完了、WiFi単独モードに確定
+                    g_route_controller->setFailoverActive(false);
+                    static std::unordered_map<std::string, bool> failover_wifi_sent;
+                    failover_wifi_sent.erase(dev.hardware_id);
+                    MLOG_INFO("watchdog", "フェイルオーバー完了: %s はWiFi単独モードに移行",
+                              dev.hardware_id.c_str());
+                }
+            }
+
             // D) USBLAN/WiFi dynamic switching with VIDEO_ROUTE fallback
             //    - USBLAN preferred: send VIDEO_ROUTE to USBLAN IP when reachable
             //    - WiFi fallback: send VIDEO_ROUTE to WiFi IP when USBLAN unreachable

@@ -85,8 +85,9 @@ public:
         WIFI_FAILED,      // WiFi dead, all on USB + FPS reduced
 
 
-        BOTH_DEGRADED     // Both paths unstable
+        BOTH_DEGRADED,    // Both paths unstable
 
+        FAILOVER_DUAL     // フェイルオーバー中: USBLAN→WiFi二重送信期間
 
     };
 
@@ -224,6 +225,11 @@ public:
 
 
 
+    // フェイルオーバー制御
+    void setFailoverActive(bool v);
+    bool isFailoverActive() const { return failover_active_.load(); }
+    int failoverElapsedMs() const;
+
     // Manual override (for testing)
 
 
@@ -343,6 +349,11 @@ private:
 
 
 
+
+    // フェイルオーバー状態
+    std::atomic<bool> failover_active_{false};
+    std::chrono::steady_clock::time_point failover_start_time_;
+    static constexpr int FAILOVER_DUAL_DURATION_MS = 3000;
 
     // Throttled debug log
 

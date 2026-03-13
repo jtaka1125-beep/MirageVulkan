@@ -4,8 +4,10 @@
 // =============================================================================
 #include "gui_window.hpp"
 #include "gui_state.hpp"
+#include "route_controller.hpp"
 
 #include <windowsx.h>
+#include <dbt.h>
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 
@@ -205,6 +207,17 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
             
+        case WM_DEVICECHANGE: {
+            // USBデバイス切断検知 → フェイルオーバー起動
+            if (wParam == DBT_DEVICEREMOVECOMPLETE) {
+                MLOG_WARN("wndproc", "WM_DEVICECHANGE: DBT_DEVICEREMOVECOMPLETE → USBフェイルオーバー起動");
+                if (g_route_controller) {
+                    g_route_controller->setFailoverActive(true);
+                }
+            }
+            return TRUE;
+        }
+
         case WM_DESTROY:
             MLOG_INFO("wndproc", "WM_DESTROY received");
             g_running = false;

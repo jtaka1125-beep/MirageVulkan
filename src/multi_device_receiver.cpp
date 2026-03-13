@@ -536,6 +536,21 @@ std::string MultiDeviceReceiver::getFirstDeviceId() const {
     return "";
 }
 
+uint64_t MultiDeviceReceiver::getLastRtpRecvMs(const std::string& hardware_id) const {
+    std::lock_guard<std::mutex> lock(receivers_mutex_);
+    auto it = receivers_.find(hardware_id);
+    if (it == receivers_.end() || !it->second.receiver) return 0;
+    return it->second.receiver->getLastRtpRecvMs();
+}
+
+uint64_t MultiDeviceReceiver::getRtpSilenceMs(const std::string& hardware_id) const {
+    uint64_t last = getLastRtpRecvMs(hardware_id);
+    if (last == 0) return 0;
+    uint64_t now = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    return (now > last) ? (now - last) : 0;
+}
+
 // TILED_REMOVED: restart_as_tcp_vid0_tiled replaced with stub (TileCompositor removed)
 bool MultiDeviceReceiver::restart_as_tcp_vid0_tiled(const std::string& hardware_id,
                                                      uint16_t port0, uint16_t port1,

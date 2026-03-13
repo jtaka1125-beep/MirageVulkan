@@ -164,6 +164,9 @@ public:
   // Feed RTP packet from external source (e.g., USB AOA)
   void feed_rtp_packet(const uint8_t* data, size_t len);
 
+  // 最後にRTPパケットを受信した時刻（ms, steady_clock epoch）
+  uint64_t getLastRtpRecvMs() const { return last_rtp_recv_ms_.load(); }
+
   // Feed raw H.264 Annex B data from external source (Annex B stream)
   void process_raw_h264(const uint8_t* data, size_t len);
 
@@ -204,6 +207,9 @@ private:
   bool fu_have_last_seq_ = false;
   std::atomic<uint16_t> last_seq_{0};
   std::vector<uint8_t> fu_buf_;
+
+  // RTP受信タイムスタンプ（ms, steady_clock epoch）
+  std::atomic<uint64_t> last_rtp_recv_ms_{0};
 
   // Stats
   std::atomic<uint64_t> packets_received_{0};
