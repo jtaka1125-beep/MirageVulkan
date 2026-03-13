@@ -123,6 +123,12 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
         for (auto dev : android_devices) {
             struct libusb_device_descriptor desc;
             libusb_get_device_descriptor(dev, &desc);
+            // Skip MTK RNDIS+ADB (PID=0x2005): not AOA-switchable via libusb,
+            // requires RNDIS driver (not WinUSB). Harmless to skip - it's not AOA.
+            if (desc.idVendor == 0x0E8D && desc.idProduct == 0x2005) {
+                MLOG_DEBUG("multicmd", "Skipping MTK RNDIS+ADB (PID=0x2005), not AOA-switchable");
+                continue;
+            }
             MLOG_INFO("multicmd", "Found Android device (VID=%04x PID=%04x), switching to AOA", desc.idVendor, desc.idProduct);
             if (switch_device_to_aoa_mode(dev)) {
                 switched = true;
