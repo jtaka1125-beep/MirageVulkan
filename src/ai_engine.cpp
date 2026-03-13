@@ -16370,7 +16370,10 @@ private:
 
 
 
-            // NOTE: TemplateHandle::matcher_idは直接書き込み不可（const get）
+            // matcher_idをTemplateStoreに書き戻す
+            if (template_store_) {
+                template_store_->setMatcherId(template_id, matcher_id);
+            }
 
 
 

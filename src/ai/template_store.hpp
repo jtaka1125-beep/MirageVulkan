@@ -88,6 +88,8 @@ public:
 
     const TemplateHandle* get(int template_id) const;
 
+    void setMatcherId(int template_id, int matcher_id);
+
     std::vector<int> listTemplateIds() const;
 
     void clear();

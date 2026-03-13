@@ -275,6 +275,13 @@ const TemplateHandle* TemplateStore::get(int template_id) const {
 
 }
 
+void TemplateStore::setMatcherId(int template_id, int matcher_id) {
+    auto it = map_.find(template_id);
+    if (it != map_.end()) {
+        it->second.matcher_id = matcher_id;
+    }
+}
+
 
 
 std::vector<int> TemplateStore::listTemplateIds() const {
