@@ -716,56 +716,85 @@ void wifiAdbWatchdogThread() {
                 }
             }
 
-            // D) USBLAN auto-recovery: If device has usblan_ip configured but unreachable,
-            //    try to re-enable USB tethering via UI automation
-            if (!dev.wifi_connections.empty() && !dev.usblan_ip.empty()) {
+            // D) USBLAN/WiFi dynamic switching with VIDEO_ROUTE fallback
+            //    - USBLAN preferred: send VIDEO_ROUTE to USBLAN IP when reachable
+            //    - WiFi fallback: send VIDEO_ROUTE to WiFi IP when USBLAN unreachable
+            MLOG_INFO("watchdog", "SectionD check: hw=%s wifi=%zu usblan='%s' tcp_port=%d",
+                      dev.hardware_id.c_str(), dev.wifi_connections.size(), 
+                      dev.usblan_ip.c_str(), dev.assigned_tcp_port);
+            if (!dev.wifi_connections.empty() && !dev.usblan_ip.empty() && dev.assigned_tcp_port > 0) {
+                static std::unordered_map<std::string, bool> usblan_was_active;
+                static std::unordered_map<std::string, uint64_t> route_switch_last;
+                constexpr uint64_t ROUTE_SWITCH_COOLDOWN_MS = 5000;  // 5 second cooldown
+
                 // Quick USBLAN reachability check (1 ping, 500ms timeout)
                 std::string ping_cmd = "ping -n 1 -w 500 " + dev.usblan_ip;
                 int ping_result = execHidden(ping_cmd);
+                bool usblan_now_active = (ping_result == 0);
 
-                if (ping_result != 0) {
-                    // USBLAN unreachable - attempt recovery via UI automation
-                    static std::unordered_map<std::string, uint64_t> usblan_recovery_last;
-                    constexpr uint64_t USBLAN_RECOVERY_COOLDOWN_MS = 60000;  // 1 minute cooldown
+                // Check previous state
+                bool usblan_prev = false;
+                bool is_first_check = false;
+                auto it_prev = usblan_was_active.find(dev.hardware_id);
+                if (it_prev != usblan_was_active.end()) {
+                    usblan_prev = it_prev->second;
+                } else {
+                    // First check - need to send initial VIDEO_ROUTE
+                    is_first_check = true;
+                    usblan_prev = !usblan_now_active;  // Force state change detection
+                }
 
+                MLOG_INFO("watchdog", "SectionD: usblan_now=%d usblan_prev=%d first=%d", 
+                          usblan_now_active, usblan_prev, is_first_check);
+
+                // Detect state change (or first check)
+                if (usblan_now_active != usblan_prev) {
                     const uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
+                    uint64_t last_switch = 0;
+                    auto it_last = route_switch_last.find(dev.hardware_id);
+                    if (it_last != route_switch_last.end()) last_switch = it_last->second;
 
-                    uint64_t last_attempt = 0;
-                    auto it = usblan_recovery_last.find(dev.hardware_id);
-                    if (it != usblan_recovery_last.end()) last_attempt = it->second;
+                    if (now_ms - last_switch > ROUTE_SWITCH_COOLDOWN_MS) {
+                        route_switch_last[dev.hardware_id] = now_ms;
 
-                    if (now_ms - last_attempt > USBLAN_RECOVERY_COOLDOWN_MS) {
-                        usblan_recovery_last[dev.hardware_id] = now_ms;
-                        MLOG_INFO("watchdog", "USBLAN %s unreachable on %s, attempting UI recovery...",
-                                  dev.usblan_ip.c_str(), dev.display_name.c_str());
-
-                        const auto& adb_id = dev.wifi_connections[0];
-                        // Open tethering settings
-                        g_adb_manager->adbCommand(adb_id,
-                            "shell am start -n com.android.settings/.TetherSettings");
-                        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-
-                        // Tap USB tethering toggle (coordinates for X1: 1200x2000)
-                        int tap_x = dev.screen_width / 2;  // center horizontally
-                        int tap_y = (dev.screen_height > 1500) ? 450 : 300;  // adjust for screen size
-                        g_adb_manager->adbCommand(adb_id,
-                            "shell input tap " + std::to_string(tap_x) + " " + std::to_string(tap_y));
-                        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-
-                        // Verify recovery
-                        ping_result = execHidden(ping_cmd);
-                        if (ping_result == 0) {
-                            MLOG_INFO("watchdog", "USBLAN %s recovered on %s",
+                        // Determine target host for VIDEO_ROUTE
+                        std::string target_host;
+                        if (usblan_now_active) {
+                            // USBLAN recovered - switch video to USBLAN
+                            target_host = dev.usblan_ip;
+                            MLOG_INFO("watchdog", "USBLAN %s UP on %s - switching VIDEO_ROUTE to USBLAN",
                                       dev.usblan_ip.c_str(), dev.display_name.c_str());
-                            // Return to home
-                            g_adb_manager->adbCommand(adb_id, "shell input keyevent KEYCODE_HOME");
                         } else {
-                            MLOG_WARN("watchdog", "USBLAN recovery failed on %s - manual intervention needed",
-                                      dev.display_name.c_str());
+                            // USBLAN down - fallback to WiFi
+                            target_host = mirage::config::getConfig().network.pc_ip;
+                            MLOG_INFO("watchdog", "USBLAN %s DOWN on %s - fallback VIDEO_ROUTE to WiFi (%s)",
+                                      dev.usblan_ip.c_str(), dev.display_name.c_str(), target_host.c_str());
+                        }
+
+                        // Send VIDEO_ROUTE(TCP) command via WiFi ADB (always available)
+                        if (g_hybrid_cmd && !target_host.empty()) {
+                            const uint8_t VIDEO_ROUTE_TCP = 2;
+                            g_hybrid_cmd->send_video_route(dev.hardware_id, VIDEO_ROUTE_TCP,
+                                                           target_host, dev.assigned_tcp_port);
+                            MLOG_INFO("watchdog", "Sent VIDEO_ROUTE(TCP) to %s -> %s:%d",
+                                      dev.hardware_id.c_str(), target_host.c_str(), dev.assigned_tcp_port);
+                        }
+                        
+                        // Reconnect PC receiver to new host
+                        if (g_multi_receiver) {
+                            std::string new_tcp_host = usblan_now_active ? dev.usblan_ip : dev.ip_address;
+                            MLOG_INFO("watchdog", "Reconnecting receiver to %s:%d",
+                                      new_tcp_host.c_str(), dev.assigned_tcp_port);
+                            g_multi_receiver->restart_as_tcp_vid0(dev.hardware_id, 
+                                                                   dev.assigned_tcp_port, 
+                                                                   new_tcp_host);
                         }
                     }
                 }
+
+                // Update state
+                usblan_was_active[dev.hardware_id] = usblan_now_active;
             }
 
         }

@@ -59,7 +59,6 @@
       "video_bitrate_kbps": 4800,
       "tcp_port": 50000,
       "cmd_port": 50001,
-      "tcp_host": "10.189.194.30",
       "usblan_ip": "10.189.194.30"
     }
   ]
