@@ -11001,7 +11001,7 @@ if (decision.should_act && can_send) {
 
 
 
-                        _ae.device_id = "slot_" + std::to_string(job.slot);
+                        _ae.device_id = job.device_id.empty() ? "slot_" + std::to_string(job.slot) : job.device_id;
 
 
 
@@ -11389,7 +11389,7 @@ if (decision.should_act && can_send) {
 
 
 
-    void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send) {
+    void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send, const std::string& device_id = "") {
 
 
 
@@ -11401,7 +11401,7 @@ if (decision.should_act && can_send) {
 
 
 
-        (void)rgba; (void)width; (void)height; (void)can_send;
+        (void)rgba; (void)width; (void)height; (void)can_send; (void)device_id;
 
 
 
@@ -11413,7 +11413,7 @@ if (decision.should_act && can_send) {
 
 
 
-        void enqueueAsyncFrameShared(int slot, std::shared_ptr<mirage::SharedFrame> frm, bool can_send) {
+        void enqueueAsyncFrameShared(int slot, std::shared_ptr<mirage::SharedFrame> frm, bool can_send, const std::string& device_id = "") {
 
 
 
@@ -11449,7 +11449,7 @@ if (decision.should_act && can_send) {
 
         job.can_send = can_send;
 
-
+        job.device_id = device_id;
 
         {
 
@@ -12101,7 +12101,7 @@ private:
 
         bool can_send = false;
 
-
+        std::string device_id;
 
     };
 
@@ -12453,7 +12453,7 @@ private:
 
 
 
-            enqueueAsyncFrameShared(slot, evt.frame, true);
+            enqueueAsyncFrameShared(slot, evt.frame, true, did);
 
 
 
@@ -12461,7 +12461,7 @@ private:
 
 
 
-            enqueueAsyncFrame(slot, evt.rgba_data, evt.width, evt.height, true);
+            enqueueAsyncFrame(slot, evt.rgba_data, evt.width, evt.height, true, did);
 
 
 

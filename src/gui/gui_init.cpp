@@ -1141,7 +1141,7 @@ void initializeAI() {
     mirage::ai::AIConfig ai_config;
     ai_config.templates_dir     = mirage::config::getConfig().ai.templates_dir;
     ai_config.default_threshold = mirage::config::getConfig().ai.default_threshold;
-    ai_config.enable_multi_scale = true;
+    ai_config.enable_multi_scale = mirage::config::getConfig().ai.enable_multi_scale;
 
     // Apply VDE config from system config (if available)
     const auto& ai_cfg = mirage::config::getConfig().ai;

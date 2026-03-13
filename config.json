@@ -1,0 +1,53 @@
+{
+    "network": {
+        "pc_ip": "192.168.0.7",
+        "video_base_port": 60000,
+        "command_base_port": 50000,
+        "tcp_command_port": 50100
+    },
+    "usb_tether": {
+        "android_ip": "192.168.42.129",
+        "pc_subnet": "192.168.42.0/24"
+    },
+    "gui": {
+        "window_width": 1920,
+        "window_height": 1080,
+        "vsync": true
+    },
+    "ai": {
+        "enabled": true,
+        "templates_dir": "C:/MirageWork/MirageVulkan/templates",
+        "default_threshold": 0.65,
+        "enable_multi_scale": false,
+        "vde_confirm_count": 3,
+        "vde_cooldown_ms": 2000,
+        "vde_debounce_window_ms": 500
+    },
+    "paths": {
+        "templates_dir": "C:/MirageWork/MirageVulkan/templates"
+    },
+    "continuous_learning_v2": {
+        "enabled": false,
+        "confidence_threshold": 0.65,
+        "cooldown_frames": 60,
+        "max_templates_total": 200,
+        "templates_dir": "templates/auto"
+    },
+    "ollama": {
+        "host": "127.0.0.1",
+        "port": 11434,
+        "model": "llava:7b",
+        "timeout_ms": 120000,
+        "max_tokens": 64
+    },
+    "aoa": {
+        "auto_switch": true
+    },
+    "ocr": {
+        "enabled": false,
+        "language": "eng+jpn"
+    },
+    "log": {
+        "log_path": "mirage_gui.log"
+    }
+}
