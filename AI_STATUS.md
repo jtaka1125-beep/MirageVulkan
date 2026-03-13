@@ -1,5 +1,5 @@
 # AI Vision System Status
-# Updated: 2026-03-11
+# Updated: 2026-03-13
 
 ## 3層アーキテクチャ
 
@@ -89,6 +89,39 @@ mirage::ai::AiJpegReceiver receiver;
 receiver.setFrameCallback([](device_id, jpeg, w, h, ts) { ... });
 receiver.start("device_123", 51200);
 ```
+
+## Layer1→Layer2コンテキスト連携 (2026-03-13)
+
+Layer2 (Gemini/Ollama Vision) が判断する際に、Layer1 (テンプレートマッチング) の
+コンテキストを参照できるよう実装:
+
+### Layer1Context構造体
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| template_name | string | マッチしたテンプレート名 |
+| match_x, match_y | int | マッチ位置 |
+| score | float | マッチスコア (0.0-1.0) |
+| no_match_frames | int | マッチなし継続フレーム数 |
+| same_match_frames | int | 同一テンプレート継続フレーム数 |
+| tags | string | テンプレートタグ (ads, layer3_auto等) |
+
+### 実装ファイル
+- C++側: src/ai/layer2_client.cpp - JSON構築・サブプロセス呼び出し
+- Python側: mcp-server/gemini_router.py - コンテキスト解析・プロンプト生成
+
+### 閾値設定
+| 項目 | 値 | 説明 |
+|------|-----|------|
+| no_match_frames閾値 | ≥150 | C++/Python両方で統一 |
+| score閾値 | ≥0.5 | 低信頼度マッチは無視 |
+
+### Visionモデル (VRAM軽量化)
+| 役割 | モデル | サイズ |
+|------|--------|-------|
+| local_primary | smolvlm2-2.2b-instruct | 1.8B |
+| local_secondary | llava-phi3 | 4B |
+| cloud | gemini | API |
+
 ## テスト結果 (2026-03-11)
 - CTest: 32/32 PASSED
 - VDE: 40/40 PASSED

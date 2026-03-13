@@ -276,6 +276,13 @@ public:
                            std::chrono::steady_clock::time_point now =
                                std::chrono::steady_clock::now());
 
+    // Layer 2を非同期で起動（Layer1コンテキスト付き）
+    bool launchLayer2AsyncWithContext(const std::string& device_id,
+                                      const uint8_t* rgba, int width, int height,
+                                      const Layer1Context& l1_ctx,
+                                      std::chrono::steady_clock::time_point now =
+                                          std::chrono::steady_clock::now());
+
     // Layer 2の結果をポーリング（毎フレーム呼び出し）
     // 完了していれば結果を返す、未完了なら has_result=false
     Layer2Result pollLayer2Result(const std::string& device_id);

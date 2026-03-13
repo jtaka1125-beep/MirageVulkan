@@ -317,6 +317,7 @@ void VisionDecisionEngine::notifyActionExecuted(
 
     auto& ds = it->second;
 
+    MLOG_INFO("ai.vision", "notifyActionExecuted: device=%s state=%s verify=%d", device_id.c_str(), visionStateToString(ds.state), config_.enable_verify ? 1 : 0);
     if (ds.state == VisionState::CONFIRMED) {
         VisionState old_state = ds.state;
         
@@ -430,13 +431,23 @@ VisionDecisionEngine::VerifyResult VisionDecisionEngine::checkVerification(
     }
     
     // 同じテンプレートがまだ検出されているか確認
+    // 位置も確認: タップ位置から大きく離れていれば別物と判断
     bool still_detected = false;
+    constexpr int kPositionThreshold = 50;  // pixels
     for (const auto& m : matches) {
         if (m.template_id == ds.verify_template_id) {
-            still_detected = true;
-            result.x = m.x;
-            result.y = m.y;
-            break;
+            // 位置が近いかチェック
+            int dx = std::abs(m.x - ds.verify_x);
+            int dy = std::abs(m.y - ds.verify_y);
+            if (dx <= kPositionThreshold && dy <= kPositionThreshold) {
+                still_detected = true;
+                result.x = m.x;
+                result.y = m.y;
+                break;
+            } else {
+                MLOG_INFO("ai.vision", "VERIFY: same tpl but position changed (%d,%d)->(%d,%d) diff=(%d,%d) - treating as dismissed",
+                          ds.verify_x, ds.verify_y, m.x, m.y, dx, dy);
+            }
         }
     }
     
@@ -497,13 +508,15 @@ VisionDecisionEngine::VerifyResult VisionDecisionEngine::checkVerification(
             vrec.retry_count += ds.verify_retry_count;
             vrec.last_fail = now;
 
-            // 失敗率が高い場合は自動ignore
-            if (vrec.should_ignore()) {
-                if (!isIgnored(ds.verify_template_id)) {
-                    ignoreTemplate(ds.verify_template_id);
-                    MLOG_WARN("ai.vision", "自動ignore: tpl=%s success_rate=%.1f%%",
-                        ds.verify_template_id.c_str(), vrec.success_rate() * 100.0f);
-                }
+            // 失敗したら即座にignore（誤検出対策）
+            // 連続2回失敗、または成功率30%未満で5回以上試行した場合
+            bool should_auto_ignore = (vrec.fail_count >= 2 && vrec.success_count == 0) ||
+                                      vrec.should_ignore(0.3f, 5);
+            if (should_auto_ignore && !isIgnored(ds.verify_template_id)) {
+                ignoreTemplate(ds.verify_template_id);
+                MLOG_WARN("ai.vision", "自動ignore: tpl=%s success=%u fail=%u rate=%.1f%%",
+                    ds.verify_template_id.c_str(), vrec.success_count, vrec.fail_count,
+                    vrec.success_rate() * 100.0f);
             }
 
             result.timeout = true;
@@ -511,9 +524,11 @@ VisionDecisionEngine::VerifyResult VisionDecisionEngine::checkVerification(
             VisionState old_state = ds.state;
             ds.cooldown_template_id = ds.verify_template_id;
             ds.cooldown_start = now;
+            // 失敗時は長めのCOOLDOWN (通常の5倍)
+            ds.cooldown_start = now - std::chrono::milliseconds(config_.cooldown_ms * 4 / 5);
             transitionTo(ds, VisionState::COOLDOWN);
             
-            MLOG_WARN("ai.vision", "検証失敗 (タイムアウト) → COOLDOWN: device=%s tpl=%s retry=%d (success=%u fail=%u rate=%.1f%%)",
+            MLOG_WARN("ai.vision", "検証失敗 (タイムアウト) → COOLDOWN(extended): device=%s tpl=%s retry=%d (success=%u fail=%u rate=%.1f%%)",
                        device_id.c_str(), ds.verify_template_id.c_str(), ds.verify_retry_count,
                        vrec.success_count, vrec.fail_count, vrec.success_rate() * 100.0f);
             
@@ -796,6 +811,16 @@ bool VisionDecisionEngine::launchLayer2Async(
     if (!config_.enable_layer2) return false;
 
     return layer2_client_->launchAsync(device_id, rgba, width, height, now);
+}
+
+bool VisionDecisionEngine::launchLayer2AsyncWithContext(
+    const std::string& device_id, const uint8_t* rgba, int width, int height,
+    const Layer1Context& l1_ctx, std::chrono::steady_clock::time_point now)
+{
+    if (!layer2_client_) return false;
+    if (!config_.enable_layer2) return false;
+
+    return layer2_client_->launchAsyncWithContext(device_id, rgba, width, height, l1_ctx, now);
 }
 
 VisionDecisionEngine::Layer2Result VisionDecisionEngine::pollLayer2Result(

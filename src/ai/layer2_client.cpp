@@ -23,6 +23,18 @@ namespace mirage::ai {
 static const char kB64Table[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+// JSONエスケープ（" と \ をエスケープ）
+static std::string escapeJson(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else out += c;
+    }
+    return out;
+}
+
 std::string Layer2Client::base64Encode(const uint8_t* data, int size) {
     std::string out;
     out.reserve(((size + 2) / 3) * 4);
@@ -47,13 +59,29 @@ void Layer2Client::jpegWriteCallback(void* ctx, void* data, int size) {
 
 // =============================================================================
 // Python サブプロセス呼び出し（CreateProcess + stdin/stdout パイプ）
+// Layer1コンテキストをJSON形式で送信
 // =============================================================================
-Layer2Result Layer2Client::callScript(const std::vector<uint8_t>& jpeg_data) {
+Layer2Result Layer2Client::callScript(const std::vector<uint8_t>& jpeg_data,
+                                       const Layer1Context& l1_ctx) {
     Layer2Result result;
 
     // base64エンコード
     std::string b64 = base64Encode(jpeg_data.data(), static_cast<int>(jpeg_data.size()));
-    b64 += "\n";
+    // Layer1コンテキスト付きJSON構築
+    std::ostringstream json_ss;
+    json_ss << "{\"image\":\"" << b64 << "\",\"layer1\":{"
+            << "\"template_name\":\"" << escapeJson(l1_ctx.template_name) << "\","
+            << "\"match_x\":" << l1_ctx.match_x << ","
+            << "\"match_y\":" << l1_ctx.match_y << ","
+            << "\"score\":" << l1_ctx.score << ","
+            << "\"no_match_frames\":" << l1_ctx.no_match_frames << ","
+            << "\"same_match_frames\":" << l1_ctx.same_match_frames << ","
+            << "\"tags\":\"" << escapeJson(l1_ctx.tags) << "\""
+            << "}}";
+    std::string input_data = json_ss.str() + "\n";
+
+    MLOG_DEBUG("ai.layer2", "callScript: layer1 context: template=%s score=%.2f no_match=%d",
+               l1_ctx.template_name.c_str(), l1_ctx.score, l1_ctx.no_match_frames);
 
     // パイプ作成
     SECURITY_ATTRIBUTES sa = {};
@@ -105,9 +133,9 @@ Layer2Result Layer2Client::callScript(const std::vector<uint8_t>& jpeg_data) {
         return result;
     }
 
-    // base64をstdinに書き込む
+    // JSONデータをstdinに書き込む
     DWORD written = 0;
-    WriteFile(hStdinWrite, b64.data(), static_cast<DWORD>(b64.size()), &written, nullptr);
+    WriteFile(hStdinWrite, input_data.data(), static_cast<DWORD>(input_data.size()), &written, nullptr);
     CloseHandle(hStdinWrite);  // EOF通知
 
     // stdoutを読む（タイムアウト30秒）
@@ -207,11 +235,22 @@ Layer2Client::~Layer2Client() {
 }
 
 // =============================================================================
-// 非同期起動
+// 非同期起動（後方互換性: Layer1コンテキストなし）
 // =============================================================================
 bool Layer2Client::launchAsync(const std::string& device_id,
                                 const uint8_t* rgba, int width, int height,
-                                std::chrono::steady_clock::time_point /*trigger_time*/) {
+                                std::chrono::steady_clock::time_point trigger_time) {
+    // 空のLayer1コンテキストで呼び出し
+    return launchAsyncWithContext(device_id, rgba, width, height, Layer1Context{}, trigger_time);
+}
+
+// =============================================================================
+// 非同期起動（Layer1コンテキスト付き）
+// =============================================================================
+bool Layer2Client::launchAsyncWithContext(const std::string& device_id,
+                                           const uint8_t* rgba, int width, int height,
+                                           const Layer1Context& l1_ctx,
+                                           std::chrono::steady_clock::time_point /*trigger_time*/) {
     {
         std::lock_guard<std::mutex> lk(tasks_mutex_);
 
@@ -219,7 +258,7 @@ bool Layer2Client::launchAsync(const std::string& device_id,
         if (it != tasks_.end()) {
             auto& ts = it->second;
             if (ts->running.load()) {
-                MLOG_DEBUG("ai.layer2", "launchAsync: 既に実行中 device=%s", device_id.c_str());
+                MLOG_DEBUG("ai.layer2", "launchAsyncWithContext: 既に実行中 device=%s", device_id.c_str());
                 return false;
             }
             if (ts->worker.joinable()) ts->worker.join();
@@ -229,7 +268,7 @@ bool Layer2Client::launchAsync(const std::string& device_id,
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now - ts->last_done_time).count();
             if (ts->last_done_time.time_since_epoch().count() > 0 && elapsed < COOLDOWN_MS) {
-                MLOG_DEBUG("ai.layer2", "launchAsync: 冷却中 device=%s elapsed=%lldms",
+                MLOG_DEBUG("ai.layer2", "launchAsyncWithContext: 冷却中 device=%s elapsed=%lldms",
                            device_id.c_str(), static_cast<long long>(elapsed));
                 return false;
             }
@@ -246,16 +285,17 @@ bool Layer2Client::launchAsync(const std::string& device_id,
         return false;
     }
 
-    MLOG_DEBUG("ai.layer2", "JPEG生成: %dx%d -> %zu bytes", width, height, jpeg_buf.size());
+    MLOG_DEBUG("ai.layer2", "JPEG生成: %dx%d -> %zu bytes layer1=%s",
+               width, height, jpeg_buf.size(), l1_ctx.template_name.c_str());
 
     auto ts = std::make_shared<TaskState>();
     ts->running.store(true);
     ts->done.store(false);
 
-    ts->worker = std::thread([this, ts, device_id, jpeg_buf = std::move(jpeg_buf)]() mutable {
-        MLOG_INFO("ai.layer2", "Gemini vision呼び出し開始: device=%s jpeg=%zu bytes",
-                  device_id.c_str(), jpeg_buf.size());
-        auto r = callScript(jpeg_buf);
+    ts->worker = std::thread([this, ts, device_id, jpeg_buf = std::move(jpeg_buf), l1_ctx]() mutable {
+        MLOG_INFO("ai.layer2", "Gemini vision呼び出し開始: device=%s jpeg=%zu bytes layer1=%s",
+                  device_id.c_str(), jpeg_buf.size(), l1_ctx.template_name.c_str());
+        auto r = callScript(jpeg_buf, l1_ctx);
         {
             std::lock_guard<std::mutex> rl(ts->result_mutex);
             ts->result = r;

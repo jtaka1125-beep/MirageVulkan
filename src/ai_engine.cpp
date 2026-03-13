@@ -292,6 +292,7 @@
 
 
 #include "event_bus.hpp"
+#include "config_loader.hpp"  // ExpectedSizeRegistry for coordinate scaling
 
 
 
@@ -2575,6 +2576,7 @@ public:
         vde_config.debounce_window_ms = config.vde_debounce_window_ms;
         vde_config.enable_verify = config.enable_verify;
         vde_config.verify_delay_ms = config.verify_delay_ms;
+        MLOG_INFO("ai", "AIEngine: config.enable_verify = %d, vde_config.enable_verify = %d", config.enable_verify ? 1 : 0, vde_config.enable_verify ? 1 : 0);
         vde_config.verify_timeout_ms = config.verify_timeout_ms;
 
 
@@ -4099,6 +4101,12 @@ public:
 
                 count++;
 
+                // tagsをマッピングに保存（Layer2コンテキスト用）
+                if (!entry.tags.empty()) {
+                    std::lock_guard<std::mutex> lock(names_mutex_);
+                    id_to_tags_[entry.template_id] = entry.tags;
+                }
+
                 // Layer2 重複検出キャッシュへの追加（Layer1既存テンプレートも含む全テンプレート）
                 // 改善E: マニフェストのROIをマッチャーに反映
 
@@ -5488,6 +5496,7 @@ public:
 
 
             id_to_name_.clear();
+            id_to_tags_.clear();
 
 
 
@@ -5648,6 +5657,11 @@ public:
 
 
                           bool can_send) {
+        // Save frame size for coordinate scaling in decideAction
+        if (slot >= 0 && slot < kMaxAsyncSlots) {
+            slot_frame_size_[slot].w = width;
+            slot_frame_size_[slot].h = height;
+        }
 
 
 
@@ -6346,6 +6360,7 @@ public:
 
 
             std::unordered_map<int, std::string> names_snap;
+            std::unordered_map<int, std::string> tags_snap;
 
 
 
@@ -6394,6 +6409,7 @@ public:
 
 
                 names_snap = id_to_name_;
+                tags_snap = id_to_tags_;
 
 
 
@@ -6741,7 +6757,7 @@ public:
 
 
 
-if (decision.should_act && can_send) {
+            if (decision.should_act && can_send) {
 
 
 
@@ -6773,7 +6789,9 @@ if (decision.should_act && can_send) {
 
 
 
-                vision_engine_->notifyActionExecuted(device_id, decision.x, decision.y);
+                MLOG_INFO("ai", "Calling notifyActionExecuted: device=%s x=%d y=%d", device_id.c_str(), decided.x, decided.y);
+                vision_engine_->notifyActionExecuted(device_id, decided.x, decided.y);
+                MLOG_INFO("ai", "notifyActionExecuted returned");
 
 
 
@@ -7284,11 +7302,14 @@ if (decision.should_act && can_send) {
                                 int64_t &last = s_last_l3_ms1[device_id];
                                 if (now_ms - last >= 2000) { last = now_ms; allow_l3 = true; }
                             }
-                            if (allow_l3) vision_engine_->launchLayer2Async(device_id, rgba, width, height);
+                            if (allow_l3) {
+                                // Layer1コンテキスト: テンプレートマッチなし
+                                mirage::ai::Layer1Context l1_ctx;
+                                l1_ctx.no_match_frames = s_notempl_count;
+                                vision_engine_->launchLayer2AsyncWithContext(device_id, rgba, width, height, l1_ctx);
+                            }
 
-
-
-                            MLOG_INFO("ai", "Layer 2起動(no-template): slot=%d device=%s", slot, device_id.c_str());
+                            MLOG_INFO("ai", "Layer 2起動(no-template): slot=%d device=%s no_match=%d", slot, device_id.c_str(), s_notempl_count);
 
 
 
@@ -7572,15 +7593,21 @@ if (decision.should_act && can_send) {
 
 
 
-                            // fire & forget: rgba コピーして非同期起動
+                            // fire & forget: Layer1コンテキスト付きで非同期起動
+                            mirage::ai::Layer1Context l1_ctx;
+                            if (!vk_results.empty()) {
+                                const auto& top = vk_results.front();
+                                auto nit = names_snap.find(top.template_id);
+                                l1_ctx.template_name = (nit != names_snap.end()) ? nit->second : "";
+                                auto tit = tags_snap.find(top.template_id);
+                                l1_ctx.tags = (tit != tags_snap.end()) ? tit->second : "";
+                                l1_ctx.match_x = top.center_x;
+                                l1_ctx.match_y = top.center_y;
+                                l1_ctx.score = top.score;
+                            }
+                            vision_engine_->launchLayer2AsyncWithContext(device_id, rgba, width, height, l1_ctx);
 
-
-
-                            vision_engine_->launchLayer2Async(device_id, rgba, width, height);
-
-
-
-                            MLOG_INFO("ai", "Layer 2起動: slot=%d device=%s", slot, device_id.c_str());
+                            MLOG_INFO("ai", "Layer 2起動: slot=%d device=%s template=%s tags=%s", slot, device_id.c_str(), l1_ctx.template_name.c_str(), l1_ctx.tags.c_str());
 
 
 
@@ -10926,7 +10953,10 @@ if (decision.should_act && can_send) {
 
                     const uint8_t* rgba_ptr = job.frame->data();
 
-
+                    // Save hardware_id for coordinate scaling
+                    if (job.slot >= 0 && job.slot < kMaxAsyncSlots) {
+                        slot_frame_size_[job.slot].hardware_id = job.device_id;
+                    }
 
                     auto action = processFrame(job.slot, rgba_ptr, job.width, job.height, job.can_send);
 
@@ -12193,6 +12223,10 @@ private:
     std::array<int64_t, kMaxAsyncSlots> last_ai_frame_ms_ = {};
     std::atomic<int64_t> last_ai_global_frame_ms_{0};
     std::atomic<int> active_ai_devices_{1};
+
+    // Frame size per slot for coordinate scaling
+    struct FrameSize { int w = 0; int h = 0; std::string hardware_id; };
+    std::array<FrameSize, kMaxAsyncSlots> slot_frame_size_ = {};
 
   public:
     // Phase 2: canonical only mode
@@ -13882,33 +13916,30 @@ private:
 
                 ai_evt.action_type = "TAP";
 
+                // Scale from video coordinates to physical coordinates
+                // Get actual video size and hardware_id from slot_frame_size_ (set before processFrame)
+                int video_w = (slot >= 0 && slot < kMaxAsyncSlots) ? slot_frame_size_[slot].w : 0;
+                int video_h = (slot >= 0 && slot < kMaxAsyncSlots) ? slot_frame_size_[slot].h : 0;
+                std::string hw_id = (slot >= 0 && slot < kMaxAsyncSlots) ? slot_frame_size_[slot].hardware_id : "";
+                // Get physical size from registry using hardware_id
+                auto& reg = mirage::config::ExpectedSizeRegistry::instance();
+                int phys_w = 0, phys_h = 0;
+                if (!hw_id.empty()) {
+                    reg.getPhysicalSize(hw_id, phys_w, phys_h);
+                }
+                // Scale if video size differs from physical size - update action coords for return value
+                if (phys_w > 0 && phys_h > 0 && video_w > 0 && video_h > 0 && (video_w != phys_w || video_h != phys_h)) {
+                    int orig_x = action.x, orig_y = action.y;
+                    action.x = static_cast<int>(orig_x * static_cast<float>(phys_w) / video_w + 0.5f);
+                    action.y = static_cast<int>(orig_y * static_cast<float>(phys_h) / video_h + 0.5f);
+                    MLOG_INFO("ai", "AI tap scaled (%d,%d)->(%d,%d) video=%dx%d phys=%dx%d hw=%s",
+                              orig_x, orig_y, action.x, action.y, video_w, video_h, phys_w, phys_h, hw_id.c_str());
+                }
 
-
-                mirage::TapCommandEvent tap;
-
-
-
-                tap.device_id = device_id;
-
-
-
-                tap.x = action.x; tap.y = action.y;
-
-
-
-                tap.source = mirage::CommandSource::AI;
-
-
-
+                // Only publish AIActionEvent here; TapCommand is published by async worker
                 mirage::bus().publish(ai_evt);
 
-
-
-                mirage::bus().publish(tap);
-
-
-
-                MLOG_DEBUG("ai", "EventBus AIAction+TapCommand発行: device=%s (%d,%d) tpl=%s",
+                MLOG_DEBUG("ai", "EventBus AIActionEvent発行: device=%s (%d,%d) tpl=%s",
 
 
 
@@ -18034,6 +18065,7 @@ private:
 
 
     std::unordered_map<int, std::string> id_to_name_;
+    std::unordered_map<int, std::string> id_to_tags_;  // template_id -> tags
 
 
 
