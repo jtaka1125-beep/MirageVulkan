@@ -49,6 +49,9 @@ struct AiConfig {
     int  vde_confirm_count      = 3;
     int  vde_cooldown_ms        = 2000;
     int  vde_debounce_window_ms = 500;
+    bool enable_verify          = false;  // アクション後の成否検証
+    int  verify_delay_ms        = 500;
+    int  verify_timeout_ms      = 2000;
     // Continuous Learning v2 (config.json "continuous_learning_v2" section)
     bool  clv2_enabled              = false;
     float clv2_confidence_threshold = 0.65f;
@@ -196,6 +199,9 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ai.vde_confirm_count = jsonGet<int>(j, "ai", "vde_confirm_count", 3);
         config.ai.vde_cooldown_ms = jsonGet<int>(j, "ai", "vde_cooldown_ms", 2000);
         config.ai.vde_debounce_window_ms = jsonGet<int>(j, "ai", "vde_debounce_window_ms", 500);
+        config.ai.enable_verify = jsonGet<bool>(j, "ai", "enable_verify", false);
+        config.ai.verify_delay_ms = jsonGet<int>(j, "ai", "verify_delay_ms", 500);
+        config.ai.verify_timeout_ms = jsonGet<int>(j, "ai", "verify_timeout_ms", 2000);
 
         // Continuous Learning v2
         config.ai.clv2_enabled = jsonGet<bool>(j, "continuous_learning_v2", "enabled", false);

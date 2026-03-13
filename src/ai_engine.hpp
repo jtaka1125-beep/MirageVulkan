@@ -202,6 +202,9 @@ struct AIConfig {
 
 
     int  vde_debounce_window_ms = 500;   // Debounce window (ms)
+    bool enable_verify          = false; // アクション後の成否検証
+    int  verify_delay_ms        = 500;   // 検証開始までの待機(ms)
+    int  verify_timeout_ms      = 2000;  // 検証タイムアウト(ms)
 
 
     std::string ollama_host       = "127.0.0.1";

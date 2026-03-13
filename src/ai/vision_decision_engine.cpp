@@ -26,6 +26,7 @@
 #include "event_bus.hpp"
 #include <algorithm>
 #include <fstream>
+#include <regex>
 
 namespace mirage::ai {
 
@@ -308,6 +309,7 @@ VisionDecision VisionDecisionEngine::update(
 
 void VisionDecisionEngine::notifyActionExecuted(
     const std::string& device_id,
+    int action_x, int action_y,
     std::chrono::steady_clock::time_point now)
 {
     auto it = device_states_.find(device_id);
@@ -323,6 +325,8 @@ void VisionDecisionEngine::notifyActionExecuted(
             ds.verify_template_id = ds.detected_template_id;
             ds.verify_start = now;
             ds.verify_retry_count = 0;
+            ds.verify_x = action_x;  // リトライ用座標を保存
+            ds.verify_y = action_y;
             transitionTo(ds, VisionState::VERIFYING);
 
             MLOG_INFO("ai.vision", "アクション実行 → VERIFYING: device=%s tpl=%s",
@@ -448,8 +452,14 @@ VisionDecisionEngine::VerifyResult VisionDecisionEngine::checkVerification(
         DebounceKey key{device_id, ds.verify_template_id};
         debounce_map_[key] = now;
         
-        MLOG_INFO("ai.vision", "検証成功 (消失確認) → COOLDOWN: device=%s tpl=%s",
-                   device_id.c_str(), ds.verify_template_id.c_str());
+        // 検証記録: 成功をカウント
+        auto& vrec = verify_records_[ds.verify_template_id];
+        vrec.success_count++;
+        vrec.last_success = now;
+
+        MLOG_INFO("ai.vision", "検証成功 (消失確認) → COOLDOWN: device=%s tpl=%s (success=%u fail=%u rate=%.1f%%)",
+                   device_id.c_str(), ds.verify_template_id.c_str(),
+                   vrec.success_count, vrec.fail_count, vrec.success_rate() * 100.0f);
         
         mirage::StateChangeEvent evt;
         evt.device_id = device_id;
@@ -481,6 +491,21 @@ VisionDecisionEngine::VerifyResult VisionDecisionEngine::checkVerification(
                        device_id.c_str(), ds.verify_template_id.c_str());
         } else {
             // 最大リトライ超過 → 失敗として COOLDOWN へ
+            // 検証記録: 失敗をカウント
+            auto& vrec = verify_records_[ds.verify_template_id];
+            vrec.fail_count++;
+            vrec.retry_count += ds.verify_retry_count;
+            vrec.last_fail = now;
+
+            // 失敗率が高い場合は自動ignore
+            if (vrec.should_ignore()) {
+                if (!isIgnored(ds.verify_template_id)) {
+                    ignoreTemplate(ds.verify_template_id);
+                    MLOG_WARN("ai.vision", "自動ignore: tpl=%s success_rate=%.1f%%",
+                        ds.verify_template_id.c_str(), vrec.success_rate() * 100.0f);
+                }
+            }
+
             result.timeout = true;
             
             VisionState old_state = ds.state;
@@ -488,8 +513,9 @@ VisionDecisionEngine::VerifyResult VisionDecisionEngine::checkVerification(
             ds.cooldown_start = now;
             transitionTo(ds, VisionState::COOLDOWN);
             
-            MLOG_WARN("ai.vision", "検証失敗 (タイムアウト) → COOLDOWN: device=%s tpl=%s retry=%d",
-                       device_id.c_str(), ds.verify_template_id.c_str(), ds.verify_retry_count);
+            MLOG_WARN("ai.vision", "検証失敗 (タイムアウト) → COOLDOWN: device=%s tpl=%s retry=%d (success=%u fail=%u rate=%.1f%%)",
+                       device_id.c_str(), ds.verify_template_id.c_str(), ds.verify_retry_count,
+                       vrec.success_count, vrec.fail_count, vrec.success_rate() * 100.0f);
             
             mirage::StateChangeEvent evt;
             evt.device_id = device_id;
@@ -835,5 +861,95 @@ bool VisionDecisionEngine::shouldTriggerLayer2(
 
 bool VisionDecisionEngine::checkLayer2Freeze(
     const std::string&, std::chrono::steady_clock::time_point) { return false; }
+
+
+// =============================================================================
+// 検証記録（成功/失敗統計）
+// =============================================================================
+
+VerifyRecord VisionDecisionEngine::empty_verify_record_{};
+
+const VerifyRecord& VisionDecisionEngine::getVerifyRecord(const std::string& template_id) const {
+    auto it = verify_records_.find(template_id);
+    if (it == verify_records_.end()) return empty_verify_record_;
+    return it->second;
+}
+
+const std::unordered_map<std::string, VerifyRecord>& VisionDecisionEngine::getAllVerifyRecords() const {
+    return verify_records_;
+}
+
+void VisionDecisionEngine::clearVerifyRecords() {
+    verify_records_.clear();
+    MLOG_INFO("ai.vision", "検証記録をクリア");
+}
+
+void VisionDecisionEngine::saveVerifyRecords(const std::string& path) const {
+    std::string json = "{\n";
+    bool first = true;
+    for (const auto& [tpl_id, rec] : verify_records_) {
+        if (!first) json += ",\n";
+        first = false;
+        json += "  \"" + tpl_id + "\": {\n";
+        json += "    \"success_count\": " + std::to_string(rec.success_count) + ",\n";
+        json += "    \"fail_count\": " + std::to_string(rec.fail_count) + ",\n";
+        json += "    \"retry_count\": " + std::to_string(rec.retry_count) + "\n";
+        json += "  }";
+    }
+    json += "\n}\n";
+
+    std::ofstream ofs(path);
+    if (ofs) {
+        ofs << json;
+        MLOG_INFO("ai.vision", "検証記録を保存: %s (%zu件)", path.c_str(), verify_records_.size());
+    } else {
+        MLOG_WARN("ai.vision", "検証記録の保存失敗: %s", path.c_str());
+    }
+}
+
+void VisionDecisionEngine::loadVerifyRecords(const std::string& path) {
+    std::ifstream ifs(path);
+    if (!ifs) {
+        MLOG_INFO("ai.vision", "検証記録ファイルなし: %s", path.c_str());
+        return;
+    }
+
+    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    verify_records_.clear();
+
+    std::regex re(R"delim("([^"]+)":\s*\{\s*"success_count":\s*(\d+),\s*"fail_count":\s*(\d+),\s*"retry_count":\s*(\d+)\s*\})delim");
+    std::sregex_iterator it(content.begin(), content.end(), re);
+    std::sregex_iterator end_it;
+
+    while (it != end_it) {
+        std::smatch m = *it;
+        VerifyRecord rec;
+        rec.success_count = static_cast<uint32_t>(std::stoul(m[2].str()));
+        rec.fail_count = static_cast<uint32_t>(std::stoul(m[3].str()));
+        rec.retry_count = static_cast<uint32_t>(std::stoul(m[4].str()));
+        verify_records_[m[1].str()] = rec;
+        ++it;
+    }
+
+    MLOG_INFO("ai.vision", "検証記録を読込: %s (%zu件)", path.c_str(), verify_records_.size());
+}
+
+void VisionDecisionEngine::autoIgnoreFailingTemplates(float threshold, uint32_t min_samples) {
+    int ignored_count = 0;
+    for (const auto& [tpl_id, rec] : verify_records_) {
+        if (rec.should_ignore(threshold, min_samples)) {
+            if (!isIgnored(tpl_id)) {
+                ignoreTemplate(tpl_id);
+                ignored_count++;
+                MLOG_WARN("ai.vision", "自動ignore: tpl=%s success_rate=%.1f%% (threshold=%.1f%% samples=%u)",
+                    tpl_id.c_str(), rec.success_rate() * 100.0f, threshold * 100.0f,
+                    rec.success_count + rec.fail_count);
+            }
+        }
+    }
+    if (ignored_count > 0) {
+        MLOG_INFO("ai.vision", "自動ignoreテンプレート: %d件", ignored_count);
+    }
+}
 
 } // namespace mirage::ai

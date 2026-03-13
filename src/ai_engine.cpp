@@ -2573,6 +2573,9 @@ public:
 
 
         vde_config.debounce_window_ms = config.vde_debounce_window_ms;
+        vde_config.enable_verify = config.enable_verify;
+        vde_config.verify_delay_ms = config.verify_delay_ms;
+        vde_config.verify_timeout_ms = config.verify_timeout_ms;
 
 
 
@@ -2812,6 +2815,12 @@ public:
 
         initialized_ = true;
 
+        // 検証記録を読み込み
+        if (vision_engine_) {
+            vision_engine_->loadVerifyRecords(config_.templates_dir + "/verify_records.json");
+            vision_engine_->loadIgnoredTemplates(config_.templates_dir + "/ignored_templates.json");
+        }
+
 
 
 
@@ -2979,6 +2988,12 @@ public:
 
 
         MLOG_INFO("ai", "AI Engine シャットダウン");
+
+        // 検証記録を保存
+        if (vision_engine_) {
+            vision_engine_->saveVerifyRecords(config_.templates_dir + "/verify_records.json");
+            vision_engine_->saveIgnoredTemplates(config_.templates_dir + "/ignored_templates.json");
+        }
 
 
 
@@ -6758,7 +6773,7 @@ if (decision.should_act && can_send) {
 
 
 
-                vision_engine_->notifyActionExecuted(device_id);
+                vision_engine_->notifyActionExecuted(device_id, decision.x, decision.y);
 
 
 

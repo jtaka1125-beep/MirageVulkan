@@ -108,6 +108,28 @@ struct VisionDecision {
 };
 
 // =============================================================================
+// 検証記録（成功/失敗統計）
+// =============================================================================
+
+struct VerifyRecord {
+    uint32_t success_count = 0;    // 検証成功回数（テンプレート消失）
+    uint32_t fail_count = 0;       // 検証失敗回数（タイムアウト）
+    uint32_t retry_count = 0;      // 総リトライ回数
+    std::chrono::steady_clock::time_point last_success;  // 最終成功時刻
+    std::chrono::steady_clock::time_point last_fail;     // 最終失敗時刻
+
+    float success_rate() const {
+        uint32_t total = success_count + fail_count;
+        return total > 0 ? static_cast<float>(success_count) / total : 1.0f;
+    }
+
+    bool should_ignore(float threshold = 0.3f, uint32_t min_samples = 5) const {
+        uint32_t total = success_count + fail_count;
+        return total >= min_samples && success_rate() < threshold;
+    }
+};
+
+// =============================================================================
 // デバウンスキー: device_id + template_id
 // =============================================================================
 
@@ -186,6 +208,7 @@ public:
 
     // アクション実行完了通知（CONFIRMED→VERIFYING遷移、検証無効時はCOOLDOWN）
     void notifyActionExecuted(const std::string& device_id,
+                              int action_x, int action_y,
                               std::chrono::steady_clock::time_point now =
                                   std::chrono::steady_clock::now());
 
@@ -305,6 +328,14 @@ public:
     void saveIgnoredTemplates(const std::string& path) const;
     void loadIgnoredTemplates(const std::string& path);
 
+    // ── 検証記録（成功/失敗統計） ──
+    const VerifyRecord& getVerifyRecord(const std::string& template_id) const;
+    const std::unordered_map<std::string, VerifyRecord>& getAllVerifyRecords() const;
+    void clearVerifyRecords();
+    void saveVerifyRecords(const std::string& path) const;
+    void loadVerifyRecords(const std::string& path);
+    void autoIgnoreFailingTemplates(float threshold = 0.3f, uint32_t min_samples = 5);
+
 private:
     VisionDecisionConfig config_;
 
@@ -327,6 +358,10 @@ private:
 
     // テンプレート無視リスト
     std::unordered_set<std::string> ignored_templates_;
+
+    // 検証記録: template_id → VerifyRecord
+    std::unordered_map<std::string, VerifyRecord> verify_records_;
+    static VerifyRecord empty_verify_record_;
 
     // 内部ヘルパー
     DeviceVisionState& getOrCreateState(const std::string& device_id);
