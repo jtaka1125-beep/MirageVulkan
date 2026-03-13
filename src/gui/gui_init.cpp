@@ -353,18 +353,22 @@ bool initializeMultiReceiver() {
     std::unordered_map<std::string,int> fixed_port_map;
     std::unordered_map<std::string,std::string> preferred_route_map;
     try {
-        std::vector<std::string> candidates = {"devices.json", "../devices.json", "../../devices.json", "../../../devices.json"};
+        std::vector<std::string> candidates = {"devices.json", "build/devices.json", "../devices.json", "../../devices.json", "../../../devices.json", "C:/MirageWork/MirageVulkan/build/devices.json"};
         for (const auto& c : candidates) {
             std::ifstream f(c);
             if (!f.is_open()) continue;
             nlohmann::json j = nlohmann::json::parse(f);
             if (j.contains("devices") && j["devices"].is_array()) {
+                MLOG_INFO("mirror", "devices.json loaded: %s", c.c_str());
                 for (const auto& dj : j["devices"]) {
                     std::string hw = dj.value("hardware_id", "");
                     int port = dj.value("tcp_port", 0);
                     if (!hw.empty() && port > 0) fixed_port_map[hw] = port;
                     std::string route = dj.value("preferred_route", "");
-                    if (!hw.empty() && !route.empty()) preferred_route_map[hw] = route;
+                    if (!hw.empty() && !route.empty()) {
+                        preferred_route_map[hw] = route;
+                        MLOG_INFO("mirror", "preferred_route[%s]=%s", hw.c_str(), route.c_str());
+                    }
                 }
                 break;
             }
@@ -841,6 +845,9 @@ static void registerDevicesForRouteController() {
 
     // Prefer X1 as main device
     auto isX1 = [](const auto& dev) {
+        // Primary: hardware_id prefix (most reliable)
+        if (dev.hardware_id.find("f1925da3") != std::string::npos) return true;
+        // Secondary: various identifiers
         if (dev.preferred_adb_id.find("192.168.0.3:5555") != std::string::npos) return true;
         for (const auto& w : dev.wifi_connections)  { if (w.find("192.168.0.3:5555") != std::string::npos) return true; }
         for (const auto& u : dev.usb_connections)   { if (u.find("93020523431940") != std::string::npos) return true; }
@@ -1165,9 +1172,16 @@ void initializeAI() {
     // Pass VulkanContext for GPU compute backend
     mirage::vk::VulkanContext* vk_ctx = gui ? gui->vulkanContext() : nullptr;
     auto initResult = g_ai_engine->initialize(ai_config, vk_ctx);
+    if (initResult.is_err()) {
+        MLOG_ERROR("ai", "AIEngine::initialize failed: %s", initResult.error().message.c_str());
+    }
     if (initResult.is_ok()) {
+        MLOG_INFO("ai", "initResult.is_ok() = true, loadTemplatesFromDir(%s)", ai_config.templates_dir.c_str());
         if (gui) gui->logInfo(u8"AI engine initialized");
         auto loadResult = g_ai_engine->loadTemplatesFromDir(ai_config.templates_dir);
+        if (loadResult.is_err()) {
+            MLOG_ERROR("ai", "loadTemplatesFromDir failed: %s", loadResult.error().message.c_str());
+        }
         if (loadResult.is_ok()) {
             auto stats = g_ai_engine->getStats();
             if (gui) gui->logInfo(u8"AI templates loaded: " + std::to_string(stats.templates_loaded));
