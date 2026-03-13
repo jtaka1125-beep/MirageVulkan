@@ -17,8 +17,6 @@ matchTemplate(mirage::vk::VulkanTemplateMatcher& matcher,
         return std::nullopt;
     }
 
-    // frame.data は gray8 (width*height bytes) であることを期待する。
-    // 呼び出し元が変換済みデータを渡す責務を持つ。
     auto res = matcher.match(frame.data, frame.width, frame.height);
     if (!res) {
         MLOG_WARN("perception", "matchTemplate: VulkanTemplateMatcher::match failed: %s",
@@ -31,7 +29,7 @@ matchTemplate(mirage::vk::VulkanTemplateMatcher& matcher,
         return std::nullopt;
     }
 
-    // templ.name に一致する template_id のみ対象でスコア最大を採用
+    // templ.name に一致する template_id のヒットのみを対象にする（誤帰属防止）
     const mirage::vk::VkMatchResult* best = nullptr;
     for (const auto& h : hits) {
         if (matcher.getTemplateName(h.template_id) != templ.name) continue;
@@ -43,7 +41,7 @@ matchTemplate(mirage::vk::VulkanTemplateMatcher& matcher,
     TemplateMatchResult r;
     r.template_id  = templ.name;
     r.score        = best->score;
-    r.confidence   = best->score;  // raw NCC スコアをそのまま confidence として使用
+    r.confidence   = best->score;
     r.bounds       = { best->x, best->y, best->template_width, best->template_height };
     r.frame_info   = frameInfoOf(frame);
     return r;
