@@ -166,7 +166,7 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
                     struct libusb_device_descriptor desc;
                     if (libusb_get_device_descriptor(dev, &desc) != 0) continue;
 
-                    // Only check Google VID AOA devices after switch
+                    // Check Google VID AOA devices (standard)
                     if (desc.idVendor == AOA_VID) {
                         for (uint16_t pid : aoa_pids) {
                             if (desc.idProduct == pid) {
@@ -178,6 +178,16 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
                                 }
                                 break;
                             }
+                        }
+                    }
+                    // MTK (VID=0x0E8D) stays at its own VID after AOA switch.
+                    // PID=0x201C = AOA+ADB composite. Open directly without re-switch.
+                    else if (desc.idVendor == 0x0E8D && desc.idProduct == 0x201C) {
+                        found_aoa = true;
+                        if (open_aoa_device(dev, desc.idProduct)) {
+                            found_any = true;
+                        } else {
+                            all_opened = false;
                         }
                     }
                 }
