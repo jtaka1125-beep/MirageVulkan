@@ -216,6 +216,8 @@ VisionDecision VisionDecisionEngine::update(
             transitionTo(ds, VisionState::DETECTED);
             ds.detected_template_id = best->template_id;
             ds.consecutive_count = 1;
+            decision.template_id = best->template_id;
+            decision.score = best->score;
 
             MLOG_DEBUG("ai.vision", "検出開始 → DETECTED: device=%s tpl=%s score=%.3f",
                        device_id.c_str(), best->template_id.c_str(), best->score);

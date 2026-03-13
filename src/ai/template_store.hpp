@@ -37,6 +37,8 @@ struct TemplateHandle {
 
     std::string source_path_utf8;
 
+    std::string name;                   // テンプレート名 (VulkanTemplateMatcherと一致する名前)
+
     std::string debug;
 
     int matcher_id = -1;                // VulkanTemplateMatcher 内のID
@@ -90,6 +92,8 @@ public:
 
     void setMatcherId(int template_id, int matcher_id);
 
+    void setName(int template_id, const std::string& name);
+
     std::vector<int> listTemplateIds() const;
 
     void clear();
@@ -123,4 +127,3 @@ private:
 
 
 } // namespace mirage::ai
-

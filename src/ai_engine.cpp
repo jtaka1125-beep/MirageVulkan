@@ -684,7 +684,7 @@ public:
             const TemplateHandle* h = store.get(id);
             if (h) {
                 mirage::perception::Template t;
-                t.name       = h->debug.empty() ? ("tpl_" + std::to_string(id)) : h->debug;
+                t.name       = !h->name.empty() ? h->name : (h->debug.empty() ? ("tpl_" + std::to_string(id)) : h->debug);
                 t.image      = h->gray_data.empty() ? nullptr : h->gray_data.data();
                 t.image_size = h->gray_data.size();
                 t.width      = h->w;
@@ -16373,6 +16373,7 @@ private:
             // matcher_idをTemplateStoreに書き戻す
             if (template_store_) {
                 template_store_->setMatcherId(template_id, matcher_id);
+                template_store_->setName(template_id, name);
             }
 
 

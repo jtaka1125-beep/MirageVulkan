@@ -282,6 +282,13 @@ void TemplateStore::setMatcherId(int template_id, int matcher_id) {
     }
 }
 
+void TemplateStore::setName(int template_id, const std::string& name) {
+    auto it = map_.find(template_id);
+    if (it != map_.end()) {
+        it->second.name = name;
+    }
+}
+
 
 
 std::vector<int> TemplateStore::listTemplateIds() const {
@@ -312,4 +319,3 @@ int TemplateStore::getTemplateVersion(int template_id) const {
 }
 
 } // namespace mirage::ai
-
