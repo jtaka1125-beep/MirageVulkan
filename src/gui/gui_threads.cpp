@@ -790,6 +790,26 @@ void wifiAdbWatchdogThread() {
                                                                    dev.assigned_tcp_port, 
                                                                    new_tcp_host);
                         }
+                        
+                        // F) Auto re-enable USB tethering when USBLAN down
+                        if (!usblan_now_active && !dev.wifi_connections.empty()) {
+                            static std::unordered_map<std::string, uint64_t> tether_retry_last;
+                            constexpr uint64_t TETHER_RETRY_COOLDOWN_MS = 30000;  // 30 sec cooldown
+                            
+                            uint64_t last_retry = 0;
+                            auto it_retry = tether_retry_last.find(dev.hardware_id);
+                            if (it_retry != tether_retry_last.end()) last_retry = it_retry->second;
+                            
+                            if (now_ms - last_retry > TETHER_RETRY_COOLDOWN_MS) {
+                                tether_retry_last[dev.hardware_id] = now_ms;
+                                const auto& wifi_id = dev.wifi_connections[0];
+                                MLOG_INFO("watchdog", "Attempting USB tethering re-enable on %s", 
+                                          dev.display_name.c_str());
+                                // Use service call to enable USB tethering (works on Android 13)
+                                g_adb_manager->adbCommand(wifi_id, 
+                                    "shell service call connectivity 33 i32 1");
+                            }
+                        }
                     }
                 }
 
