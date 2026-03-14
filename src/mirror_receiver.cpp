@@ -403,6 +403,21 @@ bool MirrorReceiver::get_latest_shared_frame(std::shared_ptr<mirage::SharedFrame
     auto frame = ring_buffer_->pop_latest(&metrics);
     if (frame) {
       out = frame;
+      // A-1 Observability: periodic stats log (every 10 seconds)
+      static auto last_stats_log = std::chrono::steady_clock::now();
+      auto now = std::chrono::steady_clock::now();
+      auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_stats_log).count();
+      if (elapsed >= 10) {
+        last_stats_log = now;
+        int64_t latency_us = (metrics.enqueue_ts > 0 && metrics.decode_ts > 0)
+            ? (metrics.enqueue_ts - metrics.decode_ts) : 0;
+        MLOG_INFO("ringbuf", "STATS: pushed=%llu popped=%llu dropped=%llu buf=%zu latency_d2e=%lld us",
+            (unsigned long long)ring_buffer_->total_pushed(),
+            (unsigned long long)ring_buffer_->total_popped(),
+            (unsigned long long)ring_buffer_->dropped_frames(),
+            ring_buffer_->current_count(),
+            (long long)latency_us);
+      }
       return true;
     }
     return false;
@@ -1352,6 +1367,7 @@ void MirrorReceiver::decode_nal(const uint8_t* data, size_t len) {
 }
 
 void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height, int64_t pts) {
+  const int64_t decode_ts = gui::FrameRingBuffer::now_us();  // A-1: capture decode completion time
   std::lock_guard<std::mutex> lock(frame_mtx_);
 
   const size_t frame_bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
@@ -1381,7 +1397,7 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
 
   // A-1: Push to ring buffer (primary path)
   if (ring_buffer_) {
-    ring_buffer_->push(sf, gui::FrameRingBuffer::now_us());
+    ring_buffer_->push(sf, decode_ts);
   }
 
   has_new_frame_ = true;
@@ -1406,6 +1422,7 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
 
 #ifdef USE_FFMPEG
 void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height, uint64_t pts) {
+  const int64_t decode_ts = gui::FrameRingBuffer::now_us();  // A-1: capture decode completion time
   std::lock_guard<std::mutex> lock(frame_mtx_);
 
   const size_t frame_bytes = static_cast<size_t>(width) * height * 4;
@@ -1435,7 +1452,7 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
 
   // A-1: Push to ring buffer (primary path)
   if (ring_buffer_) {
-    ring_buffer_->push(sf, gui::FrameRingBuffer::now_us());
+    ring_buffer_->push(sf, decode_ts);
   }
 
   has_new_frame_ = true;
