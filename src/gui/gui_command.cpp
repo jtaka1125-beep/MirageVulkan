@@ -432,19 +432,12 @@ void sendKeyCommand(const std::string& device_id, int keycode) {
         std::string resolved = g_gui->resolveHardwareId(device_id);
         if (!resolved.empty()) hw_id = resolved;
     }
-    if (g_hybrid_cmd) {
-        std::string usb_id = resolveToUsbId(hw_id);
-        if (g_hybrid_cmd->is_device_connected(usb_id)) {
-            g_hybrid_cmd->send_key(usb_id, keycode);
-            MLOG_INFO("cmd", "USB key %d sent to %s", keycode, usb_id.c_str());
-            return;
-        }
-        if (g_hybrid_cmd->has_wifi_sender(hw_id)) {
-            g_hybrid_cmd->send_key(hw_id, keycode);
-            MLOG_INFO("cmd", "WiFi TCP key %d sent to %s", keycode, hw_id.c_str());
-            return;
-        }
-    }
+    MLOG_INFO("cmd", "sendKeyCommand device='%s' key=%d (ADB-first)", hw_id.c_str(), keycode);
+    // Bug fix: Always use ADB for key events (Back/Home/Task).
+    // USB MIRA and WiFi TCP both silently drop keys when not fully connected:
+    //   - USB MIRA: queues to bulk endpoint but AOA accessory mode may be OFF
+    //   - WiFi TCP: has_wifi_sender()=true but connection may be pending/failed
+    // ADB shell input keyevent is reliable and latency is acceptable for nav keys.
 
     // ADB fallback
     if (g_adb_manager) {

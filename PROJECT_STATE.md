@@ -126,17 +126,17 @@
 8. AOA full-path test [BLOCKED: physical USB]
 9. MirageMemory Phase 2: compact dedup
 
-## GUI File Line Counts (Updated 2026-03-14)
+## GUI File Line Counts (Updated 2026-03-15)
 - gui_ai_panel.cpp:       815
 - gui_init.cpp:          1308
 - gui_threads.cpp:        889
 - gui_device_control.cpp: 554
-- gui_command.cpp:        504
+- gui_command.cpp:        497
 - gui_window.cpp:         237
 - gui_main.cpp:           367
 - gui_state.cpp:           11
 - mirage_context.cpp:       0
-- TOTAL:                 4685 lines
+- TOTAL:                 4678 lines
 
 ## Key Decisions Log
 - 2026-03-13: MirageMemory v2 実装完了。decision構造化・compact再格納・lifecycle管理・受け入れ確認まで一巡完了。append-only保存層から状態遷移を伴う知識管理層へ移行。commit 58c5a12。

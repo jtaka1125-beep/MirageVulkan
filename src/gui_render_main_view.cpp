@@ -76,11 +76,21 @@ void GuiApplication::renderCenterPanel() {
                                "%.0f ms", main_device.latency_ms);
         }
 
-        // === Navigation Bar ABOVE device view (avoids Windows taskbar overlap) ===
+        // Device view takes available space minus nav bar height
         const float nav_bar_h = 32.0f;
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float view_x = ImGui::GetCursorScreenPos().x;
+        float view_y = ImGui::GetCursorScreenPos().y;
+        float view_h = avail.y - nav_bar_h;  // Reserve space for nav bar below
+        renderDeviceView(main_device, view_x, view_y, avail.x, view_h, true, false);
+
+        // Advance cursor past the device view area
+        ImGui::SetCursorScreenPos(ImVec2(view_x, view_y + view_h));
+
+        // === Navigation Bar BELOW device view ===
         {
             float btn_w = 70.0f;
-            float bar_w = ImGui::GetContentRegionAvail().x;
+            float bar_w = avail.x;
             float total_btn_w = btn_w * 3 + 8.0f * 2;
             float nav_x = ImGui::GetCursorScreenPos().x + (bar_w - total_btn_w) / 2.0f;
             float nav_y = ImGui::GetCursorScreenPos().y;
@@ -92,17 +102,17 @@ void GuiApplication::renderCenterPanel() {
             ImGui::SetCursorScreenPos(ImVec2(nav_x, nav_y));
             if (ImGui::Button(u8"< Back", ImVec2(btn_w, nav_bar_h - 4.0f))) {
                 MLOG_INFO("navbtn", "Back button clicked: %s", main_device.id.c_str());
-                ::mirage::gui::command::sendKeyCommand(main_device.id, 4);
+                // sendKeyCommand handled by onMouseUp hit-test (avoid double-send)
             }
             ImGui::SameLine(0, 8.0f);
             if (ImGui::Button(u8"o Home", ImVec2(btn_w, nav_bar_h - 4.0f))) {
                 MLOG_INFO("navbtn", "Home button clicked: %s", main_device.id.c_str());
-                ::mirage::gui::command::sendKeyCommand(main_device.id, 3);
+                // sendKeyCommand handled by onMouseUp hit-test (avoid double-send)
             }
             ImGui::SameLine(0, 8.0f);
             if (ImGui::Button(u8"= Task", ImVec2(btn_w, nav_bar_h - 4.0f))) {
                 MLOG_INFO("navbtn", "Task button clicked: %s", main_device.id.c_str());
-                ::mirage::gui::command::sendKeyCommand(main_device.id, 187);
+                // sendKeyCommand handled by onMouseUp hit-test (avoid double-send)
             }
             ImGui::PopStyleVar();
             ImGui::PopStyleColor(3);
@@ -116,14 +126,6 @@ void GuiApplication::renderCenterPanel() {
             nav_bar_rects_.btn_w  = btn_w;
             nav_bar_rects_.valid  = true;
         }
-
-        // Device view takes remaining space
-        ImVec2 avail = ImGui::GetContentRegionAvail();
-        float view_x = ImGui::GetCursorScreenPos().x;
-        float view_y = ImGui::GetCursorScreenPos().y;
-        float view_h = avail.y;
-
-        renderDeviceView(main_device, view_x, view_y, avail.x, view_h, true, false);
 
     } else {
         ImVec2 avail = ImGui::GetContentRegionAvail();
