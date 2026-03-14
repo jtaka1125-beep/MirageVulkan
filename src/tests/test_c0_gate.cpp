@@ -1,33 +1,32 @@
 // =============================================================================
 // test_c0_gate.cpp  v1
-// Phase C-0 Gate — Canonical Lane stability + thermal + 2-VDS readiness
+// Phase C-0 Gate  ECanonical Lane stability + thermal + 2-VDS readiness
 //
-// 用途:
-//   Phase C (Monitor Lane) 着手前の前提条件チェック。
-//   本テストが C0_PASS を出力するまで Phase C には進まない。
+// 用送E
+//   Phase C (Monitor Lane) 着手前の前提条件チェチE��、E
+//   本チE��トが C0_PASS を�E力するまで Phase C には進まなぁE��E
 //
-// 計測項目:
+// 計測頁E��:
 //   1. Canonical fps 安定性  (avg ≥ 28fps, alive_failures == 0)
 //   2. Thermal 安定性        (SEVERE/SHUTDOWN throttle ゼロ)
-//   3. fps_delta             (Monitor 追加前後 — Phase C 実装後に有効)
-//   4. 2 VDS 同時生成        (Android 側で確認、ここでは ADB ログを参照)
+//   3. fps_delta             (Monitor 追加前征E EPhase C 実裁E��に有効)
+//   4. 2 VDS 同時生�E        (Android 側で確認、ここでは ADB ログを参照)
 //
-// 判定基準 (全て満たすと C0_PASS):
+// 判定基溁E(全て満たすと C0_PASS):
 //   canonical_avg_fps       >= 28.0
 //   canonical_alive_failures == 0
 //   thermal_severe_count    == 0
 //   fps_delta_with_monitor  <= 2.0   (SKIP until Phase C)
 //   dual_vds_ok             == true  (SKIP until Phase C)
 //
-// 実行方法:
-//   test_c0_gate.exe                    # フル計測 300 秒
-//   test_c0_gate.exe --quick            # 開発用 30 秒
+// 実行方況E
+//   test_c0_gate.exe                    # フル計測 300 私E
+//   test_c0_gate.exe --quick            # 開発用 30 私E
 //   test_c0_gate.exe --duration 60      # 任意秒数
 //
-// 出力例 (1秒ごと):
+// 出力侁E(1秒ごと):
 //   [C0] t=  5s  fps=29.4  alive=1  age_ms=  34  thermal=NOMINAL  frames=147
 // =============================================================================
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../stb_image_write.h"
 #include "../stb_image.h"
 
@@ -59,7 +58,7 @@
 
 using clk = std::chrono::steady_clock;
 
-// ── 設定 ────────────────────────────────────────────────────────────────────
+// ── 設宁E────────────────────────────────────────────────────────────────────
 static const char* DEVICE_IP    = "192.168.0.3";
 static const char* DEVICE_ADB   = "192.168.0.3:5555";
 static int         g_duration_s = 300;   // --quick -> 30, --duration N
@@ -161,9 +160,9 @@ static const char* thermal_name(ThermalLevel lv) {
     }
 }
 
-// status コード → ThermalLevel 変換
+// status コーチEↁEThermalLevel 変換
 // Android thermal status: 0=NONE, 1=LIGHT, 2=MODERATE, 3=SEVERE,
-//                         4=CRITICAL, 5=EMERGENCY(→CRITICAL扱い), 6=SHUTDOWN
+//                         4=CRITICAL, 5=EMERGENCY(→CRITICAL扱ぁE, 6=SHUTDOWN
 static ThermalLevel thermal_from_int(int v) {
     switch (v) {
         case 0:  return ThermalLevel::NOMINAL;
@@ -179,7 +178,7 @@ static ThermalLevel thermal_from_int(int v) {
 
 static ThermalLevel query_thermal() {
 #ifdef _WIN32
-    // dumpsys thermalservice の先頭 60 行だけ読む (後半は HAL 詳細で不要)
+    // dumpsys thermalservice の先頭 60 行だけ読む (後半は HAL 詳細で不要E
     FILE* fp = _popen(
         "adb -s 192.168.0.3:5555 shell dumpsys thermalservice 2>&1", "r");
     if (!fp) return ThermalLevel::UNKNOWN;
@@ -194,7 +193,7 @@ static ThermalLevel query_thermal() {
     _pclose(fp);
 
     // ── プライマリ: "Thermal Status: N" ─────────────────────────────────────
-    // 実機 Npad X1 出力例:
+    // 実橁ENpad X1 出力侁E
     //   Thermal Status: 0
     {
         const char* key = "Thermal Status:";
@@ -209,8 +208,8 @@ static ThermalLevel query_thermal() {
     }
 
     // ── フォールバック: 個別センサーの mStatus= 最大値 ────────────────────────
-    // 出力例: Temperature{mValue=53.8, mType=0, mName=CPU, mStatus=0}
-    // "Thermal Status:" が見つからない Android 実装向け
+    // 出力侁E Temperature{mValue=53.8, mType=0, mName=CPU, mStatus=0}
+    // "Thermal Status:" が見つからなぁEAndroid 実裁E��ぁE
     {
         int max_status = -1;
         size_t search = 0;
@@ -231,7 +230,7 @@ static ThermalLevel query_thermal() {
 #endif
 }
 
-// ── 統計 ────────────────────────────────────────────────────────────────────
+// ── 統訁E────────────────────────────────────────────────────────────────────
 struct PerSecStats {
     int     elapsed_s;
     float   fps;
@@ -244,7 +243,7 @@ struct PerSecStats {
 
 // ── main ────────────────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
-    // 引数解析
+    // 引数解极E
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--quick") == 0) {
             g_duration_s = 30;
@@ -265,7 +264,7 @@ int main(int argc, char** argv) {
     printf("Criteria : avg_fps>=28  alive_fail==0  severe_count==0\n\n");
     fflush(stdout);
 
-    // ── VID0 TCP カウンター起動 (Phase C: Canonical UDP → TCP VID0 port 50100) ─
+    // ── VID0 TCP カウンター起勁E(Phase C: Canonical UDP ↁETCP VID0 port 50100) ─
     std::thread vid0_thread;
     bool vid0_running = false;
     start_vid0_tcp_counter(vid0_thread, vid0_running);
@@ -277,7 +276,7 @@ int main(int argc, char** argv) {
     start_monitor_receiver(mon_thread, mon_running);
     printf("[OK] Monitor receiver started on :50202\n\n");
 
-    // ── 計測ループ ────────────────────────────────────────────────────────────
+    // ── 計測ルーチE────────────────────────────────────────────────────────────
     std::vector<PerSecStats> history;
     history.reserve(g_duration_s + 5);
 
@@ -298,7 +297,7 @@ int main(int argc, char** argv) {
         bool     alive   = g_vid0_alive.load();
         uint64_t age_ms  = alive ? (uint64_t)(1000.0f / std::max(fps, 1.0f)) : 9999;
 
-        // thermal は 10 秒ごとに ADB 問い合わせ (ADB を毎秒叩かない)
+        // thermal は 10 秒ごとに ADB 問い合わぁE(ADB を毎秒叩かなぁE
         static ThermalLevel last_thermal = ThermalLevel::UNKNOWN;
         if (t % 10 == 1) {
             last_thermal = query_thermal();
@@ -308,7 +307,7 @@ int main(int argc, char** argv) {
         char res_buf[32] = "VID0-TCP";
         (void)res_buf;
 
-        // 異常カウント
+        // 異常カウンチE
         if (!alive) alive_failures++;
         if (last_thermal == ThermalLevel::SEVERE   ||
             last_thermal == ThermalLevel::CRITICAL  ||
@@ -332,8 +331,8 @@ int main(int argc, char** argv) {
     mon_running = false;
     if (mon_thread.joinable()) mon_thread.join();
 
-    // ── サマリー計算 ──────────────────────────────────────────────────────────
-    // 最初の 3 秒はウォームアップとして除外
+    // ── サマリー計箁E──────────────────────────────────────────────────────────
+    // 最初�E 3 秒�EウォームアチE�Eとして除夁E
     std::vector<float> fps_vals;
     for (auto& h : history) {
         if (h.elapsed_s > 3) fps_vals.push_back(h.fps);
@@ -346,11 +345,11 @@ int main(int argc, char** argv) {
     }
     uint64_t total_frames = g_vid0_frames.load();
 
-    // ── 判定 ─────────────────────────────────────────────────────────────────
+    // ── 判宁E─────────────────────────────────────────────────────────────────
     bool p_fps     = avg_fps >= 28.0f;
     bool p_alive   = alive_failures == 0;
     bool p_thermal = severe_count == 0;
-    // Phase C 実装済み: Monitor Lane FPS delta + dual VDS チェック
+    // Phase C 実裁E��み: Monitor Lane FPS delta + dual VDS チェチE��
     uint64_t mon_frames = g_monitor_frames.load();
     float mon_fps = (g_duration_s > 3) ? (float)mon_frames / (float)(g_duration_s - 3) : 0.0f;
     float vid0_fps_check = (g_duration_s > 3) ? (float)g_vid0_frames.load() / (float)(g_duration_s - 3) : 0.0f;
@@ -381,8 +380,8 @@ int main(int argc, char** argv) {
     printf("  dual_vds_ok         : %s     %s (monitor UDP received)\n",
            p_vds ? "true" : "false", p_vds ? "PASS" : "FAIL");
     printf("\n");
-    printf("[C0 Gate] %s\n", all ? "C0_PASS — Phase C 着手条件を満たした"
-                                  : "C0_FAIL — 上記の FAIL 項目を解消してから Phase C へ進むこと");
+    printf("[C0 Gate] %s\n",
+           all ? "C0_PASS - ready for Phase C" : "C0_FAIL - fix failed checks before Phase C");
     fflush(stdout);
 
 #ifdef _WIN32

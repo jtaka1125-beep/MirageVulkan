@@ -1,0 +1,92 @@
+Test project C:/MirageWork/MirageVulkan/build
+      Start  1: VulkanVideoTest
+ 1/33 Test  #1: VulkanVideoTest ..................   Passed    0.16 sec
+      Start  2: H264ParserTest
+ 2/33 Test  #2: H264ParserTest ...................   Passed    0.01 sec
+      Start  3: E2EDecodeTest
+ 3/33 Test  #3: E2EDecodeTest ....................   Passed    0.19 sec
+      Start  4: EventBusTest
+ 4/33 Test  #4: EventBusTest .....................   Passed    0.01 sec
+      Start  5: Vid0ParserTest
+ 5/33 Test  #5: Vid0ParserTest ...................   Passed    0.01 sec
+      Start  6: AdbSecurityTest
+ 6/33 Test  #6: AdbSecurityTest ..................   Passed    0.01 sec
+      Start  7: AoaHidTest
+ 7/33 Test  #7: AoaHidTest .......................   Passed    0.01 sec
+      Start  8: MiraProtocolTest
+ 8/33 Test  #8: MiraProtocolTest .................   Passed    0.01 sec
+      Start  9: FrameDispatcherTest
+ 9/33 Test  #9: FrameDispatcherTest ..............   Passed    0.01 sec
+      Start 10: RttBandwidthTest
+10/33 Test #10: RttBandwidthTest .................   Passed    0.79 sec
+      Start 11: MirrorReceiverTest
+11/33 Test #11: MirrorReceiverTest ...............   Passed    0.01 sec
+      Start 12: HybridSenderTest
+12/33 Test #12: HybridSenderTest .................   Passed    0.01 sec
+      Start 13: GuiLogicTest
+13/33 Test #13: GuiLogicTest .....................   Passed    0.01 sec
+      Start 14: ResultTest
+14/33 Test #14: ResultTest .......................   Passed    0.01 sec
+      Start 15: RouteControllerTest
+15/33 Test #15: RouteControllerTest ..............   Passed    0.01 sec
+      Start 16: AdbDeviceManagerTest
+16/33 Test #16: AdbDeviceManagerTest .............   Passed    0.01 sec
+      Start 17: UsbCommandTest
+17/33 Test #17: UsbCommandTest ...................   Passed    0.01 sec
+      Start 18: TemplateManifestTest
+18/33 Test #18: TemplateManifestTest .............   Passed    0.12 sec
+      Start 19: TemplateCaptureTest
+19/33 Test #19: TemplateCaptureTest ..............   Passed    0.01 sec
+      Start 20: UiFinderParseTest
+20/33 Test #20: UiFinderParseTest ................   Passed    0.06 sec
+      Start 21: ActionMapperTest
+21/33 Test #21: ActionMapperTest .................   Passed    0.01 sec
+      Start 22: VisionDecisionEngineTest
+Could not find executable C:/MirageWork/MirageVulkan/build/test_vision_decision_engine.exe
+Looked in the following places:
+C:/MirageWork/MirageVulkan/build/test_vision_decision_engine.exe
+C:/MirageWork/MirageVulkan/build/test_vision_decision_engine.exe.exe
+C:/MirageWork/MirageVulkan/build/Release/test_vision_decision_engine.exe
+C:/MirageWork/MirageVulkan/build/Release/test_vision_decision_engine.exe.exe
+C:/MirageWork/MirageVulkan/build/Debug/test_vision_decision_engine.exe
+C:/MirageWork/MirageVulkan/build/Debug/test_vision_decision_engine.exe.exe
+C:/MirageWork/MirageVulkan/build/MinSizeRel/test_vision_decision_engine.exe
+C:/MirageWork/MirageVulkan/build/MinSizeRel/test_vision_decision_engine.exe.exe
+C:/MirageWork/MirageVulkan/build/RelWithDebInfo/test_vision_decision_engine.exe
+C:/MirageWork/MirageVulkan/build/RelWithDebInfo/test_vision_decision_engine.exe.exe
+C:/MirageWork/MirageVulkan/build/Deployment/test_vision_decision_engine.exe
+C:/MirageWork/MirageVulkan/build/Deployment/test_vision_decision_engine.exe.exe
+C:/MirageWork/MirageVulkan/build/Development/test_vision_decision_engine.exe
+C:/MirageWork/MirageVulkan/build/Development/test_vision_decision_engine.exe.exe
+Unable to find executable: C:/MirageWork/MirageVulkan/build/test_vision_decision_engine.exe
+22/33 Test #22: VisionDecisionEngineTest .........***Not Run   0.00 sec
+      Start 23: FrameAnalyzerUnitTest
+23/33 Test #23: FrameAnalyzerUnitTest ............   Passed    0.02 sec
+      Start 24: AIE2ETest
+24/33 Test #24: AIE2ETest ........................   Passed    0.11 sec
+      Start 25: TemplateVersioningTest
+25/33 Test #25: TemplateVersioningTest ...........   Passed    0.02 sec
+      Start 26: TemplateStoreTest
+26/33 Test #26: TemplateStoreTest ................   Passed    0.01 sec
+      Start 27: WinUsbCheckerTest
+27/33 Test #27: WinUsbCheckerTest ................   Passed    0.02 sec
+      Start 28: AIImprovementsNQRTest
+28/33 Test #28: AIImprovementsNQRTest ............   Passed    0.01 sec
+      Start 29: AiJpegReceiverTest
+29/33 Test #29: AiJpegReceiverTest ...............   Passed    0.02 sec
+      Start 30: BandwidthMonitorTest
+30/33 Test #30: BandwidthMonitorTest .............   Passed    1.77 sec
+      Start 31: DeviceTransformTest
+31/33 Test #31: DeviceTransformTest ..............   Passed    0.01 sec
+      Start 32: ConfigLoaderTest
+32/33 Test #32: ConfigLoaderTest .................   Passed    0.01 sec
+      Start 33: FrameAnalyzerTest
+33/33 Test #33: FrameAnalyzerTest ................   Passed    0.16 sec
+
+97% tests passed, 1 tests failed out of 33
+
+Total Test time (real) =   3.73 sec
+
+The following tests FAILED:
+	 22 - VisionDecisionEngineTest (Not Run)
+Errors while running CTest

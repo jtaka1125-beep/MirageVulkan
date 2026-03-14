@@ -25,9 +25,9 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
         AOA_PID_ACCESSORY_AUDIO,
         AOA_PID_ACCESSORY_AUDIO_ADB
     };
-    // Note: After AOA switch, ALL devices use Google VID (0x18D1) + AOA PIDs.
-    // MediaTek PID_201C/2005 are ADB/RNDIS modes, NOT AOA - they need AOA switch
-    // to re-enumerate as VID_18D1 devices.
+    // Note: Standard Android devices re-enumerate to Google VID (0x18D1) + AOA PIDs after switch.
+    // MediaTek exception: VID=0x0E8D/PID=0x201C stays at MTK VID even in AOA mode.
+    // PID=0x2005 is RNDIS+ADB, never AOA-switchable via libusb.
 
     bool found_any = false;
     std::vector<libusb_device*> android_devices;
@@ -47,6 +47,14 @@ bool MultiUsbCommandSender::find_and_open_all_devices(bool allow_wait) {
                     break;
                 }
             }
+            continue;
+        }
+
+        // MTK (VID=0x0E8D) does NOT re-enumerate to Google VID after AOA switch.
+        // PID=0x201C = AOA+ADB composite - treat as already-switched AOA device.
+        // Do NOT add to android_devices or switch will be sent again on every rescan.
+        if (desc.idVendor == 0x0E8D && desc.idProduct == 0x201C) {
+            aoa_devices_to_open.push_back({dev, desc.idProduct});
             continue;
         }
 

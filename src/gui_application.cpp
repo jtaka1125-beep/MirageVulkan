@@ -1223,4 +1223,25 @@ void GuiApplication::dumpFreezeStats() {
     logInfo(oss.str());
 }
 
+// =============================================================================
+// Hardware ID Resolution
+// =============================================================================
+
+std::string GuiApplication::resolveHardwareId(const std::string& device_id) const {
+    std::lock_guard<std::mutex> lock(devices_mutex_);
+    auto it = devices_.find(device_id);
+    if (it != devices_.end() && !it->second.hardware_id.empty()) {
+        return it->second.hardware_id;
+    }
+    return "";
+}
+
+void GuiApplication::setDeviceHardwareId(const std::string& id, const std::string& hw_id) {
+    std::lock_guard<std::mutex> lock(devices_mutex_);
+    auto it = devices_.find(id);
+    if (it != devices_.end()) {
+        it->second.hardware_id = hw_id;
+    }
+}
+
 } // namespace mirage::gui

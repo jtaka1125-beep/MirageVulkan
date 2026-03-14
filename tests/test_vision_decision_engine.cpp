@@ -159,7 +159,7 @@ TEST_F(VisionStateTransitionTest, ConfirmedToCooldown) {
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::CONFIRMED);
 
     // アクション実行通知 → COOLDOWN
-    engine.notifyActionExecuted(dev, makeTime(3100));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(3100));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::COOLDOWN);
 }
 
@@ -176,7 +176,7 @@ TEST_F(VisionStateTransitionTest, CooldownToIdle) {
     engine.update(dev, matches, makeTime(1000));
     engine.update(dev, matches, makeTime(2000));
     engine.update(dev, matches, makeTime(3000));
-    engine.notifyActionExecuted(dev, makeTime(3100));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(3100));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::COOLDOWN);
 
     // cooldown_ms=2000 なので、5100msではまだCOOLDOWN
@@ -237,7 +237,7 @@ TEST_F(VisionStateTransitionTest, ErrorRecoveryToIdleOnAction) {
     engine.update(dev, err, makeTime(1000));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::ERROR_RECOVERY);
 
-    engine.notifyActionExecuted(dev, makeTime(1500));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(1500));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::IDLE);
 }
 
@@ -339,7 +339,7 @@ TEST_F(VisionDebounceTest, CooldownSuppression) {
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::CONFIRMED);
 
     // COOLDOWN遷移
-    engine.notifyActionExecuted(dev, makeTime(1100));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(1100));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::COOLDOWN);
 
     // COOLDOWN中のマッチはshould_act=false
@@ -367,7 +367,7 @@ TEST_F(VisionDebounceTest, DebounceWindowDuplicateElimination) {
     auto d1 = engine.update(dev, matches, makeTime(1020));
     EXPECT_TRUE(d1.should_act);
 
-    engine.notifyActionExecuted(dev, makeTime(1050));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(1050));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::COOLDOWN);
 
     // COOLDOWN中 (1050 + 1000 = 2050) → 抑制
@@ -405,7 +405,7 @@ TEST_F(VisionDebounceTest, IsDebounceQuery) {
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::CONFIRMED);
 
     // notifyActionExecutedでCOOLDOWN + デバウンスマップに記録
-    engine.notifyActionExecuted(dev, makeTime(1050));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(1050));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::COOLDOWN);
 
     // デバウンスウィンドウ内 (1050 + 500 = 1550)
@@ -496,7 +496,7 @@ TEST_F(VisionConfigTest, CooldownMsChange) {
     engine.update(dev, matches, makeTime(1020));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::CONFIRMED);
 
-    engine.notifyActionExecuted(dev, makeTime(1050));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(1050));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::COOLDOWN);
 
     // 500ms経過前: まだCOOLDOWN (1050 + 500 = 1550)
@@ -599,7 +599,7 @@ TEST_F(VisionMultiDeviceTest, DeviceACooldownDeviceBConfirmed) {
     engine.update("devA", matches, makeTime(1000));
     engine.update("devA", matches, makeTime(2000));
     EXPECT_EQ(engine.getDeviceState("devA"), VisionState::CONFIRMED);
-    engine.notifyActionExecuted("devA", makeTime(2100));
+    engine.notifyActionExecuted("devA", 0, 0, makeTime(2100));
     EXPECT_EQ(engine.getDeviceState("devA"), VisionState::COOLDOWN);
 
     // デバイスB: CONFIRMED
@@ -776,7 +776,7 @@ TEST_F(VisionEdgeCaseTest, ResetAll) {
 // ---------------------------------------------------------------------------
 TEST_F(VisionEdgeCaseTest, NotifyUnknownDevice) {
     VisionDecisionEngine engine(cfg);
-    engine.notifyActionExecuted("nonexistent", makeTime(1000));
+    engine.notifyActionExecuted("nonexistent", 0, 0, makeTime(1000));
     EXPECT_EQ(engine.getDeviceState("nonexistent"), VisionState::IDLE);
 }
 
@@ -876,7 +876,7 @@ TEST_F(VisionEdgeCaseTest, FullLifecycle) {
     EXPECT_TRUE(d.should_act);
 
     // → COOLDOWN
-    engine.notifyActionExecuted(dev, makeTime(2100));
+    engine.notifyActionExecuted(dev, 0, 0, makeTime(2100));
     EXPECT_EQ(engine.getDeviceState(dev), VisionState::COOLDOWN);
 
     // → IDLE (cooldown_ms=1000経過)
@@ -967,7 +967,7 @@ TEST_F(EwmaTest, EwmaDecaysOnNoMatch) {
     std::vector<VisionMatch> none;
 
     engine.update(dev, ms, T(100));    // ewma=1.0, confirmed
-    engine.notifyActionExecuted(dev, T(110));
+    engine.notifyActionExecuted(dev, 0, 0, T(110));
 
     // cooldown passes (500ms)
     engine.update(dev, none, T(700));  // no match: ewma decays
@@ -990,7 +990,7 @@ TEST_F(EwmaTest, EwmaResetsOnTemplateSwitch) {
 
     engine.update(dev, ms1, T(100));  // ewma_a=0.5
     engine.update(dev, ms1, T(200));  // ewma_a=0.75 → confirmed
-    engine.notifyActionExecuted(dev, T(210));
+    engine.notifyActionExecuted(dev, 0, 0, T(210));
 
     // cooldown passes, then switch template
     engine.update(dev, ms2, T(800));  // ewma resets to 0, new template

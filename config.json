@@ -17,11 +17,19 @@
     "ai": {
         "enabled": true,
         "templates_dir": "C:/MirageWork/MirageVulkan/templates",
-        "default_threshold": 0.65,
+        "default_threshold": 0.90,
         "enable_multi_scale": false,
         "vde_confirm_count": 3,
         "vde_cooldown_ms": 2000,
-        "vde_debounce_window_ms": 500
+        "vde_debounce_window_ms": 500,
+        "vde_enable_layer3": true,
+        "vde_layer3_no_match_ms": 5000,
+        "vde_layer3_no_match_frames": 150,
+        "vde_layer3_stuck_frames": 300,
+        "vde_layer3_cooldown_ms": 30000,
+        "enable_verify": true,
+        "verify_delay_ms": 500,
+        "verify_timeout_ms": 2000
     },
     "paths": {
         "templates_dir": "C:/MirageWork/MirageVulkan/templates"

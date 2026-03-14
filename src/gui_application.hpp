@@ -54,6 +54,7 @@ enum class DeviceStatus {
 
 struct DeviceInfo {
     std::string id;
+    std::string hardware_id;  // ADB hardware_id for command routing (may differ from id)
     std::string name;
     DeviceStatus status = DeviceStatus::Disconnected;
     
@@ -121,6 +122,7 @@ struct DeviceInfo {
     DeviceInfo& operator=(const DeviceInfo& o) {
         if (this == &o) return *this;
         id = o.id;
+        hardware_id = o.hardware_id;
         name = o.name;
         status = o.status;
         aoa_version = o.aoa_version;
@@ -402,6 +404,11 @@ public:
     mirage::vk::VulkanContext* vulkanContext() { return vk_context_.get(); }
     void requestQuit() { running_ = false; }
 
+    // Resolve GUI device_id to hardware_id for command routing
+    std::string resolveHardwareId(const std::string& device_id) const;
+    // Set hardware_id on a registered DeviceInfo
+    void setDeviceHardwareId(const std::string& id, const std::string& hw_id);
+
     // ADB Device Manager integration
     void setAdbDeviceManager(::gui::AdbDeviceManager* manager) { adb_manager_ = manager; }
 
@@ -548,6 +555,15 @@ private:
     };
     ViewRect main_view_rect_;  // Set in renderCenterPanel, used in processMainViewClick
     mutable std::mutex view_rect_mutex_;  // Protects main_view_rect_
+
+    // Nav bar button rects (set in renderCenterPanel, used in onMouseUp for hit-test)
+    // No mutex needed: render thread writes, main thread reads; slight lag is acceptable
+    struct NavBarRects {
+        float back_x = 0, home_x = 0, task_x = 0;
+        float y = 0, btn_w = 0, h = 0;
+        bool valid = false;
+    };
+    NavBarRects nav_bar_rects_;
     
     // Callbacks
     TapCallback tap_callback_;

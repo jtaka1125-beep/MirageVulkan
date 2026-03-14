@@ -1,0 +1,51 @@
+811:    void addTemplateAction(const std::string& template_id, const std::string& action) {
+1339:    void registerTextAction(const std::string& keyword, const std::string& action) {
+1403:    void removeTextAction(const std::string& keyword) {
+1467:    bool hasTextAction(const std::string& keyword) const {
+1979:    mirage::Result<void> initialize(const AIConfig& config,
+2893:    void shutdown() {
+3237:    void setTemplateStore(TemplateStore* store) {
+3381:    void setFrameAnalyzer([[maybe_unused]] mirage::FrameAnalyzer* analyzer) {
+3589:    mirage::Result<void> loadTemplatesFromDir(const std::string& dir) {
+4488:    bool addTemplate(const std::string& name, const uint8_t* rgba, int w, int h) {
+5077:    void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+5089:    void registerLayer2Template(
+5395:    void clearTemplates() {
+8513:    void resetStats() {
+8609:    void reset() {
+8801:    void resetDeviceVision(const std::string& device_id) {
+8865:    void resetAllVision() {
+8885:    void ignoreTemplate(const std::string& template_id) {
+8888:    void unignoreTemplate(const std::string& template_id) {
+8891:    bool isTemplateIgnored(const std::string& template_id) const {
+8897:    void clearIgnoredTemplates() {
+8900:    void saveIgnoredTemplates(const std::string& path) const {
+8903:    void loadIgnoredTemplates(const std::string& path) {
+8908:    void notifyUserInput(const std::string& device_id) {
+9198:    void setVDEConfig(const AIEngine::VDEConfig& cfg) {
+9422:    void setJitterConfig(int min_ms, int max_ms) {
+9542:    void registerOcrKeyword(const std::string& kw, const std::string& act) {
+9634:    void setDeviceAdaptation(const std::string& id, const mirage::ai::DeviceAdaptation& a) {
+9698:    mirage::ai::DeviceAdaptation getDeviceAdaptation(const std::string& id) const {
+9778:    void clearDeviceAdaptation(const std::string& id) {
+9842:    void removeOcrKeyword(const std::string& kw) {
+10058:    void startHotReload() {
+10506:    void stopHotReload() {
+10618:    void startAsyncWorkers(std::function<void(int,const AIAction&)>* cb_ptr) {
+11214:    void stopAsyncWorkers() {
+11342:    bool isAsyncEnabled() const { return async_enabled_.load(); }
+11374:    void enqueueAsyncFrame(int slot, const uint8_t* rgba, int width, int height, bool can_send) {
+11476:    void setHotReload(bool enable, int interval_ms) {
+11588:    void flushPendingActions(const ActionCallback& cb) {
+12167:    void set_canonical_only(bool v) { canonical_only_.store(v); }
+12168:    bool get_canonical_only() const { return canonical_only_.load(); }
+12299:    void onFrameReady(const mirage::FrameReadyEvent& evt) {
+15395:    void cacheMatches(const std::vector<mirage::vk::VkMatchResult>& vk_results) {
+15923:    mirage::Result<void> addTemplateFromFile(const std::string& path, const std::string& name,
+17635:    bool initialized_ = false;
+17748:    mirage::FrameAnalyzer* frame_analyzer_ = nullptr;
+17812:    mirage::vk::VulkanContext* vk_ctx_ = nullptr;
+18169:    mirage::SubscriptionHandle frame_sub_;
+18905:    bool can_send = can_send_callback_ ? can_send_callback_() : true;
+18921:    auto action = impl_->processFrame(slot, rgba, width, height, can_send);
+20163:    bool can_send = can_send_callback_ ? can_send_callback_() : true;

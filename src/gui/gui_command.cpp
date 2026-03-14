@@ -165,8 +165,16 @@ static std::string resolveToUsbId(const std::string& device_id) {
         }
     }
 
+    // Last resort: first connected AOA device
+    if (g_hybrid_cmd) {
+        auto first = g_hybrid_cmd->get_first_device_id();
+        if (!first.empty()) {
+            MLOG_INFO("cmd", "Resolved %s -> %s (first USB AOA)", device_id.c_str(), first.c_str());
+            return first;
+        }
+    }
     MLOG_INFO("cmd", "Could not resolve %s to USB ID", device_id.c_str());
-    return device_id;  // Return as-is, let caller handle
+    return device_id;
 
 }
 
@@ -418,16 +426,22 @@ void sendSwipeCommand(const std::string& device_id, int x1, int y1, int x2, int 
 // =============================================================================
 
 void sendKeyCommand(const std::string& device_id, int keycode) {
+    // Resolve UI logical ID -> hardware_id
+    std::string hw_id = device_id;
+    if (g_gui) {
+        std::string resolved = g_gui->resolveHardwareId(device_id);
+        if (!resolved.empty()) hw_id = resolved;
+    }
     if (g_hybrid_cmd) {
-        std::string usb_id = resolveToUsbId(device_id);
+        std::string usb_id = resolveToUsbId(hw_id);
         if (g_hybrid_cmd->is_device_connected(usb_id)) {
             g_hybrid_cmd->send_key(usb_id, keycode);
             MLOG_INFO("cmd", "USB key %d sent to %s", keycode, usb_id.c_str());
             return;
         }
-        if (g_hybrid_cmd->has_wifi_sender(device_id)) {
-            g_hybrid_cmd->send_key(device_id, keycode);
-            MLOG_INFO("cmd", "WiFi TCP key %d sent to %s", keycode, device_id.c_str());
+        if (g_hybrid_cmd->has_wifi_sender(hw_id)) {
+            g_hybrid_cmd->send_key(hw_id, keycode);
+            MLOG_INFO("cmd", "WiFi TCP key %d sent to %s", keycode, hw_id.c_str());
             return;
         }
     }

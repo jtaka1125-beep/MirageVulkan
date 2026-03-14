@@ -10958,8 +10958,6 @@ public:
                         slot_frame_size_[job.slot].hardware_id = job.device_id;
                     }
 
-                    // Bug fix: skip processing if AI disabled mid-flight
-                    if (!ai_processing_enabled_.load(std::memory_order_relaxed)) continue;
                     auto action = processFrame(job.slot, rgba_ptr, job.width, job.height, job.can_send);
 
 
@@ -12250,10 +12248,6 @@ private:
 
 
     std::atomic<bool>                                   async_enabled_{false};
-    std::atomic<bool>                                   ai_processing_enabled_{true};  // Bug fix: propagated from AIEngine::enabled_
-public:
-    void setAiProcessingEnabled(bool v) { ai_processing_enabled_.store(v, std::memory_order_relaxed); }
-private:
 
 
 
@@ -12370,9 +12364,6 @@ private:
 
 
     void onFrameReady(const mirage::FrameReadyEvent& evt) {
-        // Bug fix: respect AIEngine::enabled_ flag via propagated atomic
-        if (!ai_processing_enabled_.load(std::memory_order_relaxed)) return;
-
 
 
 
@@ -18851,13 +18842,6 @@ void AIEngine::clearTemplates() { impl_->clearTemplates(); }
 
 
 
-
-void AIEngine::setEnabled(bool enabled) {
-    enabled_ = enabled;
-    if (impl_) {
-        impl_->setAiProcessingEnabled(enabled);
-    }
-}
 
 AIAction AIEngine::processFrame(int slot, const uint8_t* rgba, int width, int height) {
 

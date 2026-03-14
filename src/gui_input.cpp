@@ -6,6 +6,7 @@
 #include "gui/gui_state.hpp"
 #include "gui_application.hpp"
 #include "hybrid_command_sender.hpp"
+#include "gui/gui_command.hpp"
 
 #include <imgui.h>
 #include <cmath>
@@ -119,44 +120,76 @@ void GuiApplication::onMouseUp(int button, int x, int y) {
     if (button >= 0 && button < 3) {
         mouse_down_[button] = false;
     }
-    
-    if (button == 0) {  // Left button
-        auto layout = calculateLayout();
-        
-        // Check for drag (swipe)
-        int dx = x - drag_start_x_;
-        int dy = y - drag_start_y_;
-        float drag_dist = std::sqrt(static_cast<float>(dx * dx + dy * dy));
 
-        if (drag_dist > layout_constants::MIN_SWIPE_DISTANCE) {
-            // This was a swipe
-            processSwipe(drag_start_x_, drag_start_y_, x, y);
-        } else {
-            // This was a tap/click
-            // Re-eval panel from mouse position (hovered_panel_ may be None)
-            MLOG_INFO("input","click x=%d y=%d lw=%.0f cw=%.0f panel=%d",x,y,layout.left_w,layout.center_w,(int)hovered_panel_);
-            if (x < (int)layout.left_w) hovered_panel_ = HoveredPanel::Left;
-            else if (x < (int)(layout.left_w + layout.center_w)) hovered_panel_ = HoveredPanel::Center;
-            else hovered_panel_ = HoveredPanel::Right;
+    if (button != 0) {
+        return;
+    }
 
-            if (hovered_panel_ == HoveredPanel::Center) {
-                // Both x and y should be relative to center panel
-                processMainViewClick(
-                    x - static_cast<int>(layout.center_x),
-                    y,  // y is window-relative (header height handled in processMainViewClick)
-                    false
-                );
-            } else if (hovered_panel_ == HoveredPanel::Right) {
-                processSubViewClick(
-                    x - static_cast<int>(layout.right_x),
-                    y,
-                    false
-                );
+    auto layout = calculateLayout();
+
+    int dx = x - drag_start_x_;
+    int dy = y - drag_start_y_;
+    float drag_dist = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+    if (drag_dist > layout_constants::MIN_SWIPE_DISTANCE) {
+        processSwipe(drag_start_x_, drag_start_y_, x, y);
+        is_dragging_ = false;
+        return;
+    }
+
+    MLOG_INFO("input", "click x=%d y=%d lw=%.0f cw=%.0f panel=%d",
+              x, y, layout.left_w, layout.center_w, static_cast<int>(hovered_panel_));
+    if (x < static_cast<int>(layout.left_w)) {
+        hovered_panel_ = HoveredPanel::Left;
+    } else if (x < static_cast<int>(layout.left_w + layout.center_w)) {
+        hovered_panel_ = HoveredPanel::Center;
+    } else {
+        hovered_panel_ = HoveredPanel::Right;
+    }
+
+    if (hovered_panel_ == HoveredPanel::Center) {
+        if (nav_bar_rects_.valid) {
+            float wx = static_cast<float>(x);
+            float wy = static_cast<float>(y);
+            float nr_y = nav_bar_rects_.y;
+            float nr_h = nav_bar_rects_.h;
+            float bw   = nav_bar_rects_.btn_w;
+            if (wy >= nr_y && wy < nr_y + nr_h) {
+                std::string dev_id;
+                {
+                    std::lock_guard<std::mutex> lock(devices_mutex_);
+                    dev_id = main_device_id_;
+                }
+                if (!dev_id.empty()) {
+                    if (wx >= nav_bar_rects_.back_x && wx < nav_bar_rects_.back_x + bw) {
+                        MLOG_INFO("navbtn", "Back hit x=%.0f y=%.0f", wx, wy);
+                        ::mirage::gui::command::sendKeyCommand(dev_id, 4);
+                    } else if (wx >= nav_bar_rects_.home_x && wx < nav_bar_rects_.home_x + bw) {
+                        MLOG_INFO("navbtn", "Home hit x=%.0f y=%.0f", wx, wy);
+                        ::mirage::gui::command::sendKeyCommand(dev_id, 3);
+                    } else if (wx >= nav_bar_rects_.task_x && wx < nav_bar_rects_.task_x + bw) {
+                        MLOG_INFO("navbtn", "Task hit x=%.0f y=%.0f", wx, wy);
+                        ::mirage::gui::command::sendKeyCommand(dev_id, 187);
+                    }
+                }
+                is_dragging_ = false;
+                return;
             }
         }
-        
-        is_dragging_ = false;
+
+        processMainViewClick(
+            x - static_cast<int>(layout.center_x),
+            y,
+            false
+        );
+    } else if (hovered_panel_ == HoveredPanel::Right) {
+        processSubViewClick(
+            x - static_cast<int>(layout.right_x),
+            y,
+            false
+        );
     }
+
+    is_dragging_ = false;
 }
 
 void GuiApplication::onMouseDoubleClick(int button, int x, int y) {

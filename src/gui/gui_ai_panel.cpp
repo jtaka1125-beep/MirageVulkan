@@ -155,7 +155,7 @@ static void renderEngineControl() {
 
     // ON/OFF トグル
     bool enabled = g_ai_enabled.load();
-    if (ImGui::Checkbox("AI Engine##toggle", &enabled)) {
+    if (ImGui::Checkbox(u8"AI有効##toggle", &enabled)) {
         g_ai_engine->setEnabled(enabled);
         g_ai_enabled.store(enabled);
     }
@@ -742,7 +742,7 @@ void renderAIPanel() {
         first_frame = false;
     }
 
-    if (!ImGui::Begin("AI Engine", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::Begin(u8"AIエンジン", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return;
     }
@@ -752,37 +752,37 @@ void renderAIPanel() {
 
     // セクション1.5: OCR Keyword Mapping (改善N)
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("OCR Keyword Mapping")) {
+    if (ImGui::CollapsingHeader(u8"OCRキーワード設定")) {
         renderOcrKeywordEditor();
     }
 
     // セクション2: VisionDecisionEngine (スライダー付き)
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("Vision Decision Engine")) {
+    if (ImGui::CollapsingHeader(u8"判定エンジン (VDE)")) {
         renderVisionStates();
     }
 
     // セクション3: テンプレートマッチ一覧 (スコアグラフ付き)
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("Template Matches", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(u8"テンプレート一覧", ImGuiTreeNodeFlags_DefaultOpen)) {
         renderMatchResults();
     }
 
     // セクション4: LearningMode
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("Learning Mode")) {
+    if (ImGui::CollapsingHeader(u8"学習モード")) {
         renderLearningMode();
     }
 
     // Section 5: AI Stream
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("AI Stream (JPEG)")) {
+    if (ImGui::CollapsingHeader(u8"AIストリーム (JPEG)")) {
         renderAiStreamControl();
     }
 
     // Section 6: Match Overlay
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("Match Overlay")) {
+    if (ImGui::CollapsingHeader(u8"検出オーバーレイ")) {
         renderOverlaySettings();
     }
 

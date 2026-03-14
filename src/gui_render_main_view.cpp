@@ -76,47 +76,55 @@ void GuiApplication::renderCenterPanel() {
                                "%.0f ms", main_device.latency_ms);
         }
 
-        // Device view with space reserved for navigation bar
-        const float nav_bar_h = 36.0f;
-        ImVec2 avail = ImGui::GetContentRegionAvail();
-        float view_x = ImGui::GetCursorScreenPos().x;
-        float view_y = ImGui::GetCursorScreenPos().y;
-        float view_h = avail.y - nav_bar_h - 4.0f;
-        if (view_h < 100.0f) view_h = avail.y;  // Fallback if too small
-
-        renderDeviceView(main_device, view_x, view_y, avail.x, view_h, true, false);
-
-        // === Navigation Bar (Back / Home / Recents) ===
-        if (view_h < avail.y) {  // Only show if space was reserved
+        // === Navigation Bar ABOVE device view (avoids Windows taskbar overlap) ===
+        const float nav_bar_h = 32.0f;
+        {
             float btn_w = 70.0f;
-            float bar_w = avail.x;
+            float bar_w = ImGui::GetContentRegionAvail().x;
             float total_btn_w = btn_w * 3 + 8.0f * 2;
-            float start_x = view_x + (bar_w - total_btn_w) / 2.0f;
-
-            ImGui::SetCursorScreenPos(ImVec2(start_x, view_y + view_h + 2.0f));
+            float nav_x = ImGui::GetCursorScreenPos().x + (bar_w - total_btn_w) / 2.0f;
+            float nav_y = ImGui::GetCursorScreenPos().y;
 
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.30f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.45f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.15f, 0.20f, 1.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-
+            ImGui::SetCursorScreenPos(ImVec2(nav_x, nav_y));
             if (ImGui::Button(u8"< Back", ImVec2(btn_w, nav_bar_h - 4.0f))) {
-                mirage::gui::command::sendKeyCommand(main_device.id, 4);  // KEYCODE_BACK
+                MLOG_INFO("navbtn", "Back button clicked: %s", main_device.id.c_str());
+                ::mirage::gui::command::sendKeyCommand(main_device.id, 4);
             }
             ImGui::SameLine(0, 8.0f);
-
             if (ImGui::Button(u8"o Home", ImVec2(btn_w, nav_bar_h - 4.0f))) {
-                mirage::gui::command::sendKeyCommand(main_device.id, 3);  // KEYCODE_HOME
+                MLOG_INFO("navbtn", "Home button clicked: %s", main_device.id.c_str());
+                ::mirage::gui::command::sendKeyCommand(main_device.id, 3);
             }
             ImGui::SameLine(0, 8.0f);
-
             if (ImGui::Button(u8"= Task", ImVec2(btn_w, nav_bar_h - 4.0f))) {
-                mirage::gui::command::sendKeyCommand(main_device.id, 187);  // KEYCODE_APP_SWITCH
+                MLOG_INFO("navbtn", "Task button clicked: %s", main_device.id.c_str());
+                ::mirage::gui::command::sendKeyCommand(main_device.id, 187);
             }
-
             ImGui::PopStyleVar();
             ImGui::PopStyleColor(3);
+
+            // Save rect for onMouseUp hit-test
+            nav_bar_rects_.y      = nav_y;
+            nav_bar_rects_.h      = nav_bar_h - 4.0f;
+            nav_bar_rects_.back_x = nav_x;
+            nav_bar_rects_.home_x = nav_x + btn_w + 8.0f;
+            nav_bar_rects_.task_x = nav_x + (btn_w + 8.0f) * 2;
+            nav_bar_rects_.btn_w  = btn_w;
+            nav_bar_rects_.valid  = true;
         }
+
+        // Device view takes remaining space
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float view_x = ImGui::GetCursorScreenPos().x;
+        float view_y = ImGui::GetCursorScreenPos().y;
+        float view_h = avail.y;
+
+        renderDeviceView(main_device, view_x, view_y, avail.x, view_h, true, false);
+
     } else {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         ImVec2 textSize = ImGui::CalcTextSize(u8"\u30c7\u30d0\u30a4\u30b9\u672a\u9078\u629e");

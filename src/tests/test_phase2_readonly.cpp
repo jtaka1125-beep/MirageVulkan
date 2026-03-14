@@ -1,23 +1,22 @@
 // =============================================================================
 // test_phase2_readonly.cpp  v1
-// Phase 2 read-only接続テスト — standalone (mirage_core不要)
+// Phase 2 read-only接続テスチE Estandalone (mirage_core不要E
 //
-// 検証項目:
-//   1. PixelSampler  — 10固定座標のRGB値がフレーム間でぶれないか
-//   2. PatchMatcher  — 初回フレームから切り出したパッチのCPU NCC
-//                      (位置±3px以内 / score ≥ 0.90 が合格ライン)
-//   3. RegionDiff    — 4固定矩形領域のフレーム間差分量
-//                      (UI静止時に 0〜2% が正常、急変は座標系崩壊の兆候)
-//   4. CoordSystem   — width=600, height=1000 固定を毎フレーム確認
+// 検証頁E��:
+//   1. PixelSampler   E10固定座標�ERGB値がフレーム間でぶれなぁE��
+//   2. PatchMatcher   E初回フレームから刁E��出したパッチ�ECPU NCC
+//                      (位置±3px以冁E/ score ≥ 0.90 が合格ライン)
+//   3. RegionDiff     E4固定矩形領域のフレーム間差刁E��
+//                      (UI静止時に 0、E% が正常、急変�E座標系崩壊�E允E��E
+//   4. CoordSystem    Ewidth=600, height=1000 固定を毎フレーム確誁E
 //
 // 合格条件:
 //   pixel_stddev < 5.0   (静止画素の標準偏差)
-//   match_score ≥ 0.90   (NCCスコア安定)
+//   match_score ≥ 0.90   (NCCスコア安宁E
 //   match_offset ≤ 3px   (位置ズレ)
-//   region_diff < 5.0%   (静止領域の変化率)
-//   coord_ok = PASS      (解像度固定)
+//   region_diff < 5.0%   (静止領域の変化玁E
+//   coord_ok = PASS      (解像度固宁E
 // =============================================================================
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../stb_image_write.h"
 #include "../stb_image.h"
 
@@ -49,40 +48,40 @@
 
 using clk = std::chrono::steady_clock;
 
-// ── 設定 ────────────────────────────────────────────────────────────────────
+// ── 設宁E────────────────────────────────────────────────────────────────────
 static const char* WORK_DIR      = "C:/MirageWork/MirageVulkan";
-static constexpr int TEST_SEC    = 30;   // テスト時間
-static constexpr int SAMPLE_INTERVAL = 3; // 3フレームに1回評価（CPU負荷軽減）
+static constexpr int TEST_SEC    = 30;   // チE��ト時閁E
+static constexpr int SAMPLE_INTERVAL = 3; // 3フレームに1回評価�E�EPU負荷軽減！E
 
-// 固定サンプリング座標 (Canonical 600×1000 基準)
-// 画面上の代表的な位置 — ステータスバー/中央/ボタン付近
+// 固定サンプリング座樁E(Canonical 600ÁE000 基溁E
+// 画面上�E代表皁E��位置  EスチE�Eタスバ�E/中央/ボタン付迁E
 static constexpr std::array<std::pair<int,int>, 10> SAMPLE_POINTS = {{
-    {50,  25},    // 左上ステータスバー付近
+    {50,  25},    // 左上スチE�Eタスバ�E付迁E
     {300, 25},    // 上中央
-    {550, 25},    // 右上
-    {50,  300},   // 左中上
-    {300, 300},   // 中央上
-    {550, 300},   // 右中上
+    {550, 25},    // 右丁E
+    {50,  300},   // 左中丁E
+    {300, 300},   // 中央丁E
+    {550, 300},   // 右中丁E
     {50,  500},   // 左中央
     {300, 500},   // 中央
     {550, 500},   // 右中央
     {300, 750},   // 下中央
 }};
 
-// パッチ設定: 位置(200,400), サイズ64×64
+// パッチ設宁E 位置(200,400), サイズ64ÁE4
 static constexpr int PATCH_X = 200, PATCH_Y = 350, PATCH_W = 64, PATCH_H = 64;
-// NCC 検索範囲: パッチ中心から±SEARCH_RADIUS px
+// NCC 検索篁E��: パッチ中忁E��ら±SEARCH_RADIUS px
 static constexpr int SEARCH_RADIUS = 6;
 
-// 比較矩形 4つ (x, y, w, h)
+// 比輁E��形 4つ (x, y, w, h)
 static constexpr std::array<std::array<int,4>, 4> REGIONS = {{
-    {0,   0,   600, 30},    // ステータスバー全体
-    {0,   30,  600, 150},   // 上部コンテンツ
-    {0,   425, 600, 150},   // 中央コンテンツ
-    {0,   850, 600, 150},   // 下部コンテンツ
+    {0,   0,   600, 30},    // スチE�Eタスバ�E全佁E
+    {0,   30,  600, 150},   // 上部コンチE��チE
+    {0,   425, 600, 150},   // 中央コンチE��チE
+    {0,   850, 600, 150},   // 下部コンチE��チE
 }};
 
-// ── 統計ヘルパー ─────────────────────────────────────────────────────────────
+// ── 統計�Eルパ�E ─────────────────────────────────────────────────────────────
 struct RunStats {
     std::vector<float> values;
     void add(float v) { values.push_back(v); }
@@ -125,7 +124,7 @@ static void rgba_to_gray_patch(const uint8_t* rgba, int frame_w,
     }
 }
 
-// patch テンプレートと候補位置のNCC
+// patch チE��プレートと候補位置のNCC
 static float ncc(const std::vector<float>& tmpl, int tw, int th,
                  const std::vector<float>& search, int sx, int sy, int sw) {
     float mean_t = 0, mean_s = 0;
@@ -184,7 +183,7 @@ static NCCResult match_patch(
     return {best, (sx0 + bx) - PATCH_X, (sy0 + by) - PATCH_Y};
 }
 
-// ── 領域差分 ─────────────────────────────────────────────────────────────────
+// ── 領域差刁E─────────────────────────────────────────────────────────────────
 static float region_diff_pct(
     const uint8_t* a, const uint8_t* b, int w,
     int rx, int ry, int rw, int rh, int threshold = 15)
@@ -201,7 +200,7 @@ static float region_diff_pct(
     return 100.0f * diff / total;
 }
 
-// ── グローバル状態 ────────────────────────────────────────────────────────────
+// ── グローバル状慁E────────────────────────────────────────────────────────────
 static std::atomic<uint64_t> g_udp_rx{0};
 static std::atomic<uint32_t> g_last_id{0};
 static std::atomic<uint32_t> g_last_w{0};
@@ -225,7 +224,7 @@ struct FrameStats {
 
 static std::mutex              g_stats_mutex;
 static FrameStats              g_stats;
-static std::vector<float>      g_tmpl_gray;    // 参照パッチのグレースケール
+static std::vector<float>      g_tmpl_gray;    // 参�Eパッチ�Eグレースケール
 static bool                    g_tmpl_ready = false;
 static std::vector<uint8_t>    g_prev_frame;   // region diff用 前フレーム
 static int                     g_prev_w = 0, g_prev_h = 0;
@@ -242,7 +241,7 @@ static void on_frame(mirage::x1::CanonicalFrame frame) {
     std::lock_guard<std::mutex> lk(g_stats_mutex);
     g_stats.total++;
 
-    // 座標系チェック
+    // 座標系チェチE��
     if (frame.width != (uint32_t)mirage::x1::CANONICAL_W ||
         frame.height != (uint32_t)mirage::x1::CANONICAL_H)
         g_stats.coord_always_ok = false;
@@ -256,11 +255,11 @@ static void on_frame(mirage::x1::CanonicalFrame frame) {
     const uint8_t* rgba = frame.rgba.get();
     int w = (int)frame.width, h = (int)frame.height;
 
-    // ── 参照パッチ初期化（最初の1回） ─────────────────────────────────────
+    // ── 参�Eパッチ�E期化�E�最初�E1回！E─────────────────────────────────────
     if (!g_tmpl_ready) {
         rgba_to_gray_patch(rgba, w, PATCH_X, PATCH_Y, PATCH_W, PATCH_H, g_tmpl_gray);
         g_tmpl_ready = true;
-        // 参照パッチをPNG保存
+        // 参�EパッチをPNG保孁E
         std::vector<uint8_t> patch_rgba((size_t)(PATCH_W * PATCH_H * 4));
         for (int r = 0; r < PATCH_H; ++r)
             memcpy(patch_rgba.data() + r * PATCH_W * 4,
@@ -291,7 +290,7 @@ static void on_frame(mirage::x1::CanonicalFrame frame) {
         g_stats.ncc_offset_y.add((float)abs(res.offset_y));
     }
 
-    // ── 3. RegionDiff (前フレームと比較) ──────────────────────────────────
+    // ── 3. RegionDiff (前フレームと比輁E ──────────────────────────────────
     if (!g_prev_frame.empty() && g_prev_w == w && g_prev_h == h) {
         for (int i = 0; i < 4; ++i) {
             auto& R = REGIONS[i];
@@ -301,14 +300,14 @@ static void on_frame(mirage::x1::CanonicalFrame frame) {
         }
     }
 
-    // 前フレームを保存 (copy)
+    // 前フレームを保孁E(copy)
     size_t bytes = (size_t)(w * h * 4);
     if (g_prev_frame.size() != bytes) g_prev_frame.resize(bytes);
     memcpy(g_prev_frame.data(), rgba, bytes);
     g_prev_w = w; g_prev_h = h;
 }
 
-// ── エントリポイント ──────────────────────────────────────────────────────────
+// ── エントリポインチE──────────────────────────────────────────────────────────
 int main(int /*argc*/, char** /*argv*/) {
 #ifdef _WIN32
     WSADATA wsa{};
@@ -340,7 +339,7 @@ int main(int /*argc*/, char** /*argv*/) {
     mirage::x1::CanonicalFrameAssembler assembler;
     assembler.set_callback(on_frame);
 
-    // ── 1秒ごとログスレッド ──────────────────────────────────────────────────
+    // ── 1秒ごとログスレチE�� ──────────────────────────────────────────────────
     auto t_start = clk::now();
     std::atomic<bool> stop_stats{false};
     uint64_t prev_total = 0;
@@ -367,7 +366,7 @@ int main(int /*argc*/, char** /*argv*/) {
             float ncc_oy = g_stats.ncc_offset_y.values.empty() ? 0 :
                            g_stats.ncc_offset_y.values.back();
 
-            // region diff 平均（最新5件）
+            // region diff 平坁E��最新5件�E�E
             auto recent_mean = [](const RunStats& rs) -> float {
                 if (rs.values.empty()) return 0;
                 int n = (int)std::min((size_t)5, rs.values.size());
@@ -427,7 +426,7 @@ int main(int /*argc*/, char** /*argv*/) {
     printf("\n=== Final Analysis ===\n");
     printf("frames_total   : %llu\n",  (unsigned long long)g_stats.total);
     printf("frames_sampled : %llu\n",  (unsigned long long)g_stats.sampled);
-    printf("coord_system   : %s\n",    g_stats.coord_always_ok ? "PASS (600x1000 固定)" : "FAIL");
+    printf("coord_system   : %s\n",    g_stats.coord_always_ok ? "PASS (600x1000 固宁E" : "FAIL");
     printf("\n");
 
     // ── PixelSampler Summary ──────────────────────────────────────────────────
@@ -444,7 +443,7 @@ int main(int /*argc*/, char** /*argv*/) {
         printf("  (%4d,%4d): stddev R=%.2f G=%.2f B=%.2f  max=%.2f  %s\n",
                px, py, sr, sg, sb, max_s, ok ? "OK" : "UNSTABLE");
     }
-    printf("PixelSampler: %s\n\n", pixel_ok ? "PASS" : "FAIL (一部ピクセルが揺れている)");
+    printf("PixelSampler: %s\n\n", pixel_ok ? "PASS" : "FAIL (一部ピクセルが揺れてぁE��)");
 
     // ── PatchMatcher Summary ──────────────────────────────────────────────────
     printf("=== PatchMatcher NCC (合格: score≥0.90, offset≤3px) ===\n");
@@ -455,8 +454,8 @@ int main(int /*argc*/, char** /*argv*/) {
         float std_s  = g_stats.ncc_score.stddev();
         float max_ox = g_stats.ncc_offset_x.max_val();
         float max_oy = g_stats.ncc_offset_y.max_val();
-        // オフセット量自体ではなく「オフセットの安定性」で判定
-        // 固定オフセットは座標系崩壊ではなくテンプレート選択の問題
+        // オフセチE��量�E体ではなく「オフセチE��の安定性」で判宁E
+        // 固定オフセチE��は座標系崩壊ではなくテンプレート選択�E問顁E
         float std_ox = g_stats.ncc_offset_x.stddev();
         float std_oy = g_stats.ncc_offset_y.stddev();
         ncc_ok = (mean_s >= 0.90f && std_ox < 0.5f && std_oy < 0.5f);
@@ -478,7 +477,7 @@ int main(int /*argc*/, char** /*argv*/) {
         "MidContent (y=425-575)",
         "BotContent (y=850-1000)"
     };
-    printf("=== RegionDiff (フレーム間差分, 参考値) ===\n");
+    printf("=== RegionDiff (フレーム間差刁E 参老E��) ===\n");
     for (int i = 0; i < 4; ++i) {
         if (g_stats.region_diff[i].values.empty()) continue;
         printf("  %-30s mean=%.2f%%  max=%.2f%%  stddev=%.2f%%\n",
@@ -489,13 +488,12 @@ int main(int /*argc*/, char** /*argv*/) {
     }
     printf("\n");
 
-    // ── Phase 2 判定 ──────────────────────────────────────────────────────────
+    // ── Phase 2 判宁E──────────────────────────────────────────────────────────
     bool pass = g_stats.coord_always_ok && pixel_ok && ncc_ok &&
                 g_stats.sampled >= 50;
 
     printf("[Phase 2 Read-Only] %s\n",
-           pass ? "PASS - 座標系固定・テンプレート安定・ピクセル安定" :
-                  "FAIL - 詳細は上記を確認");
+           pass ? "PASS - checks passed" : "FAIL - see details above");
     fflush(stdout);
 
 #ifdef _WIN32

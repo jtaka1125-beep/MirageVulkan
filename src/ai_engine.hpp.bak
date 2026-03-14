@@ -719,7 +719,7 @@ public:
 
 
 
-    void setEnabled(bool enabled);
+    void setEnabled(bool enabled) { enabled_ = enabled; }
 
 
 

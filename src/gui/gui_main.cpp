@@ -222,8 +222,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     }
 
 #ifdef USE_AI
-    initializeAI();
-    mirage::gui::ai_panel::init();
+    // Check config.ai.enabled directly (g_ai_enabled may not be initialized yet)
+    if (mirage::config::getConfig().ai.enabled) {
+        initializeAI();
+    } else {
+        MLOG_INFO("gui", "AI disabled by config (ai.enabled=false), skipping initializeAI()");
+    }
+    mirage::gui::ai_panel::init();  // AI panel always shows (allows enabling AI at runtime)
 #endif
 
 #ifdef MIRAGE_OCR_ENABLED

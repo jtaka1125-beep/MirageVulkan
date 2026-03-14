@@ -4,6 +4,7 @@
 #include "mirage_context.hpp"
 #include "stream/monitor_lane_client.hpp"
 #include "mirage_log.hpp"
+#include "config_loader.hpp"
 
 namespace mirage {
 
@@ -21,6 +22,11 @@ void MirageContext::initialize() {
     slot_active.fill(false);
     registered_usb_devices.clear();
     multi_devices_added.clear();
+
+    // Apply config.json ai.enabled to runtime state
+    auto& config = mirage::config::getConfig();
+    ai_enabled.store(config.ai.enabled);
+    MLOG_INFO("ctx", "ai_enabled initialized from config: %s", config.ai.enabled ? "true" : "false");
 
     // Macro API サーバー起動
     macro_api_server = std::make_unique<MacroApiServer>();

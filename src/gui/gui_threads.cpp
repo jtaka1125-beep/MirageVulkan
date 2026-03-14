@@ -478,6 +478,7 @@ void deviceUpdateThread() {
             for (const auto& dev : devices) {
                 if (!g_multi_devices_added[dev.hardware_id]) {
                     gui->addDevice(dev.hardware_id, dev.display_name);
+                    gui->setDeviceHardwareId(dev.hardware_id, dev.hardware_id);
                     mirage::dispatcher().registerDevice(dev.hardware_id, dev.display_name, "adb");
                     g_multi_devices_added[dev.hardware_id] = true;
                     MLOG_INFO("threads", "Early device registration: %s [%s]",

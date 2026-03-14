@@ -53,6 +53,24 @@ static std::atomic<int64_t> g_switch_to_usb_ms{0};    // timestamp of last WiFi-
 // =========================================================================
 // Helper: Auto-start MirageCapture ScreenCaptureService on one device
 // =========================================================================
+// Auto-start AccessoryIoService for AOA command reception (Back/Home/Recent keys)
+static void autoStartAccessoryService(const std::string& adb_id, const std::string& display_name) {
+    if (!g_adb_manager) return;
+
+    // Check if already running
+    std::string svc_check = g_adb_manager->adbCommand(adb_id,
+        "shell dumpsys activity services com.mirage.accessory");
+    if (svc_check.find("AccessoryIoService") != std::string::npos) {
+        MLOG_INFO("gui", "AccessoryIoService already running on %s", display_name.c_str());
+        return;
+    }
+
+    MLOG_INFO("gui", "Auto-starting AccessoryIoService on %s (%s)", display_name.c_str(), adb_id.c_str());
+    g_adb_manager->adbCommand(adb_id,
+        "shell am start -n com.mirage.accessory/.ui.AccessoryActivity");
+    MLOG_INFO("gui", "AccessoryActivity started on %s", display_name.c_str());
+}
+
 static void autoStartCaptureService(const std::string& adb_id, const std::string& display_name, int tcp_port = 0) {
     if (!g_adb_manager) return;
 
@@ -335,6 +353,7 @@ bool initializeMultiReceiver() {
     // === Auto-start MirageCapture ScreenCaptureService on all devices ===
     for (const auto& dev : g_adb_manager->getUniqueDevices()) {
         autoStartCaptureService(dev.preferred_adb_id, dev.display_name, dev.assigned_tcp_port);
+        autoStartAccessoryService(dev.preferred_adb_id, dev.display_name);
     }
 
     auto devices = g_adb_manager->getUniqueDevices();
@@ -579,8 +598,14 @@ void initializeHybridCommand() {
         if (auto* fb = g_hybrid_cmd->get_adb_fallback()) {
             auto devs = g_adb_manager->getUniqueDevices();
             if (!devs.empty()) {
-                fb->set_device(devs[0].preferred_adb_id);
-                MLOG_INFO("gui", "ADB fallback device set: %s", devs[0].preferred_adb_id.c_str());
+                // Prefer WiFi ADB for fallback (always available; USB may be AOA-only)
+                std::string fb_id = devs[0].preferred_adb_id;
+                if (!devs[0].wifi_connections.empty()) {
+                    fb_id = devs[0].wifi_connections[0];
+                }
+                fb->set_device(fb_id);
+                MLOG_INFO("gui", "ADB fallback device set: %s (preferred=%s)",
+                          fb_id.c_str(), devs[0].preferred_adb_id.c_str());
             }
         }
         auto device_ids = g_hybrid_cmd->get_device_ids();
@@ -915,6 +940,7 @@ static void onStartMirroring() {
     auto all_devs = g_adb_manager->getUniqueDevices();
     for (const auto& dev : all_devs) {
         autoStartCaptureService(dev.preferred_adb_id, dev.display_name, dev.assigned_tcp_port);
+        autoStartAccessoryService(dev.preferred_adb_id, dev.display_name);
     }
     if (gui) gui->logInfo(u8"Mirroring started on " + std::to_string(all_devs.size()) + u8" device(s)");
 }
@@ -935,6 +961,7 @@ static void registerEventBusSubscriptions() {
                 return;
             }
             gui->addDevice(e.device_id, e.display_name);
+            gui->setDeviceHardwareId(e.device_id, e.device_id);
             gui->logInfo(u8"Device connected: " + e.display_name);
         });
     sub_connect.release();
@@ -1155,6 +1182,7 @@ void initializeAI() {
     ai_config.verify_delay_ms = ai_cfg.verify_delay_ms;
     ai_config.verify_timeout_ms = ai_cfg.verify_timeout_ms;
 
+    MLOG_INFO("gui", "gui_init: enable_verify from config = %d", ai_cfg.enable_verify ? 1 : 0);
     // Continuous Learning v2
     ai_config.clv2_enabled              = ai_cfg.clv2_enabled;
     ai_config.clv2_confidence_threshold = ai_cfg.clv2_confidence_threshold;

@@ -1,0 +1,391 @@
+﻿[  1%] Building CXX object CMakeFiles/mirage_core.dir/src/ai_engine.cpp.obj
+cmake : C:\MirageWork\MirageVulkan\src\ai_engine.cpp: In member function 'void mirage::ai::AIEngine::Impl::addLayer2Det
+ection(int, int, const std::string&, int, int, int)':
+At line:1 char:1
++ cmake --build C:\MirageWork\MirageVulkan\build --config Release 2>&1  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\MirageWork\M...nt, int, int)'::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+C:\MirageWork\MirageVulkan\src\ai_engine.cpp:5116:33: warning: unused parameter 'x' [-Wunused-parameter]
+ 5116 |     void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+      |                             ~~~~^
+C:\MirageWork\MirageVulkan\src\ai_engine.cpp:5116:40: warning: unused parameter 'y' [-Wunused-parameter]
+ 5116 |     void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+      |                                    ~~~~^
+C:\MirageWork\MirageVulkan\src\ai_engine.cpp:5116:88: warning: unused parameter 'frame_w' [-Wunused-parameter]
+ 5116 |     void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+      |                                                                                    ~~~~^~~~~~~
+C:\MirageWork\MirageVulkan\src\ai_engine.cpp:5116:101: warning: unused parameter 'frame_h' [-Wunused-parameter]
+ 5116 |     void addLayer2Detection(int x, int y, const std::string& label, int layer_num, int frame_w, int frame_h) {
+      |                                                                                                 ~~~~^~~~~~~
+C:\MirageWork\MirageVulkan\src\ai_engine.cpp: In member function 'mirage::ai::AIAction mirage::ai::AIEngine::Impl::tryO
+crFallback(int, const std::string&, bool)':
+C:\MirageWork\MirageVulkan\src\ai_engine.cpp:14211:33: warning: unused parameter 'slot' [-Wunused-parameter]
+14211 |     AIAction tryOcrFallback(int slot, const std::string& device_id, bool can_send) {
+      |                             ~~~~^~~~
+[  2%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_main.cpp.obj
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp:13: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   13 | #pragma comment(lib, "ws2_32.lib")
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp:17:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp: In function 'LONG mirageUnhandledExceptionFilter(EXCEPTION_POINTERS*)'
+:
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp:42:71: warning: unused parameter 'ep' [-Wunused-parameter]
+   42 | static LONG WINAPI mirageUnhandledExceptionFilter(EXCEPTION_POINTERS* ep) {
+      |                                                   ~~~~~~~~~~~~~~~~~~~~^~
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp: In function 'int WinMain(HINSTANCE, HINSTANCE, LPSTR, int)':
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp:61:90: warning: cast between incompatible function types from 'FARPROC'
+ {aka 'long long int (*)()'} to 'FP' {aka 'unsigned int (*)(unsigned int)'} [-Wcast-function-type]
+   61 |     { HMODULE h=LoadLibraryA("winmm.dll"); if(h){ typedef UINT(__stdcall*FP)(UINT); FP f=(FP)GetProcAddress(h,"
+timeBeginPeriod"); if(f)f(1); } }
+      |                                                                                          ^~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp:50:45: warning: unused parameter 'nCmdShow' [-Wunused-parameter]
+   50 |                    LPSTR /*lpCmdLine*/, int nCmdShow) {
+      |                                         ~~~~^~~~~~~~
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp: At global scope:
+C:\MirageWork\MirageVulkan\src\gui\gui_main.cpp:42:20: warning: 'LONG mirageUnhandledExceptionFilter(EXCEPTION_POINTERS
+*)' defined but not used [-Wunused-function]
+   42 | static LONG WINAPI mirageUnhandledExceptionFilter(EXCEPTION_POINTERS* ep) {
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[  2%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_init.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/stream/monitor_lane_client.hpp:21,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_init.cpp:9:
+C:/MirageWork/MirageVulkan/src/stream/monitor_receiver.hpp:24: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   24 |   #pragma comment(lib, "ws2_32.lib")
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_init.cpp:10:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  3%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_command.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_command.cpp:9:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  3%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_window.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_window.cpp:6:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  4%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_threads.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_threads.cpp:8:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  4%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_device_control.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_device_control.cpp:9:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  5%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_ai_panel.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_ai_panel.cpp:12:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+C:\MirageWork\MirageVulkan\src\gui\gui_ai_panel.cpp:419:33: warning: null character(s) preserved in literal
+  419 |                 new_ignore[0] = ' ';
+      |                                 ^
+In lambda function,
+    inlined from 'constexpr _Res std::__invoke_impl(__invoke_other, _Fn&&, _Args&& ...) [with _Res = void; _Fn = mirage
+::gui::ai_panel::ensureCapSub()::<lambda(const mirage::LearningCaptureEvent&)>&; _Args = {const mirage::LearningCapture
+Event&}]' at C:/msys64/mingw64/include/c++/15.2.0/bits/invoke.h:63:36,
+    inlined from 'constexpr std::enable_if_t<((bool)is_invocable_r_v<_Res, _Callable, _Args ...>), _Res> std::__invoke_
+r(_Callable&&, _Args&& ...) [with _Res = void; _Callable = mirage::gui::ai_panel::ensureCapSub()::<lambda(const mirage:
+:LearningCaptureEvent&)>&; _Args = {const mirage::LearningCaptureEvent&}]' at C:/msys64/mingw64/include/c++/15.2.0/bits
+/invoke.h:113:28,
+    inlined from 'static _Res std::_Function_handler<_Res(_ArgTypes ...), _Functor>::_M_invoke(const std::_Any_data&, _
+ArgTypes&& ...) [with _Res = void; _Functor = mirage::gui::ai_panel::ensureCapSub()::<lambda(const mirage::LearningCapt
+ureEvent&)>; _ArgTypes = {const mirage::LearningCaptureEvent&}]' at C:/msys64/mingw64/include/c++/15.2.0/bits/std_funct
+ion.h:292:30:
+C:\MirageWork\MirageVulkan\src\gui\gui_ai_panel.cpp:136:32: warning: 'char* strncpy(char*, const char*, size_t)' output
+ may be truncated copying 63 bytes from a string of length 63 [-Wstringop-truncation]
+  136 |                         strncpy(s_cap.name, next, sizeof(s_cap.name) - 1);
+      |                         ~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[  5%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/gui_state.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui\gui_state.cpp:7:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  5%] Building CXX object CMakeFiles/mirage_core.dir/src/gui/mirage_context.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.cpp:4:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+In file included from C:/MirageWork/MirageVulkan/src/stream/monitor_lane_client.hpp:21,
+                 from C:\MirageWork\MirageVulkan\src\gui\mirage_context.cpp:5:
+C:/MirageWork/MirageVulkan/src/stream/monitor_receiver.hpp:24: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   24 |   #pragma comment(lib, "ws2_32.lib")
+[  5%] Building CXX object CMakeFiles/mirage_core.dir/src/gui_render.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui/mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui/gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui_render.cpp:6:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  6%] Building CXX object CMakeFiles/mirage_core.dir/src/gui_render_left_panel.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui/mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui/gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui_render_left_panel.cpp:6:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+C:\MirageWork\MirageVulkan\src\gui_render_left_panel.cpp: In member function 'void mirage::gui::GuiApplication::renderL
+eftPanel()':
+C:\MirageWork\MirageVulkan\src\gui_render_left_panel.cpp:459:75: warning: spurious trailing '%' in format [-Wformat=]
+  459 |                     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "--%");
+      |                                                                           ^
+[  6%] Building CXX object CMakeFiles/mirage_core.dir/src/gui_render_main_view.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui/mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui/gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui_render_main_view.cpp:6:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  7%] Building CXX object CMakeFiles/mirage_core.dir/src/gui_render_dialogs.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui/mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui/gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui_render_dialogs.cpp:6:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  8%] Building CXX object CMakeFiles/mirage_core.dir/src/gui_input.cpp.obj
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui/mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\gui/gui_state.hpp:19,
+                 from C:\MirageWork\MirageVulkan\src\gui_input.cpp:6:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+[  8%] Building CXX object CMakeFiles/mirage_core.dir/src/macro_api_server.cpp.obj
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:11: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   11 | #pragma comment(lib, "ws2_32.lib")
+In file included from C:/MirageWork/MirageVulkan/src/adb_device_manager.hpp:8,
+                 from C:/MirageWork/MirageVulkan/src/tcp_video_receiver.hpp:7,
+                 from C:\MirageWork\MirageVulkan\src\gui/mirage_context.hpp:28,
+                 from C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:22:
+C:/MirageWork/MirageVulkan/src/auto_setup.hpp:19: warning: ignoring '#pragma comment ' [-Wunknown-pragmas]
+   19 | #pragma comment(lib, "ws2_32.lib")
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp: In member function 'std::string mirage::MacroApiServer::handle_nor
+malize_coords(const std::string&, int, int, int, int)':
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1014:5: warning: this 'if' clause does not guard... [-Wmisleading-i
+ndentation]
+ 1014 |     if (x_norm < 0.0) x_norm = 0.0; if (x_norm > 1.0) x_norm = 1.0;
+      |     ^~
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1014:37: note: ...this statement, but the latter is misleadingly in
+dented as if it were guarded by the 'if'
+ 1014 |     if (x_norm < 0.0) x_norm = 0.0; if (x_norm > 1.0) x_norm = 1.0;
+      |                                     ^~
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1015:5: warning: this 'if' clause does not guard... [-Wmisleading-i
+ndentation]
+ 1015 |     if (y_norm < 0.0) y_norm = 0.0; if (y_norm > 1.0) y_norm = 1.0;
+      |     ^~
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1015:37: note: ...this statement, but the latter is misleadingly in
+dented as if it were guarded by the 'if'
+ 1015 |     if (y_norm < 0.0) y_norm = 0.0; if (y_norm > 1.0) y_norm = 1.0;
+      |                                     ^~
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp: In member function 'std::string mirage::MacroApiServer::handle_res
+olve_coords(const std::string&, double, double, const std::string&)':
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1042:5: warning: this 'if' clause does not guard... [-Wmisleading-i
+ndentation]
+ 1042 |     if (x_norm < 0.0) x_norm = 0.0; if (x_norm > 1.0) x_norm = 1.0;
+      |     ^~
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1042:37: note: ...this statement, but the latter is misleadingly in
+dented as if it were guarded by the 'if'
+ 1042 |     if (x_norm < 0.0) x_norm = 0.0; if (x_norm > 1.0) x_norm = 1.0;
+      |                                     ^~
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1043:5: warning: this 'if' clause does not guard... [-Wmisleading-i
+ndentation]
+ 1043 |     if (y_norm < 0.0) y_norm = 0.0; if (y_norm > 1.0) y_norm = 1.0;
+      |     ^~
+C:\MirageWork\MirageVulkan\src\macro_api_server.cpp:1043:37: note: ...this statement, but the latter is misleadingly in
+dented as if it were guarded by the 'if'
+ 1043 |     if (y_norm < 0.0) y_norm = 0.0; if (y_norm > 1.0) y_norm = 1.0;
+      |                                     ^~
+[ 35%] Built target mirage_core
+[ 38%] Built target shaders
+[ 38%] Linking CXX executable mirage_vulkan.exe
+[ 38%] Built target mirage_vulkan
+[ 39%] Linking CXX executable mirage_vulkan_debug_dev.exe
+[ 39%] Built target mirage_vulkan_debug
+[ 39%] Building CXX object CMakeFiles/gtest.dir/third_party/googletest/googletest-1.14.0/googletest/src/gtest-all.cc.obj
+[ 39%] Building CXX object CMakeFiles/gtest.dir/third_party/googletest/googletest-1.14.0/googletest/src/gtest_main.cc.obj
+[ 40%] Linking CXX static library libgtest.a
+[ 40%] Built target gtest
+[ 41%] Building CXX object CMakeFiles/test_vulkan_video.dir/tests/test_vulkan_video.cpp.obj
+[ 41%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/video/vulkan_video_decoder.cpp.obj
+[ 42%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/video/vulkan_video_session.cpp.obj
+[ 42%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/video/vulkan_video_dpb.cpp.obj
+[ 43%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/video/vulkan_video_decode_impl.cpp.obj
+[ 43%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/video/h264_parser.cpp.obj
+[ 43%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/video/yuv_converter.cpp.obj
+[ 44%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/vulkan/vulkan_context.cpp.obj
+[ 44%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/vulkan/vulkan_compute.cpp.obj
+[ 45%] Building CXX object CMakeFiles/test_vulkan_video.dir/src/vulkan/vulkan_image.cpp.obj
+[ 45%] Linking CXX executable test_vulkan_video.exe
+[ 45%] Built target test_vulkan_video
+[ 46%] Building CXX object CMakeFiles/test_h264_parser.dir/tests/test_h264_parser.cpp.obj
+[ 46%] Building CXX object CMakeFiles/test_h264_parser.dir/src/video/h264_parser.cpp.obj
+[ 47%] Linking CXX executable test_h264_parser.exe
+[ 47%] Built target test_h264_parser
+[ 48%] Building CXX object CMakeFiles/test_e2e_decode.dir/tests/test_e2e_decode.cpp.obj
+[ 48%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/video/vulkan_video_decoder.cpp.obj
+[ 49%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/video/vulkan_video_session.cpp.obj
+[ 49%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/video/vulkan_video_dpb.cpp.obj
+[ 50%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/video/vulkan_video_decode_impl.cpp.obj
+[ 50%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/video/h264_parser.cpp.obj
+[ 51%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/video/yuv_converter.cpp.obj
+[ 51%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/vulkan/vulkan_context.cpp.obj
+[ 51%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/vulkan/vulkan_compute.cpp.obj
+[ 52%] Building CXX object CMakeFiles/test_e2e_decode.dir/src/vulkan/vulkan_image.cpp.obj
+[ 52%] Linking CXX executable test_e2e_decode.exe
+[ 52%] Built target test_e2e_decode
+[ 53%] Building CXX object CMakeFiles/test_event_bus.dir/tests/test_event_bus.cpp.obj
+[ 53%] Linking CXX executable test_event_bus.exe
+[ 53%] Built target test_event_bus
+[ 53%] Building CXX object CMakeFiles/test_vid0_parser.dir/tests/test_vid0_parser.cpp.obj
+In file included from C:/msys64/mingw64/include/c++/15.2.0/string:53,
+                 from C:/msys64/mingw64/include/c++/15.2.0/bits/locale_classes.h:42,
+                 from C:/msys64/mingw64/include/c++/15.2.0/bits/ios_base.h:43,
+                 from C:/msys64/mingw64/include/c++/15.2.0/iomanip:47,
+                 from C:/MirageWork/MirageVulkan/third_party/googletest/googletest-1.14.0/googletest/include/gtest/gtes
+t.h:54,
+                 from C:\MirageWork\MirageVulkan\tests\test_vid0_parser.cpp:7:
+In function '_OutIter std::__copy_move_a2(_InIter, _Sent, _OutIter) [with bool _IsMove = true; _InIter = unsigned char*
+; _Sent = unsigned char*; _OutIter = unsigned char*]',
+    inlined from '_OI std::__copy_move_a1(_II, _II, _OI) [with bool _IsMove = true; _II = unsigned char*; _OI = unsigne
+d char*]' at C:/msys64/mingw64/include/c++/15.2.0/bits/stl_algobase.h:492:42,
+    inlined from '_OI std::__copy_move_a(_II, _II, _OI) [with bool _IsMove = true; _II = __gnu_cxx::__normal_iterator<u
+nsigned char*, vector<unsigned char> >; _OI = __gnu_cxx::__normal_iterator<unsigned char*, vector<unsigned char> >]' at
+ C:/msys64/mingw64/include/c++/15.2.0/bits/stl_algobase.h:500:31,
+    inlined from '_OI std::move(_II, _II, _OI) [with _II = __gnu_cxx::__normal_iterator<unsigned char*, vector<unsigned
+ char> >; _OI = __gnu_cxx::__normal_iterator<unsigned char*, vector<unsigned char> >]' at C:/msys64/mingw64/include/c++
+/15.2.0/bits/stl_algobase.h:674:38,
+    inlined from 'std::vector<_Tp, _Alloc>::iterator std::vector<_Tp, _Alloc>::_M_erase(iterator, iterator) [with _Tp =
+ unsigned char; _Alloc = std::allocator<unsigned char>]' at C:/msys64/mingw64/include/c++/15.2.0/bits/vector.tcc:201:6,
+    inlined from 'std::vector<_Tp, _Alloc>::iterator std::vector<_Tp, _Alloc>::erase(const_iterator, const_iterator) [w
+ith _Tp = unsigned char; _Alloc = std::allocator<unsigned char>]' at C:/msys64/mingw64/include/c++/15.2.0/bits/stl_vect
+or.h:1824:17,
+    inlined from 'mirage::video::ParseResult mirage::video::parseVid0Packets(std::vector<unsigned char>&)' at C:/Mirage
+Work/MirageVulkan/src/vid0_parser.hpp:90:21,
+    inlined from 'virtual void Vid0ParserTest_IncompletePacketWaits_Test::TestBody()' at C:\MirageWork\MirageVulkan\tes
+ts\test_vid0_parser.cpp:93:38:
+C:/msys64/mingw64/include/c++/15.2.0/bits/stl_algobase.h:426:32: warning: 'void* __builtin_memmove(void*, const void*, 
+long long unsigned int)' writing 262144 bytes into a region of size 58 overflows the destination [-Wstringop-overflow=]
+  426 |               __builtin_memmove(_GLIBCXX_TO_ADDR(__result),
+      |               ~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  427 |                                 _GLIBCXX_TO_ADDR(__first),
+      |                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+  428 |                                 __n * sizeof(*__first));
+      |                                 ~~~~~~~~~~~~~~~~~~~~~~~
+In file included from C:/msys64/mingw64/include/c++/15.2.0/x86_64-w64-mingw32/bits/c++allocator.h:33,
+                 from C:/msys64/mingw64/include/c++/15.2.0/bits/allocator.h:46,
+                 from C:/msys64/mingw64/include/c++/15.2.0/string:45:
+In member function '_Tp* std::__new_allocator<_Tp>::allocate(size_type, const void*) [with _Tp = unsigned char]',
+    inlined from 'static _Tp* std::allocator_traits<std::allocator<_CharT> >::allocate(allocator_type&, size_type) [wit
+h _Tp = unsigned char]' at C:/msys64/mingw64/include/c++/15.2.0/bits/alloc_traits.h:614:28,
+    inlined from 'std::_Vector_base<_Tp, _Alloc>::pointer std::_Vector_base<_Tp, _Alloc>::_M_allocate(std::size_t) [wit
+h _Tp = unsigned char; _Alloc = std::allocator<unsigned char>]' at C:/msys64/mingw64/include/c++/15.2.0/bits/stl_vector
+.h:387:33,
+    inlined from 'void std::vector<_Tp, _Alloc>::_M_range_initialize_n(_Iterator, _Sentinel, size_type) [with _Iterator
+ = __gnu_cxx::__normal_iterator<unsigned char*, std::vector<unsigned char> >; _Sentinel = __gnu_cxx::__normal_iterator<
+unsigned char*, std::vector<unsigned char> >; _Tp = unsigned char; _Alloc = std::allocator<unsigned char>]' at C:/msys6
+4/mingw64/include/c++/15.2.0/bits/stl_vector.h:1985:23,
+    inlined from 'void std::vector<_Tp, _Alloc>::_M_range_initialize(_ForwardIterator, _ForwardIterator, std::forward_i
+terator_tag) [with _ForwardIterator = __gnu_cxx::__normal_iterator<unsigned char*, std::vector<unsigned char> >; _Tp = 
+unsigned char; _Alloc = std::allocator<unsigned char>]' at C:/msys64/mingw64/include/c++/15.2.0/bits/stl_vector.h:1974:
+25,
+    inlined from 'std::vector<_Tp, _Alloc>::vector(_InputIterator, _InputIterator, const allocator_type&) [with _InputI
+terator = __gnu_cxx::__normal_iterator<unsigned char*, std::vector<unsigned char> >; <template-parameter-2-2> = void; _
+Tp = unsigned char; _Alloc = std::allocator<unsigned char>]' at C:/msys64/mingw64/include/c++/15.2.0/bits/stl_vector.h:
+751:23,
+    inlined from 'virtual void Vid0ParserTest_IncompletePacketWaits_Test::TestBody()' at C:\MirageWork\MirageVulkan\tes
+ts\test_vid0_parser.cpp:91:84:
+C:/msys64/mingw64/include/c++/15.2.0/bits/new_allocator.h:151:73: note: destination object of size 58 allocated by 'ope
+rator new'
+  151 |         return static_cast<_Tp*>(_GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp)));
+      |                                                                         ^
+[ 54%] Linking CXX executable test_vid0_parser.exe
+[ 54%] Built target test_vid0_parser
+[ 54%] Building CXX object CMakeFiles/test_adb_security.dir/tests/test_adb_security.cpp.obj
+[ 55%] Linking CXX executable test_adb_security.exe
+[ 55%] Built target test_adb_security
+[ 56%] Building CXX object CMakeFiles/test_aoa_hid.dir/tests/test_aoa_hid.cpp.obj
+[ 56%] Building CXX object CMakeFiles/test_aoa_hid.dir/src/aoa_hid_touch.cpp.obj
+[ 56%] Linking CXX executable test_aoa_hid.exe
+[ 56%] Built target test_aoa_hid
+[ 57%] Building CXX object CMakeFiles/test_mira_protocol.dir/tests/test_mira_protocol.cpp.obj
+[ 57%] Linking CXX executable test_mira_protocol.exe
+[ 57%] Built target test_mira_protocol
+[ 58%] Building CXX object CMakeFiles/test_frame_dispatcher.dir/tests/test_frame_dispatcher.cpp.obj
+[ 58%] Linking CXX executable test_frame_dispatcher.exe
+[ 58%] Built target test_frame_dispatcher
+[ 58%] Building CXX object CMakeFiles/test_rtt_bandwidth.dir/tests/test_rtt_bandwidth.cpp.obj
+[ 59%] Building CXX object CMakeFiles/test_rtt_bandwidth.dir/src/bandwidth_monitor.cpp.obj
+[ 59%] Linking CXX executable test_rtt_bandwidth.exe
+[ 59%] Built target test_rtt_bandwidth
+[ 60%] Building CXX object CMakeFiles/test_mirror_receiver.dir/tests/test_mirror_receiver.cpp.obj
+[ 60%] Linking CXX executable test_mirror_receiver.exe
+[ 60%] Built target test_mirror_receiver
+[ 60%] Building CXX object CMakeFiles/test_hybrid_sender.dir/tests/test_hybrid_sender.cpp.obj
+[ 60%] Linking CXX executable test_hybrid_sender.exe
+[ 60%] Built target test_hybrid_sender
+[ 61%] Building CXX object CMakeFiles/test_gui_logic.dir/tests/test_gui_logic.cpp.obj
+[ 61%] Linking CXX executable test_gui_logic.exe
+[ 61%] Built target test_gui_logic
+[ 62%] Building CXX object CMakeFiles/test_result.dir/tests/test_result.cpp.obj
+[ 62%] Linking CXX executable test_result.exe
+[ 62%] Built target test_result
+[ 63%] Building CXX object CMakeFiles/test_route_controller.dir/tests/test_route_controller.cpp.obj
+[ 63%] Building CXX object CMakeFiles/test_route_controller.dir/src/route_controller.cpp.obj
+[ 64%] Building CXX object CMakeFiles/test_route_controller.dir/src/bandwidth_monitor.cpp.obj
+[ 64%] Linking CXX executable test_route_controller.exe
+[ 64%] Built target test_route_controller
+[ 64%] Building CXX object CMakeFiles/test_adb_device_manager.dir/tests/test_adb_device_manager.cpp.obj
+[ 65%] Linking CXX executable test_adb_device_manager.exe
+[ 65%] Built target test_adb_device_manager
+[ 65%] Building CXX object CMakeFiles/test_usb_command.dir/tests/test_usb_command.cpp.obj
+[ 66%] Linking CXX executable test_usb_command.exe
+[ 66%] Built target test_usb_command
+[ 66%] Building CXX object CMakeFiles/test_template_manifest.dir/tests/test_template_manifest.cpp.obj
+[ 67%] Building CXX object CMakeFiles/test_template_manifest.dir/src/ai/template_manifest.cpp.obj
+[ 67%] Linking CXX executable test_template_manifest.exe
+[ 67%] Built target test_template_manifest
+[ 68%] Building CXX object CMakeFiles/test_template_capture.dir/tests/test_template_capture.cpp.obj
+[ 68%] Building CXX object CMakeFiles/test_template_capture.dir/src/ai/template_capture.cpp.obj
+[ 69%] Linking CXX executable test_template_capture.exe
+[ 69%] Built target test_template_capture
+[ 69%] Building CXX object CMakeFiles/test_ui_finder_parse.dir/tests/test_ui_finder_parse.cpp.obj
+[ 69%] Building CXX object CMakeFiles/test_ui_finder_parse.dir/src/ai/ui_finder.cpp.obj
