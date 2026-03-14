@@ -397,6 +397,17 @@ bool MirrorReceiver::get_latest_frame(MirrorFrame& out) {
 
 // SharedFrame version: O(1) shared_ptr copy, no rgba memcpy
 bool MirrorReceiver::get_latest_shared_frame(std::shared_ptr<mirage::SharedFrame>& out) {
+  // A-1: Prefer ring buffer path
+  if (ring_buffer_) {
+    gui::FrameMetrics metrics;
+    auto frame = ring_buffer_->pop_latest(&metrics);
+    if (frame) {
+      out = frame;
+      return true;
+    }
+    return false;
+  }
+  // Legacy fallback
   std::lock_guard<std::mutex> lock(frame_mtx_);
   if (!has_new_frame_ || !current_shared_frame_) return false;
   out = current_shared_frame_;  // O(1)
@@ -1362,11 +1373,16 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
     std::memcpy(buf.get(), rgba, frame_bytes);
     sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
-  current_shared_frame_ = sf;
+  current_shared_frame_ = sf;  // Legacy path (kept for backward compat)
   cur_width_    = width;
   cur_height_   = height;
   cur_frame_id_ = sf->frame_id;
   cur_pts_us_   = sf->pts_us;
+
+  // A-1: Push to ring buffer (primary path)
+  if (ring_buffer_) {
+    ring_buffer_->push(sf, gui::FrameRingBuffer::now_us());
+  }
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);
@@ -1375,6 +1391,10 @@ void MirrorReceiver::on_unified_frame(const uint8_t* rgba, int width, int height
   if (!frame_pool_ && frame_bytes > 0) {
     frame_pool_ = std::make_unique<FrameBufferPool>(frame_bytes, 8);
     MLOG_INFO("mirror", "FrameBufferPool initialized: %zu bytes x 8", frame_bytes);
+    if (!ring_buffer_) {
+      ring_buffer_ = std::make_unique<gui::FrameRingBuffer>(4);
+      MLOG_INFO("mirror", "FrameRingBuffer initialized: capacity=4");
+    }
   }
 
   static bool first_unified_frame = true;
@@ -1407,11 +1427,16 @@ void MirrorReceiver::on_decoded_frame(const uint8_t* rgba, int width, int height
     std::memcpy(buf.get(), rgba, frame_bytes);
     sf->rgba = std::shared_ptr<const uint8_t[]>(std::move(buf));
   }
-  current_shared_frame_ = sf;
+  current_shared_frame_ = sf;  // Legacy path (kept for backward compat)
   cur_width_    = width;
   cur_height_   = height;
   cur_frame_id_ = sf->frame_id;
   cur_pts_us_   = sf->pts_us;
+
+  // A-1: Push to ring buffer (primary path)
+  if (ring_buffer_) {
+    ring_buffer_->push(sf, gui::FrameRingBuffer::now_us());
+  }
 
   has_new_frame_ = true;
   frames_decoded_.fetch_add(1);

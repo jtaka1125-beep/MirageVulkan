@@ -11,6 +11,7 @@
 #include <queue>
 #include <condition_variable>
 #include <vulkan/vulkan.h>
+#include "frame_ring_buffer.hpp"
 
 namespace gui {
 
@@ -197,7 +198,8 @@ private:
   int      cur_height_   = 0;
   uint64_t cur_frame_id_ = 0;
   uint64_t cur_pts_us_   = 0;
-  std::shared_ptr<mirage::SharedFrame> current_shared_frame_;  // preferred
+  std::shared_ptr<mirage::SharedFrame> current_shared_frame_;  // preferred (legacy, kept for compat)
+  std::unique_ptr<gui::FrameRingBuffer> ring_buffer_;  // A-1: replaces overwrite model
   bool has_new_frame_ = false;
 
   // RTP depacketizer state

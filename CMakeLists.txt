@@ -484,6 +484,7 @@ set(COMM_SOURCES
 
 
     src/mirror_receiver.cpp
+    src/frame_ring_buffer.cpp
 
 
     src/hybrid_receiver.cpp
