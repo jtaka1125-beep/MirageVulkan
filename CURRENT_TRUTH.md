@@ -86,20 +86,24 @@ Vulkan GUI 表示
 
 **フレーム管理の実態**:
 - FrameBufferPoolが既存（malloc/freeオーバーヘッドほぼゼロ）
-- 上書きモデル: shared_ptrの差し替えのみ、古いフレームはrefcount=0で自動回収
-- GUI側が読みに来る前に次フレームが来ると前フレームはサイレントに消える（dropped framesカウントなし = A-1で追加予定）
+- **FrameRingBuffer** (A-1完了, commit `6954c2d`): capacity=4, mutex分離方式
+- GUI側: pop_latest()で最新フレーム取得（中間フレームはdropped計上）
+- Layer2: pop_next()でFIFO順取得も可能
+- 可観測性: 10秒毎にSTATS出力（pushed/popped/dropped/latency_d2e）
+- 定常レイテンシ: decode→push 500-800μs、drop率~12%（pop_latestスキップ分、正常）
 
-**A-1 RingBuffer挿入時の設計判断ポイント**:
-- 挿入点: on_unified_frame()内だが、ここはframe_mtx_の中
-- RingBufferのpush()がmutex内に入るとGUI側pop()と排他になる
-- 選択肢: lock-free RingBuffer or mutex粒度変更
-- Copy #1のゼロコピー化にはUnifiedDecoderのコールバックI/F変更が必要（`const uint8_t*` raw pointer制約）
-- A-1の主目的は「最新1枚上書きモデル」を複数スロット保持に置き換え、drop可視化・可観測性強化・GUI/Layer2消費タイミングの安定化を図ること
+**A-1 RingBuffer（実装完了 2026-03-15, commit `1faf7b7` + `6954c2d`）**:
+- 挿入点: on_unified_frame() / on_decoded_frame()の冒頭でdecode_ts取得→push
+- mutex分離: ring_buffer_のmutexはframe_mtx_と独立（デッドロックなし）
+- get_latest_shared_frame()はring_buffer_->pop_latest()を優先（legacyフォールバック付き）
+- Copy #1は残存（UnifiedDecoder I/F制約）、ゼロコピー化は将来検討
+- 2レーン（Canonical 1080x1800 + Presentation 1080x1920）それぞれにRingBuffer生成
 
-**dedup整合リスク** (A-1実装時の確認必須):
-- 現行の上書きモデルではLayer2は最新1枚のみ取得 → dedupは「前回と今回の差分」で動作
-- RingBuffer化でLayer2が複数フレームを順番に処理する可能性 → フレーム間隔変化でdedup率が変動しうる
-- 確認方法: RingBuffer経由でもraw=N→Mのログが従来と同等であること
+**dedup整合（検証完了 2026-03-15）**:
+- RingBuffer経由でLayer1テンプレートマッチング正常動作確認
+- VDE状態遷移正常（IDLE、誤検出タップゼロ）
+- HandleCount安定（diff≤1/20秒）
+- pop_latest()を使用するためGUI/AIは常に最新フレームを取得→dedup動作に変化なし
 
 **過去の修正済み問題**:
 - 映像固まり問題 → update()経路で解決済み（stageUpdate経路のデータレース排除）
@@ -126,7 +130,7 @@ Layer 5  MCP orchestration (v5.0.0 安定稼働)
 - dedupパラメータ: IoU≥0.5 / dist<24px / text≥0.85（保守的設定）
 - buildLayer2Input内でraw収集→dedup→candidate生成の順
 - ai_engine消費側もLayer2Inputベースに接続済み
-- 現行Layer2は「最新1枚取得」前提で動作しており、A-1で複数フレーム保持に変わる場合はdedup temporal behaviorの再検証が必要
+- Layer2はpop_latest()経由で最新フレーム取得（A-1 RingBuffer統合済み、dedup検証完了）
 
 ### Layer 3 (AI Vision)
 
@@ -260,7 +264,7 @@ Layer 5  MCP orchestration (v5.0.0 安定稼働)
 | WiFi ADB切断 | ネットワーク不安定時 | 全操作不能（Watchdog自動復元機能あり） |
 | Android 15 MediaProjection | 権限取得に追加操作必要 | 自動化済みだが端末差分リスクあり |
 | PC電源管理 | スリープ/USBサスペンド | 無効化済み（ADB切断問題の根本解決） |
-| フレームドロップ未検出 | 上書きモデルでサイレント消失 | dropped framesカウントなし（A-1で追加予定） |
+| ~~フレームドロップ未検出~~ | ~~上書きモデル~~ | **A-1完了**: RingBuffer可観測性でdropped計測可能（定常~12%） |
 
 ---
 
@@ -270,7 +274,8 @@ Layer 5  MCP orchestration (v5.0.0 安定稼働)
 
 | ファイル | 責務 | A-1影響 |
 |---------|------|---------|
-| src/mirror_receiver.cpp | 2スレッドパイプライン（受信→NAL queue→デコード→SharedFrame）、FrameBufferPool管理 | **RingBuffer挿入点** (on_unified_frame内, frame_mtx_内) |
+| src/mirror_receiver.cpp | 2スレッドパイプライン（受信→NAL queue→デコード→SharedFrame）、FrameBufferPool管理、**FrameRingBuffer統合済み** | A-1完了 |
+| src/frame_ring_buffer.cpp/hpp | FrameRingBuffer (capacity=4, mutex方式, 可観測性メトリクス) | A-1新規 |
 | src/gui_application.cpp | GUI表示・フレーム更新 (get_latest_shared_frame→VulkanTexture::update) | **影響範囲** (フレーム取得I/F変更) |
 | src/vulkan_texture.cpp | Vulkanテクスチャ管理、staging buffer→GPU upload (Copy #2) | **影響範囲** (変更は小) |
 | src/usb_device_discovery.cpp | AOA PIDリスト・switch処理 | - |
@@ -301,6 +306,9 @@ Layer 5  MCP orchestration (v5.0.0 安定稼働)
 
 | 日付 | 変更内容 | commit |
 |------|---------|--------|
+| 2026-03-15 | A-1 RingBuffer統合完了、可観測性ログ追加、dedup integrity check完了 | `6954c2d` |
+| 2026-03-15 | Back/Home/TaskナビボタンADB直行修正+画像下移動+二重送信修正 | `3a102e6` |
+| 2026-03-15 | AI無駄タップバグ修正（enabled_フラグEventBusバイパス） | - |
 | 2026-03-13 | セクション3: 実コード検証によりcopy chain 4回→2回に修正、mirror_receiver.cpp構造詳細追記 | - |
 | 2026-03-13 | セクション4: Layer2にdedup temporal behavior再検証の注記追加 | - |
 | 2026-03-13 | CURRENT_TRUTH.md 初版作成 | - |
