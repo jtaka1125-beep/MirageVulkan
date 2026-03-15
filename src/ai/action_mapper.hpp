@@ -54,6 +54,26 @@ public:
         return ScreenState::NORMAL;
     }
 
+    // VkMatchResult + id_to_name マップ版 (Vulkan依存を避けるためテンプレート化)
+    template<typename MatchResult>
+    ScreenState classifyState(const std::vector<MatchResult>& matches,
+                              const std::unordered_map<int, std::string>& id_to_name) const {
+        for (const auto& m : matches) {
+            auto it = id_to_name.find(m.template_id);
+            if (it == id_to_name.end()) continue;
+            const auto& name = it->second;
+            if (name.find("loading") != std::string::npos ||
+                name.find("spinner") != std::string::npos) {
+                return ScreenState::LOADING;
+            }
+            if (name.find("error") != std::string::npos ||
+                name.find("popup") != std::string::npos) {
+                return ScreenState::ERROR_POPUP;
+            }
+        }
+        return ScreenState::NORMAL;
+    }
+
     // =========================================================================
     // テキストアクションマッピング（OCRキーワード → アクション）
     // =========================================================================
