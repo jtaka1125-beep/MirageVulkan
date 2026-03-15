@@ -116,12 +116,13 @@ Vulkan GUI 表示
 ### レイヤー構成
 
 ```
-Layer 0  Hardware / Devices
-Layer 1  Video transport (scrcpy-server → MirrorReceiver)
-Layer 2  Vision dedup (UiElementHit / Layer2Input基盤)
-Layer 3  AI reasoning (llava:7b via Ollama)
-Layer 4  Automation (未実装: Runtime最小版 = B-4タスク)
-Layer 5  MCP orchestration (v5.0.0 安定稼働)
+Layer 0  待機 (STANDBY) — テンプレートマッチング停止、低負荷
+Layer 1  高速判定 (NCC テンプレートマッチング) — IDLE→DETECTED→CONFIRMED
+Layer 2  AI複数判定 (Gemini並列投票 via gemini_router.py)
+---
+Infra:   Video transport (scrcpy-server → MirrorReceiver → FrameRingBuffer)
+Infra:   MCP orchestration (v5.0.0 安定稼働)
+Note:    llava:7b (Ollama) は不正確のため廃止。Layer3は存在しない。
 ```
 
 ### Layer 1→Layer 2 I/F (2026-03-12完成, commit `e5a6e4f`)
@@ -132,14 +133,18 @@ Layer 5  MCP orchestration (v5.0.0 安定稼働)
 - ai_engine消費側もLayer2Inputベースに接続済み
 - Layer2はpop_latest()経由で最新フレーム取得（A-1 RingBuffer統合済み、dedup検証完了）
 
-### Layer 3 (AI Vision)
+### Layer 2 (AI複数判定)
 
-- モデル: llava:7b（Ollama経由）
-- 入力サイズ: 336→224pxに縮小済み（総レイテンシ41%削減）
-- `ai.vde_enable_layer3` = true（config.json修正済み）
-- **cold startレイテンシ: 約65秒**（モデルロード時間が支配的）
-- **warmup後レイテンシ: 約3.7秒**（warmupAsync() + keep_alive設定で実現）
-- 注意: keep_aliveが切れるとcold startに戻る
+- バックエンド: Gemini API（gemini_router.py経由、並列投票方式）
+- Layer2Client: C++→Python子プロセス（stdin/stdout通信）
+- フレームをJPEGエンコード→Geminiに送信→ポップアップ検出/クリック座標取得
+- cooldown: 30秒（連打防止）
+- **llava:7b (Ollama) は不正確のため廃止**
+
+### Layer 3 — 廃止
+
+- 旧: llava:7b via Ollama（cold start 65秒、精度不足で廃止）
+- Ollamaは外部記憶のcompact等に使用（VisionからはDetached）
 
 ### Layer 4 (Automation)
 
@@ -258,9 +263,9 @@ Layer 5  MCP orchestration (v5.0.0 安定稼働)
 
 | 項目 | 状態 | 影響 |
 |------|------|------|
-| Layer 3 VDE cold start | llava:7bで約65秒 | Vision初回推論が遅い |
+| ~~Layer 3 VDE cold start~~ | ~~llava:7b~~ | **廃止**: Gemini API (Layer 2) に移行 |
 | CPU fallback | HW decode失敗時に発動 | 映像品質低下 |
-| keep_alive切れ | Ollamaモデルunload | cold startに戻る |
+| ~~keep_alive切れ~~ | ~~Ollamaモデルunload~~ | **廃止**: Vision用途ではOllama不使用 |
 | WiFi ADB切断 | ネットワーク不安定時 | 全操作不能（Watchdog自動復元機能あり） |
 | Android 15 MediaProjection | 権限取得に追加操作必要 | 自動化済みだが端末差分リスクあり |
 | PC電源管理 | スリープ/USBサスペンド | 無効化済み（ADB切断問題の根本解決） |

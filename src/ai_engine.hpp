@@ -205,6 +205,10 @@ struct AIConfig {
     bool enable_verify          = false; // アクション後の成否検証
     int  verify_delay_ms        = 500;   // 検証開始までの待機(ms)
     int  verify_timeout_ms      = 2000;  // 検証タイムアウト(ms)
+    bool vde_enable_layer2      = false;  // Layer 2 (Gemini) 有効化
+    int  vde_layer2_no_match_ms     = 5000;
+    int  vde_layer2_no_match_frames = 150;
+    int  vde_layer2_cooldown_ms     = 30000;
 
 
     std::string ollama_host       = "127.0.0.1";

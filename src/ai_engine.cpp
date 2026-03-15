@@ -2578,6 +2578,11 @@ public:
         vde_config.verify_delay_ms = config.verify_delay_ms;
         MLOG_INFO("ai", "AIEngine: config.enable_verify = %d, vde_config.enable_verify = %d", config.enable_verify ? 1 : 0, vde_config.enable_verify ? 1 : 0);
         vde_config.verify_timeout_ms = config.verify_timeout_ms;
+        vde_config.enable_layer2 = config.vde_enable_layer2;
+        vde_config.layer2_no_match_ms = config.vde_layer2_no_match_ms;
+        vde_config.layer2_no_match_frames = config.vde_layer2_no_match_frames;
+        MLOG_INFO("ai", "VDE: enable_layer2=%d no_match_ms=%d no_match_frames=%d",
+                  vde_config.enable_layer2?1:0, vde_config.layer2_no_match_ms, vde_config.layer2_no_match_frames);
 
 
 
@@ -7604,6 +7609,19 @@ public:
                                 l1_ctx.match_x = top.center_x;
                                 l1_ctx.match_y = top.center_y;
                                 l1_ctx.score = top.score;
+                            }
+                            // Populate UI elements from all vk_results for richer Layer2 context
+                            for (const auto& vr : vk_results) {
+                                mirage::ai::Layer1Context::UiElementInfo ei;
+                                auto nit2 = names_snap.find(vr.template_id);
+                                ei.text = (nit2 != names_snap.end()) ? nit2->second : "";
+                                ei.type = "template";
+                                ei.x = vr.center_x - vr.template_width / 2;
+                                ei.y = vr.center_y - vr.template_height / 2;
+                                ei.w = vr.template_width;
+                                ei.h = vr.template_height;
+                                ei.score = vr.score;
+                                l1_ctx.ui_elements.push_back(ei);
                             }
                             vision_engine_->launchLayer2AsyncWithContext(device_id, rgba, width, height, l1_ctx);
 

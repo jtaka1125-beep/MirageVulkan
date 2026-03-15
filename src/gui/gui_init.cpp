@@ -1178,6 +1178,10 @@ void initializeAI() {
         ai_config.vde_cooldown_ms = ai_cfg.vde_cooldown_ms;
     if (ai_cfg.vde_debounce_window_ms > 0)
         ai_config.vde_debounce_window_ms = ai_cfg.vde_debounce_window_ms;
+    ai_config.vde_enable_layer2 = ai_cfg.vde_enable_layer2;
+    ai_config.vde_layer2_no_match_ms = ai_cfg.vde_layer2_no_match_ms;
+    ai_config.vde_layer2_no_match_frames = ai_cfg.vde_layer2_no_match_frames;
+    ai_config.vde_layer2_cooldown_ms = ai_cfg.vde_layer2_cooldown_ms;
     ai_config.enable_verify = ai_cfg.enable_verify;
     ai_config.verify_delay_ms = ai_cfg.verify_delay_ms;
     ai_config.verify_timeout_ms = ai_cfg.verify_timeout_ms;

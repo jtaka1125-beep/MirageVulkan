@@ -25,6 +25,15 @@ struct Layer1Context {
     int no_match_frames = 0;       // 連続マッチなしフレーム数
     int same_match_frames = 0;     // 同一テンプレート連続フレーム数
     std::string tags;              // テンプレートのタグ（例: "ads", "popup"）
+
+    // UI elements detected by Layer 1 (for richer Layer 2 context)
+    struct UiElementInfo {
+        std::string type;      // "button" / "text" / "icon"
+        std::string text;      // OCR text or template name
+        int x = 0, y = 0, w = 0, h = 0;  // bounding box
+        float score = 0.f;     // match confidence
+    };
+    std::vector<UiElementInfo> ui_elements;
 };
 
 struct Layer2Result {

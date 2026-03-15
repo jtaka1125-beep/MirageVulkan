@@ -52,6 +52,11 @@ struct AiConfig {
     bool enable_verify          = false;  // アクション後の成否検証
     int  verify_delay_ms        = 500;
     int  verify_timeout_ms      = 2000;
+    // Layer 2 (Gemini AI vision)
+    bool vde_enable_layer2          = false;
+    int  vde_layer2_no_match_ms     = 5000;
+    int  vde_layer2_no_match_frames = 150;
+    int  vde_layer2_cooldown_ms     = 30000;
     // Continuous Learning v2 (config.json "continuous_learning_v2" section)
     bool  clv2_enabled              = false;
     float clv2_confidence_threshold = 0.65f;
@@ -209,7 +214,11 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
         config.ai.clv2_cooldown_frames = jsonGet<int>(j, "continuous_learning_v2", "cooldown_frames", 60);
         config.ai.clv2_max_templates_total = jsonGet<int>(j, "continuous_learning_v2", "max_templates_total", 200);
         config.ai.clv2_templates_dir = jsonGet<std::string>(j, "continuous_learning_v2", "templates_dir", "templates/auto");
-        // Layer 3
+        // Layer 2 (Gemini AI vision)
+        config.ai.vde_enable_layer2 = jsonGet<bool>(j, "ai", "vde_enable_layer2", false);
+        config.ai.vde_layer2_no_match_ms = jsonGet<int>(j, "ai", "vde_layer2_no_match_ms", 5000);
+        config.ai.vde_layer2_no_match_frames = jsonGet<int>(j, "ai", "vde_layer2_no_match_frames", 150);
+        config.ai.vde_layer2_cooldown_ms = jsonGet<int>(j, "ai", "vde_layer2_cooldown_ms", 30000);
 
         config.ollama.host       = jsonGet<std::string>(j, "ollama", "host",       "127.0.0.1");
         config.ollama.port       = jsonGet<int>        (j, "ollama", "port",       11434);
@@ -253,7 +262,8 @@ inline AppConfig loadConfig(const std::string& configPath = "../config.json",
     config.ai.vde_confirm_count = extractJsonInt(json, "vde_confirm_count", 3);
     config.ai.vde_cooldown_ms = extractJsonInt(json, "vde_cooldown_ms", 2000);
     config.ai.vde_debounce_window_ms = extractJsonInt(json, "vde_debounce_window_ms", 500);
-    // Layer 3
+    // Layer 2 (Gemini AI vision)
+    config.ai.vde_enable_layer2 = extractJsonBool(json, "vde_enable_layer2", false);
 
     config.ocr.enabled = extractJsonBool(json, "enabled", false);
     config.ocr.language = extractJsonString(json, "language");

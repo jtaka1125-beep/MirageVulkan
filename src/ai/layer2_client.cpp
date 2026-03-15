@@ -76,8 +76,22 @@ Layer2Result Layer2Client::callScript(const std::vector<uint8_t>& jpeg_data,
             << "\"score\":" << l1_ctx.score << ","
             << "\"no_match_frames\":" << l1_ctx.no_match_frames << ","
             << "\"same_match_frames\":" << l1_ctx.same_match_frames << ","
-            << "\"tags\":\"" << escapeJson(l1_ctx.tags) << "\""
-            << "}}";
+            << "\"tags\":\"" << escapeJson(l1_ctx.tags) << "\"";
+    // Add UI elements array for richer Layer2 context
+    if (!l1_ctx.ui_elements.empty()) {
+        json_ss << ",\"ui_elements\":[";
+        for (size_t i = 0; i < l1_ctx.ui_elements.size(); ++i) {
+            const auto& e = l1_ctx.ui_elements[i];
+            if (i > 0) json_ss << ",";
+            json_ss << "{\"type\":\"" << escapeJson(e.type) << "\""
+                    << ",\"text\":\"" << escapeJson(e.text) << "\""
+                    << ",\"x\":" << e.x << ",\"y\":" << e.y
+                    << ",\"w\":" << e.w << ",\"h\":" << e.h
+                    << ",\"score\":" << e.score << "}";
+        }
+        json_ss << "]";
+    }
+    json_ss << "}}";
     std::string input_data = json_ss.str() + "\n";
 
     MLOG_DEBUG("ai.layer2", "callScript: layer1 context: template=%s score=%.2f no_match=%d",
